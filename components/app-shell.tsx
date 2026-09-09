@@ -4,39 +4,35 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 
-type Module = { name: string; path: string; icon: string; scope: "project" | "admin" | "personal" };
-type MenuGroup = { label?: string; items: { name: string; path: string; icon: string }[] };
+type Permission = "project-admin" | "enterprise-admin";
+type Module = { name: string; path: string; icon: string; scope: "project" | "admin" | "personal"; permission?: Permission };
+type MenuGroup = { label?: string; permission?: Permission; items: { name: string; path: string; icon: string }[] };
+
+// Phase 1 uses a representative permission set until authentication supplies it.
+const userPermissions: Permission[] = ["project-admin", "enterprise-admin"];
 
 const modules: Module[] = [
   { name: "Project Dashboard", path: "/project-dashboard", icon: "dashboard", scope: "project" },
-  { name: "Project Admin", path: "/project-admin", icon: "settings", scope: "project" },
+  { name: "Project Admin", path: "/project-admin", icon: "settings", scope: "project", permission: "project-admin" },
   { name: "Cost Management", path: "/cost-management", icon: "coins", scope: "project" },
   { name: "Change Management", path: "/change-management", icon: "change", scope: "project" },
-  { name: "Risk Management", path: "/risk-management", icon: "risk", scope: "project" },
   { name: "Subcontract Management", path: "/subcontract-management", icon: "contract", scope: "project" },
-  { name: "Procurement", path: "/procurement", icon: "cart", scope: "project" },
-  { name: "Commodity Tracking", path: "/commodity-tracking", icon: "cube", scope: "project" },
-  { name: "Schedule", path: "/schedule", icon: "calendar", scope: "project" },
   { name: "System Admin", path: "/system-admin", icon: "shield", scope: "admin" },
-  { name: "Enterprise Admin", path: "/enterprise-admin", icon: "building", scope: "admin" },
+  { name: "Enterprise Admin", path: "/enterprise-admin", icon: "building", scope: "admin", permission: "enterprise-admin" },
   { name: "My Profile", path: "/my-profile", icon: "user", scope: "personal" },
 ];
 
 const menus: Record<string, MenuGroup[]> = {
-  "/project-dashboard": [{ items: [item("Overview", "overview", "dashboard"), item("Performance summary", "performance", "chart"), item("Recent activity", "activity", "clock")] }],
-  "/project-admin": [{ label: "Project setup", items: [item("General information", "general", "info"), item("Project attributes", "attributes", "sliders"), item("Project calendars", "calendars", "calendar"), item("Access control", "access", "users")] }],
+  "/project-dashboard": [{ items: [item("Overview", "overview", "dashboard")] }],
+  "/project-admin": [{ label: "Project setup", items: [item("General Info", "general-info", "info"), item("Project Line-Item Attributes", "line-item-attributes", "sliders"), item("Project Calendar", "calendar", "calendar"), item("Access Control", "access-control", "users")] }],
   "/cost-management": [
-    { label: "Workspace", items: [item("Cost overview", "overview", "dashboard"), item("Cost worksheet", "worksheet", "table"), item("Forecast", "forecast", "chart"), item("Cash flow", "cash-flow", "trend")] },
-    { label: "Configuration", items: [item("Cost codes", "cost-codes", "tag"), item("Reporting periods", "reporting-periods", "calendar"), item("Resource rates", "resource-rates", "users"), item("Module settings", "settings", "settings")] },
+    { label: "Overview", items: [item("Cost Codes", "cost-codes", "tag"), item("Timephasing", "timephasing", "chart")] },
+    { label: "Cost Module Settings", permission: "project-admin", items: [item("Cost Reporting Periods", "reporting-periods", "calendar"), item("Project Cost Code Attributes", "cost-code-attributes", "sliders"), item("Project Resource Rates", "resource-rates", "users"), item("Bulk Baseline Budget", "bulk-baseline-budget", "table"), item("Bulk Actual Cost", "bulk-actual-cost", "table"), item("Bulk Cost to Complete Details", "bulk-cost-to-complete", "table")] },
   ],
-  "/change-management": [{ label: "Workspace", items: [item("Change overview", "overview", "dashboard"), item("Change register", "register", "table"), item("Approvals", "approvals", "check")] }, { label: "Configuration", items: [item("Change attributes", "attributes", "sliders"), item("Module settings", "settings", "settings")] }],
-  "/risk-management": [{ items: [item("Risk overview", "overview", "dashboard"), item("Risk register", "register", "risk"), item("Mitigations", "mitigations", "check"), item("Risk settings", "settings", "settings")] }],
-  "/subcontract-management": [{ items: [item("Subcontract overview", "overview", "dashboard"), item("Subcontract register", "register", "contract"), item("Packages", "packages", "cube"), item("Settings", "settings", "settings")] }],
-  "/procurement": [{ items: [item("Procurement overview", "overview", "dashboard"), item("Procurement register", "register", "cart"), item("Packages", "packages", "cube"), item("Settings", "settings", "settings")] }],
-  "/commodity-tracking": [{ items: [item("Commodity overview", "overview", "dashboard"), item("Commodity register", "register", "table"), item("Trends", "trends", "trend"), item("Settings", "settings", "settings")] }],
-  "/schedule": [{ items: [item("Schedule overview", "overview", "dashboard"), item("Milestones", "milestones", "flag"), item("Lookahead", "lookahead", "calendar"), item("Settings", "settings", "settings")] }],
+  "/change-management": [{ label: "Overview", items: [item("Change Management", "change-management", "change")] }, { label: "Change Module Settings", permission: "project-admin", items: [item("Project Change Attributes", "change-attributes", "sliders"), item("Bulk Change Records", "bulk-change-records", "table")] }],
+  "/subcontract-management": [{ label: "Overview", items: [item("Subcontract Management", "subcontract-management", "contract")] }, { label: "Subcontract Module Settings", permission: "project-admin", items: [item("Project Subcontract Attributes", "subcontract-attributes", "sliders"), item("Bulk Subcontract Line Items", "bulk-line-items", "table")] }],
   "/system-admin": [{ label: "Platform", items: [item("Enterprises", "enterprises", "building"), item("System users", "users", "users"), item("Audit activity", "audit", "clock"), item("System settings", "settings", "settings")] }],
-  "/enterprise-admin": [{ label: "Enterprise", items: [item("Enterprise settings", "settings", "settings"), item("Users & roles", "users", "users"), item("Projects", "projects", "folder"), item("Shared attributes", "attributes", "sliders"), item("Calendars", "calendars", "calendar")] }],
+  "/enterprise-admin": [{ label: "General", items: [item("Enterprise Settings", "settings", "settings"), item("Enterprise Users", "users", "users"), item("Enterprise Projects", "projects", "folder"), item("Enterprise Project Attributes", "project-attributes", "sliders"), item("Enterprise Line-Item Attributes", "line-item-attributes", "sliders"), item("Enterprise Calendars", "calendars", "calendar")] }, { label: "Cost", items: [item("Enterprise Cost Code Attributes", "cost-code-attributes", "tag"), item("Enterprise Resource Rates", "resource-rates", "users")] }, { label: "Change", items: [item("Enterprise Change Attributes", "change-attributes", "change")] }, { label: "Subcontract", items: [item("Enterprise Subcontract Attributes", "subcontract-attributes", "contract")] }],
   "/my-profile": [{ items: [item("Profile details", "details", "user"), item("Preferences", "preferences", "sliders"), item("Security", "security", "shield")] }],
 };
 
@@ -91,7 +87,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             <div className="heading-actions"><button className="button secondary"><Icon name="sliders" size={16}/> View options</button><button className="button primary">Create new</button></div>
           </div>
           {children}
-          {activeModule.path === "/project-dashboard" ? <Dashboard /> : <WorkspacePlaceholder module={activeModule.name} title={workspaceTitle} />}
+          <WorkspacePlaceholder module={activeModule.name} title={workspaceTitle} />
         </main>
       </div>
     </section>
@@ -110,7 +106,8 @@ function GlobalSidebar({ collapsed, open, active, onCollapse, onNavigate }: { co
 }
 
 function NavGroup({ title, modules: entries, active, collapsed }: { title: string; modules: Module[]; active: Module; collapsed: boolean }) {
-  return <div className="nav-group"><div className="nav-label">{title}</div>{entries.map((module) => <Link href={`${module.path}/${menus[module.path]?.[0]?.items[0]?.path ?? "overview"}`} key={module.path} className={`global-link ${active.path === module.path ? "active" : ""}`} title={collapsed ? module.name : undefined}><span className="nav-icon"><Icon name={module.icon}/></span><span className="nav-copy">{module.name}</span>{module.scope === "admin" && <span className="permission-dot" title="Admin permission required"/>}</Link>)}</div>;
+  const visibleEntries = entries.filter((module) => !module.permission || userPermissions.includes(module.permission));
+  return <div className="nav-group"><div className="nav-label">{title}</div>{visibleEntries.map((module) => <Link href={`${module.path}/${menus[module.path]?.[0]?.items[0]?.path ?? "overview"}`} key={module.path} className={`global-link ${active.path === module.path ? "active" : ""}`} title={collapsed ? module.name : undefined}><span className="nav-icon"><Icon name={module.icon}/></span><span className="nav-copy">{module.name}</span>{module.permission && <span className="permission-dot" title={`${permissionLabel(module.permission)} required`}/>}</Link>)}</div>;
 }
 
 function Header({ enterprise, project, setEnterprise, setProject, focusMode, setFocusMode, onMenu }: { enterprise: string; project: string; setEnterprise: (v:string)=>void; setProject:(v:string)=>void; focusMode:boolean; setFocusMode:(v:boolean)=>void; onMenu:()=>void }) {
@@ -118,12 +115,8 @@ function Header({ enterprise, project, setEnterprise, setProject, focusMode, set
 }
 
 function ContextSidebar({ module, groups, activePath, collapsed, onCollapse }: { module:Module; groups:MenuGroup[]; activePath:string; collapsed:boolean; onCollapse:()=>void }) {
-  return <aside className={`context-sidebar ${collapsed ? "collapsed" : ""}`}><div className="context-title"><div className="module-glyph"><Icon name={module.icon}/></div><div><span>Module</span><strong>{module.name}</strong></div><button onClick={onCollapse} className="context-collapse" aria-label="Collapse module navigation">‹</button></div><nav aria-label={`${module.name} navigation`}>{groups.map((group, index) => <div className="context-group" key={group.label ?? index}>{group.label && <div className="context-label">{group.label}</div>}{group.items.map((entry) => <Link title={collapsed ? entry.name : undefined} className={`context-link ${entry.path === activePath ? "active" : ""}`} key={entry.path} href={`${module.path}/${entry.path}`}><Icon name={entry.icon} size={17}/><span>{entry.name}</span></Link>)}</div>)}</nav><div className="context-hint"><Icon name="info" size={16}/><span>Navigation reflects your assigned project permissions.</span></div></aside>;
-}
-
-function Dashboard() {
-  const cards = [["Approved budget", "$248.6m", "+1.8% this period", "coins"], ["Current forecast", "$257.4m", "$8.8m over budget", "trend"], ["Open changes", "24", "7 awaiting approval", "change"], ["Active risks", "38", "5 high exposure", "risk"]];
-  return <><div className="metric-grid">{cards.map(([label,value,detail,icon])=><article className="metric-card" key={label}><div className="metric-top"><span>{label}</span><div className="metric-icon"><Icon name={icon}/></div></div><strong>{value}</strong><p>{detail}</p></article>)}</div><div className="dashboard-grid"><section className="panel"><div className="panel-head"><div><h2>Cost performance</h2><p>Budget and forecast trend</p></div><button className="text-button">View report →</button></div><div className="chart-placeholder"><div className="chart-bars">{[38,54,46,68,61,76,71,86,78,91,84,93].map((h,i)=><i key={i} style={{height:`${h}%`}}/>)}</div><div className="chart-legend"><span><i className="blue"/>Approved budget</span><span><i className="orange"/>Forecast</span></div></div></section><section className="panel"><div className="panel-head"><div><h2>Attention required</h2><p>Items assigned to you</p></div><span className="count-badge">7</span></div><div className="attention-list">{[["CHG-0041","Station access redesign","Approval due today"],["RSK-0128","Utility relocation delay","Review mitigation"],["CHG-0038","Signalling scope revision","3 days overdue"]].map(([id,title,status])=><button key={id}><span className="list-icon"><Icon name="flag" size={16}/></span><span><small>{id}</small><strong>{title}</strong><em>{status}</em></span><b>›</b></button>)}</div></section></div></>;
+  const visibleGroups = groups.filter((group) => !group.permission || userPermissions.includes(group.permission));
+  return <aside className={`context-sidebar ${collapsed ? "collapsed" : ""}`}><div className="context-title"><div className="module-glyph"><Icon name={module.icon}/></div><div><span>Module</span><strong>{module.name}</strong></div><button onClick={onCollapse} className="context-collapse" aria-label="Collapse module navigation">‹</button></div><nav aria-label={`${module.name} navigation`}>{visibleGroups.map((group, index) => <div className="context-group" key={group.label ?? index}>{group.label && <div className="context-label">{group.label}{group.permission && <span className="admin-label">Project Admin</span>}</div>}{group.items.map((entry) => <Link title={collapsed ? entry.name : undefined} className={`context-link ${entry.path === activePath ? "active" : ""}`} key={entry.path} href={`${module.path}/${entry.path}`}><Icon name={entry.icon} size={17}/><span>{entry.name}</span></Link>)}</div>)}</nav><div className="context-hint"><Icon name="info" size={16}/><span>Navigation reflects your assigned project permissions.</span></div></aside>;
 }
 
 function WorkspacePlaceholder({ module, title }: { module:string; title:string }) {
@@ -134,3 +127,5 @@ function WorkspacePlaceholder({ module, title }: { module:string; title:string }
 }
 
 function descriptionFor(module: string, title: string) { return title === "Overview" ? `A consolidated view of ${module.toLowerCase()} performance.` : `Review and manage ${title.toLowerCase()} for the selected project.`; }
+
+function permissionLabel(permission: Permission) { return permission === "project-admin" ? "Project Admin permission" : "Enterprise Admin permission"; }
