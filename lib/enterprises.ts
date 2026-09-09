@@ -1,0 +1,73 @@
+import { SupabaseRequestError, supabaseRequest } from "@/lib/supabase/browser";
+
+export type EnterpriseDomain = { id: string; domain: string; active: boolean };
+export type Enterprise = {
+  id: string;
+  enterprise_code: string;
+  name: string;
+  logo_url: string | null;
+  active: boolean;
+  created_by: string | null;
+  created_at: string;
+  enterprise_domains: EnterpriseDomain[] | null;
+};
+export type EnterpriseInput = { enterprise_code: string; name: string; logo_url: string | null; active: boolean; domains: string[] };
+
+const enterpriseSelect = "id,enterprise_code,name,logo_url,active,created_by,created_at,enterprise_domains(id,domain,active)";
+
+export function normalizeDomains(values: string[]) {
+  return [...new Set(values.map((value) => value.trim().toLowerCase().replace(/^@/, "")).filter(Boolean))];
+}
+
+export function listEnterprises() {
+  return supabaseRequest<Enterprise[]>(`enterprises?select=${encodeURIComponent(enterpriseSelect)}&order=created_at.desc`);
+}
+
+export async function createEnterprise(input: EnterpriseInput) {
+  const [enterprise] = await supabaseRequest<Enterprise[]>("enterprises?select=*", {
+    method: "POST",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify({ enterprise_code: input.enterprise_code, name: input.name, logo_url: input.logo_url, active: input.active }),
+  });
+  try {
+    if (input.domains.length) {
+      await supabaseRequest("enterprise_domains", {
+        method: "POST",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify(input.domains.map((domain) => ({ enterprise_id: enterprise.id, domain, active: true }))),
+      });
+    }
+    return enterprise;
+  } catch (error) {
+    // Compensating rollback keeps the create operation atomic from the UI's perspective.
+    await supabaseRequest(`enterprises?id=eq.${encodeURIComponent(enterprise.id)}`, { method: "DELETE" }).catch(() => undefined);
+    throw error;
+  }
+}
+
+export async function updateEnterprise(id: string, input: EnterpriseInput, previousDomains: EnterpriseDomain[]) {
+  await supabaseRequest(`enterprises?id=eq.${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify({ enterprise_code: input.enterprise_code, name: input.name, logo_url: input.logo_url, active: input.active }),
+  });
+  const desired = new Set(input.domains);
+  const existing = new Map(previousDomains.map((entry) => [entry.domain.toLowerCase(), entry]));
+  const deactivate = previousDomains.filter((entry) => entry.active && !desired.has(entry.domain.toLowerCase()));
+  const reactivate = input.domains.map((domain) => existing.get(domain)).filter((entry): entry is EnterpriseDomain => Boolean(entry && !entry.active));
+  const additions = input.domains.filter((domain) => !existing.has(domain));
+  await Promise.all([
+    ...deactivate.map((entry) => supabaseRequest(`enterprise_domains?id=eq.${encodeURIComponent(entry.id)}`, { method: "PATCH", body: JSON.stringify({ active: false }) })),
+    ...reactivate.map((entry) => supabaseRequest(`enterprise_domains?id=eq.${encodeURIComponent(entry.id)}`, { method: "PATCH", body: JSON.stringify({ active: true }) })),
+    additions.length ? supabaseRequest("enterprise_domains", { method: "POST", body: JSON.stringify(additions.map((domain) => ({ enterprise_id: id, domain, active: true }))) }) : Promise.resolve(),
+  ]);
+}
+
+export function setEnterpriseActive(id: string, active: boolean) {
+  return supabaseRequest(`enterprises?id=eq.${encodeURIComponent(id)}`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ active }) });
+}
+
+export function enterpriseErrorMessage(error: unknown) {
+  if (error instanceof SupabaseRequestError && (error.code === "23505" || error.status === 409)) return "That enterprise code is already in use.";
+  return error instanceof Error ? error.message : "An unexpected error occurred.";
+}
