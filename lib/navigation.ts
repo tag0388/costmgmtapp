@@ -1,15 +1,11 @@
 export const routeMap = {
-  "project-dashboard": ["overview", "performance", "activity"],
-  "project-admin": ["general", "attributes", "calendars", "access"],
-  "cost-management": ["overview", "worksheet", "forecast", "cash-flow", "cost-codes", "reporting-periods", "resource-rates", "settings"],
-  "change-management": ["overview", "register", "approvals", "attributes", "settings"],
-  "risk-management": ["overview", "register", "mitigations", "settings"],
-  "subcontract-management": ["overview", "register", "packages", "settings"],
-  procurement: ["overview", "register", "packages", "settings"],
-  "commodity-tracking": ["overview", "register", "trends", "settings"],
-  schedule: ["overview", "milestones", "lookahead", "settings"],
+  "project-dashboard": ["overview"],
+  "project-admin": ["general-info", "line-item-attributes", "calendar", "access-control"],
+  "cost-management": ["cost-codes", "timephasing", "reporting-periods", "cost-code-attributes", "resource-rates", "bulk-baseline-budget", "bulk-actual-cost", "bulk-cost-to-complete"],
+  "change-management": ["change-management", "change-attributes", "bulk-change-records"],
+  "subcontract-management": ["subcontract-management", "subcontract-attributes", "bulk-line-items"],
   "system-admin": ["enterprises", "users", "audit", "settings"],
-  "enterprise-admin": ["settings", "users", "projects", "attributes", "calendars"],
+  "enterprise-admin": ["settings", "users", "projects", "project-attributes", "line-item-attributes", "calendars", "cost-code-attributes", "resource-rates", "change-attributes", "subcontract-attributes"],
   "my-profile": ["details", "preferences", "security"],
 } as const;
 
