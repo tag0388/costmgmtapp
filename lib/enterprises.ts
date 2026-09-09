@@ -13,7 +13,8 @@ export type Enterprise = {
 };
 export type EnterpriseInput = { enterprise_code: string; name: string; logo_url: string | null; active: boolean; domains: string[] };
 
-const enterpriseSelect = "id,enterprise_code,name,logo_url,active,created_by,created_at,enterprise_domains(id,domain,active)";
+const enterpriseSelect = "id,enterprise_code,name,logo_url,active:is_active,created_by,created_at,enterprise_domains(id,domain,active:is_active)";
+const enterpriseCreateSelect = "id,enterprise_code,name,logo_url,active:is_active,created_by,created_at";
 
 export function normalizeDomains(values: string[]) {
   return [...new Set(values.map((value) => value.trim().toLowerCase().replace(/^@/, "")).filter(Boolean))];
@@ -24,17 +25,17 @@ export function listEnterprises() {
 }
 
 export async function createEnterprise(input: EnterpriseInput) {
-  const [enterprise] = await supabaseRequest<Enterprise[]>("enterprises?select=*", {
+  const [enterprise] = await supabaseRequest<Enterprise[]>(`enterprises?select=${encodeURIComponent(enterpriseCreateSelect)}`, {
     method: "POST",
     headers: { Prefer: "return=representation" },
-    body: JSON.stringify({ enterprise_code: input.enterprise_code, name: input.name, logo_url: input.logo_url, active: input.active }),
+    body: JSON.stringify({ enterprise_code: input.enterprise_code, name: input.name, logo_url: input.logo_url, is_active: input.active }),
   });
   try {
     if (input.domains.length) {
       await supabaseRequest("enterprise_domains", {
         method: "POST",
         headers: { Prefer: "return=minimal" },
-        body: JSON.stringify(input.domains.map((domain) => ({ enterprise_id: enterprise.id, domain, active: true }))),
+        body: JSON.stringify(input.domains.map((domain) => ({ enterprise_id: enterprise.id, domain, is_active: true }))),
       });
     }
     return enterprise;
@@ -48,7 +49,7 @@ export async function updateEnterprise(id: string, input: EnterpriseInput, previ
   await supabaseRequest(`enterprises?id=eq.${encodeURIComponent(id)}`, {
     method: "PATCH",
     headers: { Prefer: "return=minimal" },
-    body: JSON.stringify({ enterprise_code: input.enterprise_code, name: input.name, logo_url: input.logo_url, active: input.active }),
+    body: JSON.stringify({ enterprise_code: input.enterprise_code, name: input.name, logo_url: input.logo_url, is_active: input.active }),
   });
   const desired = new Set(input.domains);
   const existing = new Map(previousDomains.map((entry) => [entry.domain.toLowerCase(), entry]));
@@ -56,14 +57,14 @@ export async function updateEnterprise(id: string, input: EnterpriseInput, previ
   const reactivate = input.domains.map((domain) => existing.get(domain)).filter((entry): entry is EnterpriseDomain => Boolean(entry && !entry.active));
   const additions = input.domains.filter((domain) => !existing.has(domain));
   await Promise.all([
-    ...deactivate.map((entry) => supabaseRequest(`enterprise_domains?id=eq.${encodeURIComponent(entry.id)}`, { method: "PATCH", body: JSON.stringify({ active: false }) })),
-    ...reactivate.map((entry) => supabaseRequest(`enterprise_domains?id=eq.${encodeURIComponent(entry.id)}`, { method: "PATCH", body: JSON.stringify({ active: true }) })),
-    additions.length ? supabaseRequest("enterprise_domains", { method: "POST", body: JSON.stringify(additions.map((domain) => ({ enterprise_id: id, domain, active: true }))) }) : Promise.resolve(),
+    ...deactivate.map((entry) => supabaseRequest(`enterprise_domains?id=eq.${encodeURIComponent(entry.id)}`, { method: "PATCH", body: JSON.stringify({ is_active: false }) })),
+    ...reactivate.map((entry) => supabaseRequest(`enterprise_domains?id=eq.${encodeURIComponent(entry.id)}`, { method: "PATCH", body: JSON.stringify({ is_active: true }) })),
+    additions.length ? supabaseRequest("enterprise_domains", { method: "POST", body: JSON.stringify(additions.map((domain) => ({ enterprise_id: id, domain, is_active: true }))) }) : Promise.resolve(),
   ]);
 }
 
 export function setEnterpriseActive(id: string, active: boolean) {
-  return supabaseRequest(`enterprises?id=eq.${encodeURIComponent(id)}`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ active }) });
+  return supabaseRequest(`enterprises?id=eq.${encodeURIComponent(id)}`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ is_active: active }) });
 }
 
 export function enterpriseErrorMessage(error: unknown) {
