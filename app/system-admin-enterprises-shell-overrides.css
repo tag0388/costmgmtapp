@@ -1,0 +1,3 @@
+.workspace:has(.enterprise-admin-page) .workspace-heading .heading-actions{display:none}
+.enterprise-page-title>div{display:none}
+.enterprise-admin-page + .placeholder-panel{display:none}
