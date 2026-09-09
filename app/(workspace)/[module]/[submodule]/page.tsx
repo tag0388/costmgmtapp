@@ -1,4 +1,5 @@
 import "@/app/system-admin-enterprises.css";
+import "@/app/system-admin-enterprises-shell-overrides.css";
 import EnterprisesPage from "@/components/system-admin/enterprises-page";
 import { notFound } from "next/navigation";
 import { isModuleSlug, isSubmoduleSlug, routeMap } from "@/lib/navigation";
