@@ -1,35 +1,46 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Enterprise,
   enterpriseErrorMessage,
+  getEnterpriseByPublicId,
   listEnterprises,
   normalizeDomains,
   updateEnterpriseSettings,
 } from "@/lib/enterprises";
 
-export default function EnterpriseSettingsPage() {
+type DomainDraft = { key: string; value: string };
+
+export default function EnterpriseSettingsPage({ enterprisePublicId }: { enterprisePublicId?: string }) {
   const [enterprises, setEnterprises] = useState<Enterprise[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [name, setName] = useState("");
   const [logoUrl, setLogoUrl] = useState("");
-  const [domains, setDomains] = useState<string[]>([]);
+  const [domains, setDomains] = useState<DomainDraft[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const nextDomainKey = useRef(1);
 
   const selected = useMemo(
     () => enterprises.find((enterprise) => enterprise.id === selectedId) ?? null,
     [enterprises, selectedId],
   );
 
+  const newDomainDraft = useCallback((value = ""): DomainDraft => ({
+    key: `draft-${nextDomainKey.current++}`,
+    value,
+  }), []);
+
   const applyEnterprise = useCallback((enterprise: Enterprise | null) => {
     setName(enterprise?.name ?? "");
     setLogoUrl(enterprise?.logo_url ?? "");
     setDomains(
-      enterprise?.enterprise_domains?.filter((domain) => domain.active).map((domain) => domain.domain) ?? [],
+      enterprise?.enterprise_domains
+        ?.filter((domain) => domain.active)
+        .map((domain) => ({ key: domain.id, value: domain.domain })) ?? [],
     );
   }, []);
 
@@ -37,6 +48,16 @@ export default function EnterpriseSettingsPage() {
     setLoading(true);
     setError("");
     try {
+      if (enterprisePublicId) {
+        const enterprise = await getEnterpriseByPublicId(enterprisePublicId);
+        const data = enterprise ? [enterprise] : [];
+        setEnterprises(data);
+        setSelectedId(enterprise?.id ?? "");
+        applyEnterprise(enterprise);
+        if (!enterprise) setError("Enterprise not found.");
+        return;
+      }
+
       const data = await listEnterprises();
       setEnterprises(data);
       const next =
@@ -51,7 +72,7 @@ export default function EnterpriseSettingsPage() {
     } finally {
       setLoading(false);
     }
-  }, [applyEnterprise]);
+  }, [applyEnterprise, enterprisePublicId]);
 
   useEffect(() => {
     void refresh();
@@ -64,8 +85,8 @@ export default function EnterpriseSettingsPage() {
     setNotice("");
   }
 
-  function updateDomain(index: number, value: string) {
-    setDomains((current) => current.map((domain, domainIndex) => domainIndex === index ? value : domain));
+  function updateDomain(key: string, value: string) {
+    setDomains((current) => current.map((domain) => domain.key === key ? { ...domain, value } : domain));
   }
 
   async function save() {
@@ -78,7 +99,7 @@ export default function EnterpriseSettingsPage() {
       setError("Enterprise Name must be 40 characters or fewer.");
       return;
     }
-    const normalizedDomains = normalizeDomains(domains);
+    const normalizedDomains = normalizeDomains(domains.map((domain) => domain.value));
     if (normalizedDomains.some((domain) => !domain.includes(".") || domain.includes("@") || /\s/.test(domain))) {
       setError("Enter domains like example.com, without @ or spaces.");
       return;
@@ -110,15 +131,15 @@ export default function EnterpriseSettingsPage() {
       </div>
     </div>
 
-    <section className="enterprise-grid-card enterprise-context-card">
+    {!enterprisePublicId && <section className="enterprise-grid-card enterprise-context-card">
       <div>
         <strong>Enterprise</strong>
-        <span>Temporary selector for testing. This will later come from the signed-in Enterprise Admin.</span>
+        <span>Temporary selector for legacy links. Routed pages use the enterprise selected in the header.</span>
       </div>
       <select value={selectedId} onChange={(event) => selectEnterprise(event.target.value)} disabled={loading || enterprises.length === 0}>
         {enterprises.map((enterprise) => <option key={enterprise.id} value={enterprise.id}>{enterprise.enterprise_code} — {enterprise.name}</option>)}
       </select>
-    </section>
+    </section>}
 
     {error && <div className="form-error enterprise-settings-message">{error}</div>}
     {loading && <section className="enterprise-grid-card"><div className="data-message"><span className="spinner"/>Loading enterprise settings…</div></section>}
@@ -149,13 +170,13 @@ export default function EnterpriseSettingsPage() {
       <div className="enterprise-settings-section domains-editor">
         <div className="domains-heading">
           <div><strong>Approved Domains</strong><span>Enterprise Admins can add or remove approved email domains.</span></div>
-          <button onClick={() => setDomains((current) => [...current, ""])}>+ Add Domain</button>
+          <button onClick={() => setDomains((current) => [...current, newDomainDraft()])}>+ Add Domain</button>
         </div>
-        {domains.map((domain, index) => <div className="domain-row" key={`${index}-${domain}`}>
-          <input value={domain} onChange={(event) => updateDomain(index, event.target.value)} placeholder="example.com" />
-          <button onClick={() => setDomains((current) => current.filter((_, domainIndex) => domainIndex !== index))}>Remove</button>
+        {domains.map((domain) => <div className="domain-row" key={domain.key}>
+          <input value={domain.value} onChange={(event) => updateDomain(domain.key, event.target.value)} placeholder="example.com" />
+          <button onClick={() => setDomains((current) => current.filter((entry) => entry.key !== domain.key))}>Remove</button>
         </div>)}
-        {domains.length === 0 && <button className="empty-domains" onClick={() => setDomains([""])}>+ Add an approved domain</button>}
+        {domains.length === 0 && <button className="empty-domains" onClick={() => setDomains([newDomainDraft()])}>+ Add an approved domain</button>}
       </div>
 
       <footer className="enterprise-settings-footer">
@@ -164,6 +185,6 @@ export default function EnterpriseSettingsPage() {
       </footer>
     </section>}
 
-    {!loading && !selected && <section className="enterprise-grid-card"><div className="data-message"><strong>No enterprises found</strong><span>Create an enterprise in System Admin first.</span></div></section>}
+    {!loading && !selected && !error && <section className="enterprise-grid-card"><div className="data-message"><strong>No enterprises found</strong><span>Create an enterprise in System Admin first.</span></div></section>}
   </div>;
 }
