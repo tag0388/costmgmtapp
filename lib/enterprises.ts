@@ -3,6 +3,7 @@ import { SupabaseRequestError, supabaseRequest } from "@/lib/supabase/browser";
 export type EnterpriseDomain = { id: string; domain: string; active: boolean };
 export type Enterprise = {
   id: string;
+  public_id: string;
   enterprise_code: string;
   name: string;
   logo_url: string | null;
@@ -14,15 +15,19 @@ export type Enterprise = {
 export type EnterpriseInput = { enterprise_code: string; name: string; logo_url: string | null; active: boolean; domains: string[] };
 export type EnterpriseSettingsInput = { name: string; logo_url: string | null; domains: string[] };
 
-const enterpriseSelect = "id,enterprise_code,name,logo_url,active:is_active,created_by,created_at,enterprise_domains(id,domain,active:is_active)";
-const enterpriseCreateSelect = "id,enterprise_code,name,logo_url,active:is_active,created_by,created_at";
+const enterpriseSelect = "id,public_id,enterprise_code,name,logo_url,active:is_active,created_by,created_at,enterprise_domains(id,domain,active:is_active)";
+const enterpriseCreateSelect = "id,public_id,enterprise_code,name,logo_url,active:is_active,created_by,created_at";
 
 export function normalizeDomains(values: string[]) {
   return [...new Set(values.map((value) => value.trim().toLowerCase().replace(/^@/, "")).filter(Boolean))];
 }
 
 export function listEnterprises() {
-  return supabaseRequest<Enterprise[]>(`enterprises?select=${encodeURIComponent(enterpriseSelect)}&order=created_at.desc`);
+  return supabaseRequest<Enterprise[]>(`enterprises?select=${encodeURIComponent(enterpriseSelect)}&order=name.asc`);
+}
+
+export function getEnterpriseByPublicId(publicId: string) {
+  return supabaseRequest<Enterprise[]>(`enterprises?select=${encodeURIComponent(enterpriseSelect)}&public_id=eq.${encodeURIComponent(publicId)}&limit=1`).then((rows) => rows[0] ?? null);
 }
 
 export async function createEnterprise(input: EnterpriseInput) {
