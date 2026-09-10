@@ -16,6 +16,6 @@ export default async function SubmodulePage({ params }: PageProps<"/[module]/[su
   const { module, submodule } = await params;
   if (!isModuleSlug(module) || !isSubmoduleSlug(module, submodule)) notFound();
   if (module === "system-admin" && submodule === "enterprises") return <EnterprisesPage />;
-  if (module === "enterprise-admin" && submodule === "enterprise-settings") return <EnterpriseSettingsPage />;
+  if (module === "enterprise-admin" && submodule === "settings") return <EnterpriseSettingsPage />;
   return null;
 }
