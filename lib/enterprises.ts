@@ -12,6 +12,7 @@ export type Enterprise = {
   enterprise_domains: EnterpriseDomain[] | null;
 };
 export type EnterpriseInput = { enterprise_code: string; name: string; logo_url: string | null; active: boolean; domains: string[] };
+export type EnterpriseSettingsInput = { name: string; logo_url: string | null; domains: string[] };
 
 const enterpriseSelect = "id,enterprise_code,name,logo_url,active:is_active,created_by,created_at,enterprise_domains(id,domain,active:is_active)";
 const enterpriseCreateSelect = "id,enterprise_code,name,logo_url,active:is_active,created_by,created_at";
@@ -45,22 +46,35 @@ export async function createEnterprise(input: EnterpriseInput) {
   }
 }
 
+async function syncEnterpriseDomains(id: string, domains: string[], previousDomains: EnterpriseDomain[]) {
+  const desired = new Set(domains);
+  const existing = new Map(previousDomains.map((entry) => [entry.domain.toLowerCase(), entry]));
+  const deactivate = previousDomains.filter((entry) => entry.active && !desired.has(entry.domain.toLowerCase()));
+  const reactivate = domains.map((domain) => existing.get(domain)).filter((entry): entry is EnterpriseDomain => Boolean(entry && !entry.active));
+  const additions = domains.filter((domain) => !existing.has(domain));
+  await Promise.all([
+    ...deactivate.map((entry) => supabaseRequest(`enterprise_domains?id=eq.${encodeURIComponent(entry.id)}`, { method: "PATCH", body: JSON.stringify({ is_active: false }) })),
+    ...reactivate.map((entry) => supabaseRequest(`enterprise_domains?id=eq.${encodeURIComponent(entry.id)}`, { method: "PATCH", body: JSON.stringify({ is_active: true }) })),
+    additions.length ? supabaseRequest("enterprise_domains", { method: "POST", body: JSON.stringify(additions.map((domain) => ({ enterprise_id: id, domain, is_active: true }))) }) : Promise.resolve(),
+  ]);
+}
+
 export async function updateEnterprise(id: string, input: EnterpriseInput, previousDomains: EnterpriseDomain[]) {
   await supabaseRequest(`enterprises?id=eq.${encodeURIComponent(id)}`, {
     method: "PATCH",
     headers: { Prefer: "return=minimal" },
     body: JSON.stringify({ enterprise_code: input.enterprise_code, name: input.name, logo_url: input.logo_url, is_active: input.active }),
   });
-  const desired = new Set(input.domains);
-  const existing = new Map(previousDomains.map((entry) => [entry.domain.toLowerCase(), entry]));
-  const deactivate = previousDomains.filter((entry) => entry.active && !desired.has(entry.domain.toLowerCase()));
-  const reactivate = input.domains.map((domain) => existing.get(domain)).filter((entry): entry is EnterpriseDomain => Boolean(entry && !entry.active));
-  const additions = input.domains.filter((domain) => !existing.has(domain));
-  await Promise.all([
-    ...deactivate.map((entry) => supabaseRequest(`enterprise_domains?id=eq.${encodeURIComponent(entry.id)}`, { method: "PATCH", body: JSON.stringify({ is_active: false }) })),
-    ...reactivate.map((entry) => supabaseRequest(`enterprise_domains?id=eq.${encodeURIComponent(entry.id)}`, { method: "PATCH", body: JSON.stringify({ is_active: true }) })),
-    additions.length ? supabaseRequest("enterprise_domains", { method: "POST", body: JSON.stringify(additions.map((domain) => ({ enterprise_id: id, domain, is_active: true }))) }) : Promise.resolve(),
-  ]);
+  await syncEnterpriseDomains(id, input.domains, previousDomains);
+}
+
+export async function updateEnterpriseSettings(id: string, input: EnterpriseSettingsInput, previousDomains: EnterpriseDomain[]) {
+  await supabaseRequest(`enterprises?id=eq.${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify({ name: input.name, logo_url: input.logo_url }),
+  });
+  await syncEnterpriseDomains(id, input.domains, previousDomains);
 }
 
 export function setEnterpriseActive(id: string, active: boolean) {
