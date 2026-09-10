@@ -151,7 +151,7 @@ export default function EnterpriseSettingsPage() {
           <div><strong>Approved Domains</strong><span>Enterprise Admins can add or remove approved email domains.</span></div>
           <button onClick={() => setDomains((current) => [...current, ""])}>+ Add Domain</button>
         </div>
-        {domains.map((domain, index) => <div className="domain-row" key={`${index}-${domain}`}>
+        {domains.map((domain, index) => <div className="domain-row" key={index}>
           <input value={domain} onChange={(event) => updateDomain(index, event.target.value)} placeholder="example.com" />
           <button onClick={() => setDomains((current) => current.filter((_, domainIndex) => domainIndex !== index))}>Remove</button>
         </div>)}
