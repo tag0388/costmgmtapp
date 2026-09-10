@@ -1,5 +1,5 @@
-import AppShell from "@/components/app-shell";
+import AppShellContext from "@/components/app-shell-context";
 
 export default function WorkspaceLayout({ children }: { children: React.ReactNode }) {
-  return <AppShell>{children}</AppShell>;
+  return <AppShellContext>{children}</AppShellContext>;
 }
