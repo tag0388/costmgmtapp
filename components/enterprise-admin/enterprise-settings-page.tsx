@@ -9,7 +9,7 @@ import {
   updateEnterpriseSettings,
 } from "@/lib/enterprises";
 
-export default function EnterpriseSettingsPage() {
+export default function EnterpriseSettingsPage({ enterprisePublicId }: { enterprisePublicId?: string }) {
   const [enterprises, setEnterprises] = useState<Enterprise[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [name, setName] = useState("");
@@ -41,6 +41,7 @@ export default function EnterpriseSettingsPage() {
       setEnterprises(data);
       const next =
         data.find((enterprise) => enterprise.id === preferredId) ??
+        data.find((enterprise) => enterprise.public_id === enterprisePublicId) ??
         data.find((enterprise) => enterprise.active) ??
         data[0] ??
         null;
@@ -51,7 +52,7 @@ export default function EnterpriseSettingsPage() {
     } finally {
       setLoading(false);
     }
-  }, [applyEnterprise]);
+  }, [applyEnterprise, enterprisePublicId]);
 
   useEffect(() => {
     void refresh();
@@ -110,15 +111,15 @@ export default function EnterpriseSettingsPage() {
       </div>
     </div>
 
-    <section className="enterprise-grid-card enterprise-context-card">
+    {!enterprisePublicId && <section className="enterprise-grid-card enterprise-context-card">
       <div>
         <strong>Enterprise</strong>
-        <span>Temporary selector for testing. This will later come from the signed-in Enterprise Admin.</span>
+        <span>Temporary selector for legacy routes. Context routes use the enterprise selected in the top header.</span>
       </div>
       <select value={selectedId} onChange={(event) => selectEnterprise(event.target.value)} disabled={loading || enterprises.length === 0}>
         {enterprises.map((enterprise) => <option key={enterprise.id} value={enterprise.id}>{enterprise.enterprise_code} — {enterprise.name}</option>)}
       </select>
-    </section>
+    </section>}
 
     {error && <div className="form-error enterprise-settings-message">{error}</div>}
     {loading && <section className="enterprise-grid-card"><div className="data-message"><span className="spinner"/>Loading enterprise settings…</div></section>}
@@ -164,6 +165,6 @@ export default function EnterpriseSettingsPage() {
       </footer>
     </section>}
 
-    {!loading && !selected && <section className="enterprise-grid-card"><div className="data-message"><strong>No enterprises found</strong><span>Create an enterprise in System Admin first.</span></div></section>}
+    {!loading && !selected && <section className="enterprise-grid-card"><div className="data-message"><strong>Enterprise not found</strong><span>The selected enterprise context is not available.</span></div></section>}
   </div>;
 }
