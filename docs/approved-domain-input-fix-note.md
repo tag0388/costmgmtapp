@@ -1,0 +1,1 @@
+The Approved Domains editor must use a stable React key that does not include the current input value, otherwise the input remounts on every keystroke and loses focus.
