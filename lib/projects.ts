@@ -43,6 +43,7 @@ export type ProjectInput = {
 
 export type ProjectEnterpriseAttributeColumn = `e_attribute_${string}`;
 export type ProjectEnterpriseAttributeChanges = Partial<Record<ProjectEnterpriseAttributeColumn, string | null>>;
+export type ProjectImportRow = ProjectInput & ProjectEnterpriseAttributeChanges;
 
 const attributeColumns = Array.from({ length: 20 }, (_, index) => `e_attribute_${String(index + 1).padStart(2, "0")}`).join(",");
 const projectSelect = `id,public_id,enterprise_id,project_code,name,status,created_by,created_at,updated_at,${attributeColumns}`;
@@ -90,6 +91,31 @@ export function updateProjectEnterpriseAttributes(projectIds: string[], changes:
     method: "PATCH",
     headers: { Prefer: "return=representation" },
     body: JSON.stringify({ ...changes, updated_at: new Date().toISOString() }),
+  });
+}
+
+export function upsertProjects(rows: ProjectImportRow[]) {
+  if (rows.length === 0) return Promise.resolve([] as Project[]);
+  const stamped = rows.map((row) => ({ ...row, updated_at: new Date().toISOString() }));
+  return supabaseRequest<Project[]>(`projects?on_conflict=enterprise_id,project_code&select=${encodeURIComponent(projectSelect)}`, {
+    method: "POST",
+    headers: { Prefer: "resolution=merge-duplicates,return=representation" },
+    body: JSON.stringify(stamped),
+  });
+}
+
+export function deleteProjects(projectIds: string[]) {
+  if (projectIds.length === 0) return Promise.resolve();
+  return supabaseRequest<void>(`projects?id=in.(${projectIds.join(",")})`, {
+    method: "DELETE",
+    headers: { Prefer: "return=minimal" },
+  });
+}
+
+export function deleteProjectsByEnterprise(enterpriseId: string) {
+  return supabaseRequest<void>(`projects?enterprise_id=eq.${encodeURIComponent(enterpriseId)}`, {
+    method: "DELETE",
+    headers: { Prefer: "return=minimal" },
   });
 }
 
