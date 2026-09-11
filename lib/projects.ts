@@ -1,7 +1,8 @@
 import { SupabaseRequestError, supabaseRequest } from "@/lib/supabase/browser";
 
 export type ProjectStatus = "Active" | "Inactive";
-export type EnterpriseAttributeKey = `e_attribute_${string}`;
+type AttributeNumberString = "01" | "02" | "03" | "04" | "05" | "06" | "07" | "08" | "09" | "10" | "11" | "12" | "13" | "14" | "15" | "16" | "17" | "18" | "19" | "20";
+export type EnterpriseAttributeKey = `e_attribute_${AttributeNumberString}`;
 
 export type Project = {
   id: string;
@@ -45,8 +46,8 @@ export type ProjectInput = {
 const enterpriseAttributeColumns = Array.from({ length: 20 }, (_, index) => `e_attribute_${String(index + 1).padStart(2, "0")}`).join(",");
 const projectSelect = `id,public_id,enterprise_id,project_code,name,status,created_by,created_at,updated_at,${enterpriseAttributeColumns}`;
 
-export function enterpriseAttributeKey(attributeNumber: number) {
-  return `e_attribute_${String(attributeNumber).padStart(2, "0")}` as keyof Project;
+export function enterpriseAttributeKey(attributeNumber: number): EnterpriseAttributeKey {
+  return `e_attribute_${String(attributeNumber).padStart(2, "0")}` as EnterpriseAttributeKey;
 }
 
 export function listProjectsByEnterprise(enterpriseId: string) {
@@ -85,7 +86,7 @@ export function setProjectStatus(projectId: string, status: ProjectStatus) {
   }).then((rows) => rows[0]);
 }
 
-export function updateProjectAttributes(projectIds: string[], changes: Record<string, string | null>) {
+export function updateProjectAttributes(projectIds: string[], changes: Partial<Record<EnterpriseAttributeKey, string | null>>) {
   if (projectIds.length === 0 || Object.keys(changes).length === 0) return Promise.resolve();
   const filter = projectIds.map((id) => `\"${id}\"`).join(",");
   return supabaseRequest<void>(`projects?id=in.(${filter})`, {
