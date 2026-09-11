@@ -41,7 +41,10 @@ type AttributeSet = {
   is_active: boolean;
 };
 
-const definitionSelect = "id,attribute_set_id,attribute_number,name,description,data_type,is_active,attribute_values(id,attribute_definition_id,value_id,value_name,sort_order,is_active)";
+type ProjectAttributeDefinitionRow = Omit<ProjectAttributeDefinition, "attribute_values">;
+
+const definitionBaseSelect = "id,attribute_set_id,attribute_number,name,description,data_type,is_active";
+const definitionSelect = `${definitionBaseSelect},attribute_values(id,attribute_definition_id,value_id,value_name,sort_order,is_active)`;
 
 export const PROJECT_ATTRIBUTE_SLOTS = Array.from({ length: 20 }, (_, index) => index + 1);
 
@@ -59,12 +62,20 @@ export async function getEnterpriseProjectAttributeSet(enterpriseId: string) {
 export async function ensureEnterpriseProjectAttributeSet(enterpriseId: string) {
   const existing = await getEnterpriseProjectAttributeSet(enterpriseId);
   if (existing) return existing;
-  const rows = await supabaseRequest<AttributeSet[]>("attribute_sets?select=id,enterprise_id,project_id,scope,category,is_active", {
-    method: "POST",
-    headers: { Prefer: "return=representation" },
-    body: JSON.stringify({ enterprise_id: enterpriseId, project_id: null, scope: "Enterprise", category: "Project", is_active: true }),
-  });
-  return rows[0];
+  try {
+    const rows = await supabaseRequest<AttributeSet[]>("attribute_sets?select=id,enterprise_id,project_id,scope,category,is_active", {
+      method: "POST",
+      headers: { Prefer: "return=representation" },
+      body: JSON.stringify({ enterprise_id: enterpriseId, project_id: null, scope: "Enterprise", category: "Project", is_active: true }),
+    });
+    return rows[0];
+  } catch (error) {
+    if (error instanceof SupabaseRequestError && error.code === "23505") {
+      const concurrent = await getEnterpriseProjectAttributeSet(enterpriseId);
+      if (concurrent) return concurrent;
+    }
+    throw error;
+  }
 }
 
 export async function listEnterpriseProjectAttributes(enterpriseId: string) {
@@ -77,6 +88,41 @@ export async function listEnterpriseProjectAttributes(enterpriseId: string) {
     ...definition,
     attribute_values: [...(definition.attribute_values ?? [])].sort((left, right) => left.sort_order - right.sort_order),
   }));
+}
+
+async function deactivateValues(valueIds: string[]) {
+  if (!valueIds.length) return;
+  await supabaseRequest(`attribute_values?id=in.(${valueIds.join(",")})`, {
+    method: "PATCH",
+    body: JSON.stringify({ is_active: false, updated_at: new Date().toISOString() }),
+  });
+}
+
+async function upsertValues(definitionId: string, existingValues: ProjectAttributeValue[], values: ProjectAttributeValueInput[], replace: boolean, onProgress?: (progress: number) => void) {
+  const cleanValues = values.map((value) => ({ value_id: value.value_id.trim(), value_name: value.value_name.trim() }));
+
+  if (replace) {
+    // Preserve historical IDs and references. Replacement means the imported list becomes
+    // the active list; values omitted from the workbook are soft-deleted.
+    await deactivateValues(existingValues.filter((value) => value.is_active).map((value) => value.id));
+  }
+
+  for (let index = 0; index < cleanValues.length; index += 1) {
+    const value = cleanValues[index];
+    const match = existingValues.find((entry) => entry.value_id.toLowerCase() === value.value_id.toLowerCase());
+    if (match) {
+      await supabaseRequest(`attribute_values?id=eq.${encodeURIComponent(match.id)}`, {
+        method: "PATCH",
+        body: JSON.stringify({ value_name: value.value_name, sort_order: index + 1, is_active: true, updated_at: new Date().toISOString() }),
+      });
+    } else {
+      await supabaseRequest("attribute_values", {
+        method: "POST",
+        body: JSON.stringify({ attribute_definition_id: definitionId, value_id: value.value_id, value_name: value.value_name, sort_order: index + 1, is_active: true }),
+      });
+    }
+    onProgress?.(((index + 1) / Math.max(cleanValues.length, 1)) * 100);
+  }
 }
 
 export async function saveEnterpriseProjectAttribute(enterpriseId: string, slot: number, input: ProjectAttributeInput) {
@@ -97,46 +143,33 @@ export async function saveEnterpriseProjectAttribute(enterpriseId: string, slot:
   };
 
   if (existing) {
-    const rows = await supabaseRequest<ProjectAttributeDefinition[]>(
-      `attribute_definitions?id=eq.${encodeURIComponent(existing.id)}&select=${encodeURIComponent(definitionSelect)}`,
+    const rows = await supabaseRequest<ProjectAttributeDefinitionRow[]>(
+      `attribute_definitions?id=eq.${encodeURIComponent(existing.id)}&select=${encodeURIComponent(definitionBaseSelect)}`,
       { method: "PATCH", headers: { Prefer: "return=representation" }, body: JSON.stringify(definitionBody) },
     );
-    definition = rows[0];
+    definition = { ...rows[0], attribute_values: existing.attribute_values };
   } else {
-    const rows = await supabaseRequest<ProjectAttributeDefinition[]>(
-      `attribute_definitions?select=${encodeURIComponent(definitionSelect)}`,
+    const rows = await supabaseRequest<ProjectAttributeDefinitionRow[]>(
+      `attribute_definitions?select=${encodeURIComponent(definitionBaseSelect)}`,
       { method: "POST", headers: { Prefer: "return=representation" }, body: JSON.stringify(definitionBody) },
     );
-    definition = rows[0];
+    definition = { ...rows[0], attribute_values: [] };
   }
 
   const existingValues = existing?.attribute_values ?? [];
-  const wanted = input.values.map((value, index) => ({ ...value, value_id: value.value_id.trim(), value_name: value.value_name.trim(), sort_order: index + 1 }));
-  const wantedIds = new Set(wanted.map((value) => value.value_id.toLowerCase()));
-
-  await Promise.all(existingValues.filter((value) => !wantedIds.has(value.value_id.toLowerCase())).map((value) =>
-    supabaseRequest(`attribute_values?id=eq.${encodeURIComponent(value.id)}`, {
-      method: "PATCH",
-      body: JSON.stringify({ is_active: false, updated_at: new Date().toISOString() }),
-    }),
-  ));
-
-  for (const value of wanted) {
-    const match = existingValues.find((existingValue) => existingValue.value_id.toLowerCase() === value.value_id.toLowerCase());
-    if (match) {
-      await supabaseRequest(`attribute_values?id=eq.${encodeURIComponent(match.id)}`, {
-        method: "PATCH",
-        body: JSON.stringify({ value_id: value.value_id, value_name: value.value_name, sort_order: value.sort_order, is_active: true, updated_at: new Date().toISOString() }),
-      });
-    } else {
-      await supabaseRequest("attribute_values", {
-        method: "POST",
-        body: JSON.stringify({ attribute_definition_id: definition.id, value_id: value.value_id, value_name: value.value_name, sort_order: value.sort_order, is_active: true }),
-      });
-    }
-  }
-
+  const wantedIds = new Set(input.values.map((value) => value.value_id.trim().toLowerCase()));
+  const removedIds = existingValues.filter((value) => value.is_active && !wantedIds.has(value.value_id.toLowerCase())).map((value) => value.id);
+  await deactivateValues(removedIds);
+  await upsertValues(definition.id, existingValues, input.values, false);
   return definition;
+}
+
+export async function importEnterpriseProjectAttributeValues(definition: ProjectAttributeDefinition, values: ProjectAttributeValueInput[], replace: boolean, onProgress?: (progress: number) => void) {
+  await upsertValues(definition.id, definition.attribute_values ?? [], values, replace, onProgress);
+}
+
+export async function deleteProjectAttributeValues(valueIds: string[]) {
+  await deactivateValues(valueIds);
 }
 
 export function projectAttributeErrorMessage(error: unknown) {
