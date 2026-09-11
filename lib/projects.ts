@@ -43,6 +43,7 @@ export type ProjectInput = {
 
 export type ProjectEnterpriseAttributeColumn = `e_attribute_${string}`;
 export type ProjectEnterpriseAttributeChanges = Partial<Record<ProjectEnterpriseAttributeColumn, string | null>>;
+export type ProjectImportRow = Omit<ProjectInput, "enterprise_id"> & ProjectEnterpriseAttributeChanges;
 
 const attributeColumns = Array.from({ length: 20 }, (_, index) => `e_attribute_${String(index + 1).padStart(2, "0")}`).join(",");
 const projectSelect = `id,public_id,enterprise_id,project_code,name,status,created_by,created_at,updated_at,${attributeColumns}`;
@@ -59,7 +60,7 @@ export function getProjectByPublicId(publicId: string) {
   ).then((rows) => rows[0] ?? null);
 }
 
-export function createProject(input: ProjectInput) {
+export function createProject(input: ProjectInput & ProjectEnterpriseAttributeChanges) {
   return supabaseRequest<Project[]>(`projects?select=${encodeURIComponent(projectSelect)}`, {
     method: "POST",
     headers: { Prefer: "return=representation" },
@@ -67,7 +68,7 @@ export function createProject(input: ProjectInput) {
   }).then((rows) => rows[0]);
 }
 
-export function updateProject(projectId: string, input: Omit<ProjectInput, "enterprise_id">) {
+export function updateProject(projectId: string, input: Omit<ProjectInput, "enterprise_id"> & ProjectEnterpriseAttributeChanges) {
   return supabaseRequest<Project[]>(`projects?id=eq.${encodeURIComponent(projectId)}&select=${encodeURIComponent(projectSelect)}`, {
     method: "PATCH",
     headers: { Prefer: "return=representation" },
@@ -85,12 +86,30 @@ export function setProjectStatus(projectId: string, status: ProjectStatus) {
 
 export function updateProjectEnterpriseAttributes(projectIds: string[], changes: ProjectEnterpriseAttributeChanges) {
   if (projectIds.length === 0 || Object.keys(changes).length === 0) return Promise.resolve([] as Project[]);
-  const filter = projectIds.join(",");
-  return supabaseRequest<Project[]>(`projects?id=in.(${filter})&select=${encodeURIComponent(projectSelect)}`, {
+  return supabaseRequest<Project[]>(`projects?id=in.(${projectIds.join(",")})&select=${encodeURIComponent(projectSelect)}`, {
     method: "PATCH",
     headers: { Prefer: "return=representation" },
     body: JSON.stringify({ ...changes, updated_at: new Date().toISOString() }),
   });
+}
+
+export async function deleteProjects(projectIds: string[]) {
+  if (!projectIds.length) return;
+  await supabaseRequest(`projects?id=in.(${projectIds.join(",")})`, { method: "DELETE" });
+}
+
+export async function importProjects(enterpriseId: string, rows: ProjectImportRow[], replace: boolean, onProgress?: (progress: number) => void) {
+  const existing = await listProjectsByEnterprise(enterpriseId);
+  if (replace && existing.length) await deleteProjects(existing.map((project) => project.id));
+  const existingByCode = new Map(existing.map((project) => [project.project_code.toLowerCase(), project]));
+
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index];
+    const match = replace ? null : existingByCode.get(row.project_code.toLowerCase()) ?? null;
+    if (match) await updateProject(match.id, row);
+    else await createProject({ enterprise_id: enterpriseId, ...row });
+    onProgress?.(((index + 1) / Math.max(rows.length, 1)) * 100);
+  }
 }
 
 export function projectErrorMessage(error: unknown) {
