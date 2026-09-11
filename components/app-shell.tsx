@@ -55,7 +55,7 @@ const iconPaths: Record<string, React.ReactNode> = {
   table: <><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11M15 9v11"/></>,
   tag: <><path d="M20 13 13 20 3 10V3h7l10 10Z"/><circle cx="7.5" cy="7.5" r="1"/></>,
   sliders: <><path d="M4 6h16M4 12h16M4 18h16"/><circle cx="9" cy="6" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="7" cy="18" r="2"/></>,
-  users: <><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8"/></>,
+  users: <><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 1-3-3.9M16 3.1a4 4 0 0 1 0 7.8"/></>,
   info: <><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7h.01"/></>,
   flag: <><path d="M5 22V3M5 4h12l-2 4 2 4H5"/></>,
   folder: <path d="M3 5h7l2 3h9v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5Z"/>,
@@ -99,7 +99,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const selectedProject = useMemo(() => projects.find((entry) => entry.public_id === route.projectPublicId) ?? projects[0] ?? null, [projects, route.projectPublicId]);
   const workspaceTitle = activeItem?.name ?? activeModule.name;
   const enterpriseEnabled = activeModule.path !== "/system-admin" && activeModule.path !== "/my-profile";
-  const projectEnabled = activeModule.scope === "project";
+  const projectEnabled = enterpriseEnabled;
 
   const loadProjects = useCallback(async (enterprise: Enterprise | null) => {
     if (!enterprise) { setProjects([]); return []; }
