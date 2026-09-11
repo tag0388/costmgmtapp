@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Enterprise, listEnterprises } from "@/lib/enterprises";
+import { AttributeDefinition, ensureEnterpriseProjectAttributes, projectAttributeErrorMessage } from "@/lib/project-attributes";
 import {
   createProject,
   listProjectsByEnterprise,
@@ -12,6 +13,7 @@ import {
   projectErrorMessage,
   setProjectStatus,
   updateProject,
+  updateProjectAttributes,
 } from "@/lib/projects";
 
 type StatusFilter = "all" | "active" | "inactive";
@@ -21,13 +23,16 @@ export default function EnterpriseProjectsPage({ enterprisePublicId }: { enterpr
   const router = useRouter();
   const [enterprise, setEnterprise] = useState<Enterprise | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [definitions, setDefinitions] = useState<AttributeDefinition[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<StatusFilter>("all");
   const [selected, setSelected] = useState<Project | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [editing, setEditing] = useState<Project | "new" | null>(null);
+  const [editingAttributes, setEditingAttributes] = useState(false);
   const [confirming, setConfirming] = useState<Project | null>(null);
   const [sort, setSort] = useState<{ key: SortKey; direction: "asc" | "desc" }>({ key: "project_code", direction: "asc" });
 
@@ -40,10 +45,16 @@ export default function EnterpriseProjectsPage({ enterprisePublicId }: { enterpr
       setEnterprise(currentEnterprise);
       if (!currentEnterprise) {
         setProjects([]);
+        setDefinitions([]);
         setError("The selected enterprise could not be found.");
         return;
       }
-      setProjects(await listProjectsByEnterprise(currentEnterprise.id));
+      const [projectRows, attributeRows] = await Promise.all([
+        listProjectsByEnterprise(currentEnterprise.id),
+        ensureEnterpriseProjectAttributes(currentEnterprise.id),
+      ]);
+      setProjects(projectRows);
+      setDefinitions(attributeRows);
     } catch (requestError) {
       setError(projectErrorMessage(requestError));
     } finally {
@@ -51,10 +62,7 @@ export default function EnterpriseProjectsPage({ enterprisePublicId }: { enterpr
     }
   }, [enterprisePublicId]);
 
-  useEffect(() => {
-    const request = window.setTimeout(() => void refresh(), 0);
-    return () => window.clearTimeout(request);
-  }, [refresh]);
+  useEffect(() => { void refresh(); }, [refresh]);
 
   const rows = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -71,6 +79,8 @@ export default function EnterpriseProjectsPage({ enterprisePublicId }: { enterpr
       });
   }, [projects, search, sort, status]);
 
+  const selectedProjects = projects.filter((project) => selectedIds.has(project.id));
+
   function changeSort(key: SortKey) {
     setSort((current) => ({ key, direction: current.key === key && current.direction === "asc" ? "desc" : "asc" }));
   }
@@ -78,6 +88,23 @@ export default function EnterpriseProjectsPage({ enterprisePublicId }: { enterpr
   function showNotice(message: string) {
     setNotice(message);
     window.setTimeout(() => setNotice(""), 3500);
+  }
+
+  function toggleSelected(projectId: string) {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(projectId)) next.delete(projectId); else next.add(projectId);
+      return next;
+    });
+  }
+
+  function toggleAllVisible() {
+    const allSelected = rows.length > 0 && rows.every((project) => selectedIds.has(project.id));
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      rows.forEach((project) => allSelected ? next.delete(project.id) : next.add(project.id));
+      return next;
+    });
   }
 
   async function toggleStatus(project: Project) {
@@ -98,12 +125,16 @@ export default function EnterpriseProjectsPage({ enterprisePublicId }: { enterpr
     router.push(`/enterprises/${enterprisePublicId}/projects/${project.public_id}/project-dashboard/overview`);
   }
 
-  return <div className="enterprise-admin-page">
+  function displayAttributeValue(definition: AttributeDefinition, project: Project) {
+    const key = `e_attribute_${String(definition.attribute_number).padStart(2, "0")}`;
+    const valueId = project[key];
+    if (!valueId) return "—";
+    return definition.values.find((value) => value.value_id === valueId)?.value_name ?? valueId;
+  }
+
+  return <div className="enterprise-admin-page enterprise-projects-page">
     <div className="enterprise-page-title">
-      <div>
-        <h2>Enterprise Projects</h2>
-        <p>Manage projects available within {enterprise?.name ?? "this enterprise"}.</p>
-      </div>
+      <div><h2>Enterprise Projects</h2><p>Manage projects and enterprise-defined project attributes for {enterprise?.name ?? "this enterprise"}.</p></div>
       <button className="button primary" disabled={!enterprise} onClick={() => setEditing("new")}>+ Add Project</button>
     </div>
 
@@ -112,36 +143,62 @@ export default function EnterpriseProjectsPage({ enterprisePublicId }: { enterpr
         <label className="enterprise-search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search code, name or public ID…" aria-label="Search projects" /></label>
         <label className="status-filter"><span>Status</span><select value={status} onChange={(event) => setStatus(event.target.value as StatusFilter)}><option value="all">All</option><option value="active">Active</option><option value="inactive">Inactive</option></select></label>
         <button className="button secondary" onClick={() => void refresh()} disabled={loading}>↻ Refresh</button>
+        <button className="button secondary" disabled={selectedIds.size === 0} onClick={() => setEditingAttributes(true)}>Edit Attributes ({selectedIds.size})</button>
         <button className="button secondary" disabled={!selected} onClick={() => selected && openProject(selected)}>Open Project</button>
         <button className="button secondary" disabled={!selected} onClick={() => selected && setEditing(selected)}>Edit</button>
         <button className="button secondary" disabled={!selected} onClick={() => selected && (selected.status === "Active" ? setConfirming(selected) : void toggleStatus(selected))}>{selected?.status === "Active" ? "Deactivate" : "Activate"}</button>
       </div>
 
       {error && <div className="data-message error"><strong>Unable to load projects</strong><span>{error}</span><button onClick={() => void refresh()}>Try again</button></div>}
-      {!error && loading && <div className="data-message"><span className="spinner"/>Loading projects…</div>}
+      {!error && loading && <div className="data-message"><span className="spinner"/>Loading projects and attributes…</div>}
       {!error && !loading && rows.length === 0 && <div className="data-message"><strong>No projects found</strong><span>{projects.length ? "Try changing the search or status filter." : "Add the first project for this enterprise when you are ready."}</span></div>}
-      {!error && !loading && rows.length > 0 && <div className="enterprise-table-wrap"><table className="enterprise-table"><thead><tr><Sortable label="Project Code" column="project_code" sort={sort} onSort={changeSort}/><Sortable label="Project Name" column="name" sort={sort} onSort={changeSort}/><Sortable label="Status" column="status" sort={sort} onSort={changeSort}/><th>Public ID</th><Sortable label="Created Date" column="created_at" sort={sort} onSort={changeSort}/><Sortable label="Updated Date" column="updated_at" sort={sort} onSort={changeSort}/></tr></thead><tbody>{rows.map((project) => <tr key={project.id} className={selected?.id === project.id ? "selected" : ""} onClick={() => setSelected(project)} onDoubleClick={() => openProject(project)} tabIndex={0} onKeyDown={(event) => event.key === "Enter" && openProject(project)}><td className="enterprise-code">{project.project_code}</td><td>{project.name}</td><td><StatusBadge status={project.status}/></td><td className="created-by" title={project.public_id}>{project.public_id}</td><td>{formatDate(project.created_at)}</td><td>{formatDate(project.updated_at)}</td></tr>)}</tbody></table></div>}
-      <div className="grid-footer"><span>{rows.length} of {projects.length} projects</span><span>Select a row to manage · Double-click to open project</span></div>
+      {!error && !loading && rows.length > 0 && <div className="enterprise-table-wrap project-attribute-table-wrap"><table className="enterprise-table project-attribute-table"><thead><tr><th className="selection-column"><input type="checkbox" aria-label="Select all visible projects" checked={rows.length > 0 && rows.every((project) => selectedIds.has(project.id))} onChange={toggleAllVisible}/></th><Sortable label="Project Code" column="project_code" sort={sort} onSort={changeSort}/><Sortable label="Project Name" column="name" sort={sort} onSort={changeSort}/><Sortable label="Status" column="status" sort={sort} onSort={changeSort}/>{definitions.map((definition) => <th key={definition.id} title={`E_${String(definition.attribute_number).padStart(2, "0")}${definition.description ? ` — ${definition.description}` : ""}`}><span className="attribute-column-number">E_{String(definition.attribute_number).padStart(2, "0")}</span>{definition.name}</th>)}<th>Public ID</th><Sortable label="Updated Date" column="updated_at" sort={sort} onSort={changeSort}/></tr></thead><tbody>{rows.map((project) => <tr key={project.id} className={selected?.id === project.id ? "selected" : ""} onClick={() => setSelected(project)} onDoubleClick={() => openProject(project)}><td className="selection-column" onClick={(event) => event.stopPropagation()}><input type="checkbox" aria-label={`Select ${project.project_code}`} checked={selectedIds.has(project.id)} onChange={() => toggleSelected(project.id)}/></td><td className="enterprise-code">{project.project_code}</td><td>{project.name}</td><td><StatusBadge status={project.status}/></td>{definitions.map((definition) => <td key={definition.id} className="attribute-cell">{displayAttributeValue(definition, project)}</td>)}<td className="created-by" title={project.public_id}>{project.public_id}</td><td>{formatDate(project.updated_at)}</td></tr>)}</tbody></table></div>}
+      <div className="grid-footer"><span>{rows.length} of {projects.length} projects · {selectedIds.size} selected</span><span>20 enterprise attribute columns remain stable across all projects</span></div>
     </section>
 
     {editing && enterprise && <ProjectDrawer enterprise={enterprise} project={editing === "new" ? null : editing} onClose={() => setEditing(null)} onSaved={async (message) => { setEditing(null); showNotice(message); setSelected(null); await refresh(); }}/>} 
+    {editingAttributes && selectedProjects.length > 0 && <ProjectAttributesDrawer projects={selectedProjects} definitions={definitions} onClose={() => setEditingAttributes(false)} onSaved={async (message) => { setEditingAttributes(false); setSelectedIds(new Set()); showNotice(message); await refresh(); }}/>} 
     {confirming && <ConfirmDialog project={confirming} onCancel={() => setConfirming(null)} onConfirm={() => void toggleStatus(confirming)}/>} 
     {notice && <div className="admin-toast" role="status">✓ {notice}</div>}
   </div>;
 }
 
-function Sortable({ label, column, sort, onSort }: { label: string; column: SortKey; sort: { key: SortKey; direction: "asc" | "desc" }; onSort: (key: SortKey) => void }) {
-  return <th><button onClick={() => onSort(column)}>{label}<span>{sort.key === column ? (sort.direction === "asc" ? "↑" : "↓") : "↕"}</span></button></th>;
+function ProjectAttributesDrawer({ projects, definitions, onClose, onSaved }: { projects: Project[]; definitions: AttributeDefinition[]; onClose: () => void; onSaved: (message: string) => Promise<void> }) {
+  const single = projects.length === 1 ? projects[0] : null;
+  const initial = Object.fromEntries(definitions.map((definition) => {
+    const key = `e_attribute_${String(definition.attribute_number).padStart(2, "0")}`;
+    return [key, single ? (single[key] ?? "") : "__KEEP__"];
+  }));
+  const [values, setValues] = useState<Record<string, string>>(initial);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  async function save() {
+    const changes: Record<string, string | null> = {};
+    definitions.forEach((definition) => {
+      const key = `e_attribute_${String(definition.attribute_number).padStart(2, "0")}`;
+      const value = values[key];
+      if (value !== "__KEEP__") changes[key] = value || null;
+    });
+    if (!Object.keys(changes).length) { setError("Choose at least one attribute to update."); return; }
+    setSaving(true);
+    setError("");
+    try {
+      await updateProjectAttributes(projects.map((project) => project.id), changes);
+      await onSaved(`${projects.length} project${projects.length === 1 ? "" : "s"} updated.`);
+    } catch (requestError) {
+      setError(projectAttributeErrorMessage(requestError));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return <><button className="drawer-scrim" onClick={onClose} aria-label="Close project attribute editor"/><aside className="admin-drawer project-attribute-drawer" role="dialog" aria-modal="true"><header><div><span>Enterprise Project Attributes</span><h2>{single ? `Edit ${single.project_code}` : `Bulk Edit ${projects.length} Projects`}</h2></div><button onClick={onClose} aria-label="Close">×</button></header><div className="drawer-body">{error && <div className="form-error">{error}</div>} {!single && <div className="form-warning">Only attributes you change below will be applied to all selected projects. “No change” preserves each project’s current value.</div>}<div className="bulk-attribute-grid">{definitions.map((definition) => { const key = `e_attribute_${String(definition.attribute_number).padStart(2, "0")}`; const activeValues = definition.values.filter((value) => value.is_active); return <label className="form-field" key={definition.id}><span><strong>E_{String(definition.attribute_number).padStart(2, "0")} · {definition.name}</strong></span><select value={values[key]} onChange={(event) => setValues((current) => ({ ...current, [key]: event.target.value }))} disabled={!definition.is_active}>{!single && <option value="__KEEP__">— No change —</option>}<option value="">— Clear value —</option>{activeValues.map((value) => <option key={value.id} value={value.value_id}>{value.value_id} — {value.value_name}</option>)}</select></label>; })}</div></div><footer><button className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={saving} onClick={() => void save()}>{saving ? "Saving…" : `Apply to ${projects.length} Project${projects.length === 1 ? "" : "s"}`}</button></footer></aside></>;
 }
 
-function StatusBadge({ status }: { status: ProjectStatus }) {
-  const active = status === "Active";
-  return <span className={`enterprise-status ${active ? "active" : "inactive"}`}><i/>{status}</span>;
-}
-
-function formatDate(value: string) {
-  return new Intl.DateTimeFormat("en-AU", { day: "2-digit", month: "short", year: "numeric" }).format(new Date(value));
-}
+function Sortable({ label, column, sort, onSort }: { label: string; column: SortKey; sort: { key: SortKey; direction: "asc" | "desc" }; onSort: (key: SortKey) => void }) { return <th><button onClick={() => onSort(column)}>{label}<span>{sort.key === column ? (sort.direction === "asc" ? "↑" : "↓") : "↕"}</span></button></th>; }
+function StatusBadge({ status }: { status: ProjectStatus }) { const active = status === "Active"; return <span className={`enterprise-status ${active ? "active" : "inactive"}`}><i/>{status}</span>; }
+function formatDate(value: string) { return new Intl.DateTimeFormat("en-AU", { day: "2-digit", month: "short", year: "numeric" }).format(new Date(value)); }
 
 function ProjectDrawer({ enterprise, project, onClose, onSaved }: { enterprise: Enterprise; project: Project | null; onClose: () => void; onSaved: (message: string) => Promise<void> }) {
   const [code, setCode] = useState(project?.project_code ?? "");
@@ -149,39 +206,10 @@ function ProjectDrawer({ enterprise, project, onClose, onSaved }: { enterprise: 
   const [status, setStatus] = useState<ProjectStatus>(project?.status ?? "Active");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-
-  function validate() {
-    if (!code.trim()) return "Project Code is required.";
-    if (code.trim().length > 30) return "Project Code must be 30 characters or fewer.";
-    if (!name.trim()) return "Project Name is required.";
-    if (name.trim().length > 120) return "Project Name must be 120 characters or fewer.";
-    return "";
-  }
-
-  async function save() {
-    const validation = validate();
-    if (validation) { setError(validation); return; }
-    setSaving(true);
-    setError("");
-    const input: ProjectInput = { enterprise_id: enterprise.id, project_code: code.trim(), name: name.trim(), status };
-    try {
-      if (project) await updateProject(project.id, { project_code: input.project_code, name: input.name, status: input.status });
-      else await createProject(input);
-      await onSaved(`${input.name} was ${project ? "updated" : "created"}.`);
-    } catch (requestError) {
-      setError(projectErrorMessage(requestError));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return <><button className="drawer-scrim" onClick={onClose} aria-label="Close project editor"/><aside className="admin-drawer" role="dialog" aria-modal="true" aria-labelledby="project-drawer-title"><header><div><span>Enterprise Administration</span><h2 id="project-drawer-title">{project ? "Edit Project" : "Add Project"}</h2></div><button onClick={onClose} aria-label="Close">×</button></header><div className="drawer-body">{error && <div className="form-error">{error}</div>}<div className="form-grid"><FormField label="Enterprise"><input value={`${enterprise.enterprise_code} — ${enterprise.name}`} readOnly disabled /></FormField><FormField label="Project Code" required hint={`${code.length}/30`}><input value={code} maxLength={30} onChange={(event) => setCode(event.target.value)} autoFocus /></FormField><FormField label="Project Name" required hint={`${name.length}/120`}><input value={name} maxLength={120} onChange={(event) => setName(event.target.value)} /></FormField><FormField label="Status"><select value={status} onChange={(event) => setStatus(event.target.value as ProjectStatus)}><option value="Active">Active</option><option value="Inactive">Inactive</option></select></FormField>{project && <FormField label="Public ID"><input value={project.public_id} readOnly disabled /></FormField>}</div></div><footer><button className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={saving} onClick={() => void save()}>{saving ? "Saving…" : project ? "Save Changes" : "Add Project"}</button></footer></aside></>;
+  function validate() { if (!code.trim()) return "Project Code is required."; if (code.trim().length > 30) return "Project Code must be 30 characters or fewer."; if (!name.trim()) return "Project Name is required."; if (name.trim().length > 120) return "Project Name must be 120 characters or fewer."; return ""; }
+  async function save() { const validation = validate(); if (validation) { setError(validation); return; } setSaving(true); setError(""); const input: ProjectInput = { enterprise_id: enterprise.id, project_code: code.trim(), name: name.trim(), status }; try { if (project) await updateProject(project.id, { project_code: input.project_code, name: input.name, status: input.status }); else await createProject(input); await onSaved(`${input.name} was ${project ? "updated" : "created"}.`); } catch (requestError) { setError(projectErrorMessage(requestError)); } finally { setSaving(false); } }
+  return <><button className="drawer-scrim" onClick={onClose} aria-label="Close project editor"/><aside className="admin-drawer" role="dialog" aria-modal="true"><header><div><span>Enterprise Administration</span><h2>{project ? "Edit Project" : "Add Project"}</h2></div><button onClick={onClose} aria-label="Close">×</button></header><div className="drawer-body">{error && <div className="form-error">{error}</div>}<div className="form-grid"><FormField label="Enterprise"><input value={`${enterprise.enterprise_code} — ${enterprise.name}`} readOnly disabled /></FormField><FormField label="Project Code" required hint={`${code.length}/30`}><input value={code} maxLength={30} onChange={(event) => setCode(event.target.value)} autoFocus /></FormField><FormField label="Project Name" required hint={`${name.length}/120`}><input value={name} maxLength={120} onChange={(event) => setName(event.target.value)} /></FormField><FormField label="Status"><select value={status} onChange={(event) => setStatus(event.target.value as ProjectStatus)}><option value="Active">Active</option><option value="Inactive">Inactive</option></select></FormField>{project && <FormField label="Public ID"><input value={project.public_id} readOnly disabled /></FormField>}</div></div><footer><button className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={saving} onClick={() => void save()}>{saving ? "Saving…" : project ? "Save Changes" : "Add Project"}</button></footer></aside></>;
 }
 
-function FormField({ label, required, hint, children }: { label: string; required?: boolean; hint?: string; children: React.ReactNode }) {
-  return <label className="form-field"><span><strong>{label}{required && <b> *</b>}</strong>{hint && <small>{hint}</small>}</span>{children}</label>;
-}
-
-function ConfirmDialog({ project, onCancel, onConfirm }: { project: Project; onCancel: () => void; onConfirm: () => void }) {
-  return <div className="confirm-layer"><button className="confirm-scrim" onClick={onCancel} aria-label="Cancel deactivation"/><div className="confirm-dialog" role="alertdialog" aria-modal="true"><div className="confirm-icon">!</div><h2>Deactivate project?</h2><p><strong>{project.name}</strong> will become inactive. Existing project data will remain available for reporting and can be reactivated later.</p><div><button className="button secondary" onClick={onCancel}>Cancel</button><button className="button danger" onClick={onConfirm}>Deactivate</button></div></div></div>;
-}
+function FormField({ label, required, hint, children }: { label: string; required?: boolean; hint?: string; children: React.ReactNode }) { return <label className="form-field"><span><strong>{label}{required && <b> *</b>}</strong>{hint && <small>{hint}</small>}</span>{children}</label>; }
+function ConfirmDialog({ project, onCancel, onConfirm }: { project: Project; onCancel: () => void; onConfirm: () => void }) { return <div className="confirm-layer"><button className="confirm-scrim" onClick={onCancel} aria-label="Cancel deactivation"/><div className="confirm-dialog" role="alertdialog" aria-modal="true"><div className="confirm-icon">!</div><h2>Deactivate project?</h2><p><strong>{project.name}</strong> will become inactive. Existing project data will remain available for reporting and can be reactivated later.</p><div><button className="button secondary" onClick={onCancel}>Cancel</button><button className="button danger" onClick={onConfirm}>Deactivate</button></div></div></div>; }
