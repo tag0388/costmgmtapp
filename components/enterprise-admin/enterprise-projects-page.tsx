@@ -26,7 +26,7 @@ export default function EnterpriseProjectsPage({ enterprisePublicId }: { enterpr
       const enterpriseRow = await getEnterpriseByPublicId(enterprisePublicId);
       if (!enterpriseRow) throw new Error("Enterprise not found.");
       setEnterprise(enterpriseRow);
-      setProjects(await listProjectsByEnterprise(enterpriseRow.id));
+      setProjects(await listProjectsByEnterprise(enterpriseRow.id, true));
     } catch (e) { setError(projectErrorMessage(e)); }
     finally { setLoading(false); }
   }, [enterprisePublicId]);
