@@ -45,8 +45,8 @@ const definitionSelect = "id,attribute_set_id,attribute_number,name,description,
 
 export const PROJECT_ATTRIBUTE_SLOTS = Array.from({ length: 20 }, (_, index) => index + 1);
 
-export function projectAttributeColumn(slot: number) {
-  return `e_attribute_${String(slot).padStart(2, "0")}`;
+export function projectAttributeColumn(slot: number): `e_attribute_${string}` {
+  return `e_attribute_${String(slot).padStart(2, "0")}` as `e_attribute_${string}`;
 }
 
 export async function getEnterpriseProjectAttributeSet(enterpriseId: string) {
