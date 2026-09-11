@@ -13,7 +13,7 @@ export type Project = {
   created_by: string | null;
   created_at: string;
   updated_at: string;
-} & Record<EnterpriseAttributeKey, string | null>;
+} & Record<string, string | null>;
 
 export type ProjectInput = {
   enterprise_id: string;
