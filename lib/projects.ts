@@ -67,8 +67,8 @@ export function setProjectStatus(projectId: string, status: ProjectStatus) {
 
 export function updateProjectAttributes(projectIds: string[], changes: Partial<Record<EnterpriseAttributeKey, string | null>>) {
   if (projectIds.length === 0 || Object.keys(changes).length === 0) return Promise.resolve();
-  const ids = `(${projectIds.map((id) => `"${id}"`).join(",")})`;
-  return supabaseRequest(`projects?id=in.${encodeURIComponent(ids)}`, {
+  const ids = projectIds.join(",");
+  return supabaseRequest(`projects?id=in.(${ids})`, {
     method: "PATCH",
     body: JSON.stringify({ ...changes, updated_at: new Date().toISOString() }),
   });
