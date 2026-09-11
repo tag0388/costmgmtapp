@@ -1,0 +1,37 @@
+.attribute-slots-wrap,
+.project-attributes-table-wrap { overflow: auto; }
+
+.attribute-slots-table { min-width: 1050px; }
+.attribute-slots-table td:nth-child(2) { font-weight: 700; }
+.attribute-slots-table td:nth-child(3) { min-width: 260px; }
+.attribute-slots-table td:nth-child(5) { min-width: 300px; color: #5d6673; }
+
+.attribute-admin-drawer { width: min(640px, 96vw); }
+.attribute-values-editor { margin-top: 26px; }
+.attribute-value-row { display: grid; grid-template-columns: 0.8fr 1.4fr auto; gap: 10px; align-items: center; margin-top: 10px; }
+.attribute-value-row input { min-width: 0; }
+.attribute-value-row button { border: 0; background: transparent; color: #b42318; cursor: pointer; font-weight: 700; }
+
+.project-attribute-table { min-width: 3400px; }
+.project-attribute-table th,
+.project-attribute-table td { white-space: nowrap; }
+.project-attribute-table .project-select-cell { width: 42px; text-align: center; }
+.project-attribute-table .project-select-cell input { width: 16px; height: 16px; cursor: pointer; }
+.project-attribute-table .attribute-cell { min-width: 145px; }
+.project-attribute-table .attribute-cell.inactive { color: #98a2b3; background: #fafafa; }
+
+.bulk-attribute-drawer { width: min(680px, 96vw); }
+.bulk-attribute-summary { padding: 12px 14px; border: 1px solid #dfe4ea; border-radius: 8px; background: #f8fafc; margin-bottom: 18px; }
+.bulk-attribute-summary strong { display: block; margin-bottom: 4px; }
+.bulk-attribute-summary span { color: #667085; font-size: 13px; }
+.bulk-attribute-grid { display: grid; gap: 12px; }
+.bulk-attribute-row { display: grid; grid-template-columns: 64px minmax(180px, 1fr) minmax(220px, 1.2fr); align-items: center; gap: 12px; }
+.bulk-attribute-row .slot-label { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #667085; }
+.bulk-attribute-row .attribute-name { font-weight: 700; }
+.bulk-attribute-row select { width: 100%; }
+.bulk-attribute-row.disabled { opacity: .55; }
+
+@media (max-width: 760px) {
+  .attribute-value-row,
+  .bulk-attribute-row { grid-template-columns: 1fr; }
+}

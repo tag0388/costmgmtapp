@@ -1,4 +1,5 @@
 import { SupabaseRequestError, supabaseRequest } from "@/lib/supabase/browser";
+import { EnterpriseAttributeColumn, enterpriseAttributeColumns } from "@/lib/project-attributes";
 
 export type ProjectStatus = "Active" | "Inactive";
 
@@ -12,7 +13,7 @@ export type Project = {
   created_by: string | null;
   created_at: string;
   updated_at: string;
-};
+} & Partial<Record<EnterpriseAttributeColumn, string | null>>;
 
 export type ProjectInput = {
   enterprise_id: string;
@@ -21,7 +22,18 @@ export type ProjectInput = {
   status: ProjectStatus;
 };
 
-const projectSelect = "id,public_id,enterprise_id,project_code,name,status,created_by,created_at,updated_at";
+const projectSelect = [
+  "id",
+  "public_id",
+  "enterprise_id",
+  "project_code",
+  "name",
+  "status",
+  "created_by",
+  "created_at",
+  "updated_at",
+  ...enterpriseAttributeColumns,
+].join(",");
 
 export function listProjectsByEnterprise(enterpriseId: string) {
   return supabaseRequest<Project[]>(
@@ -57,6 +69,16 @@ export function setProjectStatus(projectId: string, status: ProjectStatus) {
     headers: { Prefer: "return=representation" },
     body: JSON.stringify({ status, updated_at: new Date().toISOString() }),
   }).then((rows) => rows[0]);
+}
+
+export function updateProjectAttributes(projectIds: string[], updates: Partial<Record<EnterpriseAttributeColumn, string | null>>) {
+  if (projectIds.length === 0 || Object.keys(updates).length === 0) return Promise.resolve([] as Project[]);
+  const ids = projectIds.join(",");
+  return supabaseRequest<Project[]>(`projects?id=in.(${ids})&select=${encodeURIComponent(projectSelect)}`, {
+    method: "PATCH",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify({ ...updates, updated_at: new Date().toISOString() }),
+  });
 }
 
 export function projectErrorMessage(error: unknown) {
