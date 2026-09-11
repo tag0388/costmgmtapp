@@ -5,6 +5,7 @@ import ExcelImportDialog from "@/components/shared/excel-import-dialog";
 import { exportExcel, readExcel } from "@/lib/excel";
 import { Enterprise, listEnterprises } from "@/lib/enterprises";
 import {
+  deleteEnterpriseProjectAttributes,
   importProjectAttributeValues,
   listEnterpriseProjectAttributes,
   PROJECT_ATTRIBUTE_SLOTS,
@@ -26,6 +27,8 @@ export default function EnterpriseProjectAttributesPage({ enterprisePublicId }: 
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [editingSlot, setEditingSlot] = useState<number | null>(null);
+  const [selectedSlots, setSelectedSlots] = useState<number[]>([]);
+  const [deleteConfirm, setDeleteConfirm] = useState<ProjectAttributeDefinition[] | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -39,7 +42,9 @@ export default function EnterpriseProjectAttributesPage({ enterprisePublicId }: 
         setError("The selected enterprise could not be found.");
         return;
       }
-      setDefinitions(await listEnterpriseProjectAttributes(currentEnterprise.id));
+      const nextDefinitions = await listEnterpriseProjectAttributes(currentEnterprise.id);
+      setDefinitions(nextDefinitions);
+      setSelectedSlots((current) => current.filter((slot) => nextDefinitions.some((definition) => definition.attribute_number === slot)));
     } catch (requestError) {
       setError(projectAttributeErrorMessage(requestError));
     } finally {
@@ -54,10 +59,35 @@ export default function EnterpriseProjectAttributesPage({ enterprisePublicId }: 
 
   const bySlot = useMemo(() => new Map(definitions.map((definition) => [definition.attribute_number, definition])), [definitions]);
   const configuredCount = definitions.filter((definition) => definition.is_active).length;
+  const selectedDefinitions = useMemo(() => definitions.filter((definition) => selectedSlots.includes(definition.attribute_number)), [definitions, selectedSlots]);
+  const allConfiguredSelected = definitions.length > 0 && definitions.every((definition) => selectedSlots.includes(definition.attribute_number));
 
   function showNotice(message: string) {
     setNotice(message);
     window.setTimeout(() => setNotice(""), 3500);
+  }
+
+  function toggleSlot(slot: number, checked: boolean) {
+    setSelectedSlots((current) => checked ? Array.from(new Set([...current, slot])) : current.filter((item) => item !== slot));
+  }
+
+  function toggleAllConfigured(checked: boolean) {
+    setSelectedSlots(checked ? definitions.map((definition) => definition.attribute_number) : []);
+  }
+
+  async function confirmDeleteAttributes() {
+    if (!enterprise || !deleteConfirm?.length) return;
+    try {
+      await deleteEnterpriseProjectAttributes(enterprise.id, deleteConfirm);
+      showNotice(`${deleteConfirm.length} project attribute${deleteConfirm.length === 1 ? "" : "s"} deleted.`);
+      setDeleteConfirm(null);
+      setSelectedSlots([]);
+      window.dispatchEvent(new CustomEvent("costwise:projects-changed", { detail: { enterpriseId: enterprise.id } }));
+      await refresh();
+    } catch (requestError) {
+      setError(projectAttributeErrorMessage(requestError));
+      setDeleteConfirm(null);
+    }
   }
 
   return <div className="enterprise-admin-page project-attributes-page">
@@ -69,20 +99,21 @@ export default function EnterpriseProjectAttributesPage({ enterprisePublicId }: 
     <section className="enterprise-grid-card">
       <div className="enterprise-toolbar">
         <div className="attribute-help"><strong>Value List attributes</strong><span>Each slot has a stable number (01–20). Project records store the Value ID; the UI displays the Value Name.</span></div>
-        <button className="button secondary" onClick={() => void refresh()} disabled={loading}>↻ Refresh</button>
+        <div className="table-toolbar-actions"><button className="table-icon-button" onClick={() => void refresh()} disabled={loading} title="Refresh" aria-label="Refresh">↻</button><button className="table-icon-button danger-icon" disabled={selectedDefinitions.length === 0} title="Delete selected attributes" aria-label="Delete selected attributes" onClick={() => setDeleteConfirm(selectedDefinitions)}>⌫</button></div>
       </div>
 
       {error && <div className="data-message error"><strong>Unable to load project attributes</strong><span>{error}</span><button onClick={() => void refresh()}>Try again</button></div>}
       {!error && loading && <div className="data-message"><span className="spinner"/>Loading project attributes…</div>}
-      {!error && !loading && <div className="enterprise-table-wrap"><table className="enterprise-table attribute-definition-table"><thead><tr><th>Slot</th><th>Attribute Name</th><th>Status</th><th>Allowed Values</th><th>Description</th><th className="table-actions-column">Actions</th></tr></thead><tbody>{PROJECT_ATTRIBUTE_SLOTS.map((slot) => {
+      {!error && !loading && <div className="enterprise-table-wrap"><table className="enterprise-table attribute-definition-table"><thead><tr><th className="row-select"><input type="checkbox" aria-label="Select all configured attributes" checked={allConfiguredSelected} disabled={definitions.length === 0} onChange={(event) => toggleAllConfigured(event.target.checked)} /></th><th>Slot</th><th>Attribute Name</th><th>Status</th><th>Allowed Values</th><th>Description</th><th className="table-actions-column">Actions</th></tr></thead><tbody>{PROJECT_ATTRIBUTE_SLOTS.map((slot) => {
         const definition = bySlot.get(slot);
         const activeValues = definition?.attribute_values.filter((value) => value.is_active) ?? [];
-        return <tr key={slot}><td className="enterprise-code">E{String(slot).padStart(2, "0")}</td><td>{definition?.name ?? <em>Not configured</em>}</td><td>{definition ? <span className={`enterprise-status ${definition.is_active ? "active" : "inactive"}`}><i/>{definition.is_active ? "Active" : "Inactive"}</span> : <span className="muted-value">—</span>}</td><td><div className="attribute-value-summary">{activeValues.length ? activeValues.slice(0, 4).map((value) => <span key={value.id}>{value.value_id} — {value.value_name}</span>) : <em>None</em>}{activeValues.length > 4 && <small>+{activeValues.length - 4} more</small>}</div></td><td>{definition?.description || <span className="muted-value">—</span>}</td><td className="table-row-actions"><button className="table-icon-button" aria-label={`${definition ? "Edit" : "Configure"} E${String(slot).padStart(2, "0")}`} title={definition ? "Edit" : "Configure"} onClick={() => setEditingSlot(slot)}>✎</button></td></tr>;
+        return <tr key={slot}><td className="row-select"><input type="checkbox" aria-label={`Select E${String(slot).padStart(2, "0")}`} disabled={!definition} checked={!!definition && selectedSlots.includes(slot)} onChange={(event) => toggleSlot(slot, event.target.checked)} /></td><td className="enterprise-code">E{String(slot).padStart(2, "0")}</td><td>{definition?.name ?? <em>Not configured</em>}</td><td>{definition ? <span className={`enterprise-status ${definition.is_active ? "active" : "inactive"}`}><i/>{definition.is_active ? "Active" : "Inactive"}</span> : <span className="muted-value">—</span>}</td><td><div className="attribute-value-summary">{activeValues.length ? activeValues.slice(0, 4).map((value) => <span key={value.id}>{value.value_id} — {value.value_name}</span>) : <em>None</em>}{activeValues.length > 4 && <small>+{activeValues.length - 4} more</small>}</div></td><td>{definition?.description || <span className="muted-value">—</span>}</td><td className="table-row-actions"><button className="table-icon-button" aria-label={`${definition ? "Edit" : "Configure"} E${String(slot).padStart(2, "0")}`} title={definition ? "Edit" : "Configure"} onClick={() => setEditingSlot(slot)}>✎</button>{definition && <button className="table-icon-button danger-icon" aria-label={`Delete E${String(slot).padStart(2, "0")}`} title="Delete attribute" onClick={() => setDeleteConfirm([definition])}>⌫</button>}</td></tr>;
       })}</tbody></table></div>}
-      <div className="grid-footer"><span>20 stable enterprise project attribute slots</span><span>Excel import/export is available inside each configured attribute</span></div>
+      <div className="grid-footer"><span>20 stable enterprise project attribute slots · {selectedSlots.length} selected</span><span>Deleting an attribute clears that attribute from all enterprise projects</span></div>
     </section>
 
     {editingSlot && enterprise && <AttributeDrawer enterprise={enterprise} slot={editingSlot} definition={bySlot.get(editingSlot) ?? null} onClose={() => setEditingSlot(null)} onSaved={async (message) => { setEditingSlot(null); showNotice(message); await refresh(); }}/>} 
+    {deleteConfirm && <DeleteAttributesDialog definitions={deleteConfirm} onCancel={() => setDeleteConfirm(null)} onConfirm={() => void confirmDeleteAttributes()} />}
     {notice && <div className="admin-toast" role="status">✓ {notice}</div>}
   </div>;
 }
@@ -184,12 +215,11 @@ function AttributeDrawer({ enterprise, slot, definition, onClose, onSaved }: { e
     setProgress(0);
     try {
       await importProjectAttributeValues(definition.id, importState.values, deleteExisting, setProgress);
-      const nextValues = deleteExisting
-        ? importState.values
-        : mergeValues(values, importState.values);
+      const nextValues = deleteExisting ? importState.values : mergeValues(values, importState.values);
       setValues(nextValues.length ? nextValues : [{ value_id: "", value_name: "" }]);
+      const importedCount = importState.values.length;
       setImportState(null);
-      await onSaved(`${importState.values.length} value${importState.values.length === 1 ? "" : "s"} imported to E${String(slot).padStart(2, "0")}.`);
+      await onSaved(`${importedCount} value${importedCount === 1 ? "" : "s"} imported to E${String(slot).padStart(2, "0")}.`);
     } catch (requestError) {
       setError(projectAttributeErrorMessage(requestError));
     } finally {
@@ -215,4 +245,8 @@ function mergeValues(existing: ProjectAttributeValueInput[], incoming: ProjectAt
 
 function FormField({ label, required, hint, children }: { label: string; required?: boolean; hint?: string; children: React.ReactNode }) {
   return <label className="form-field"><span><strong>{label}{required && <b> *</b>}</strong>{hint && <small>{hint}</small>}</span>{children}</label>;
+}
+
+function DeleteAttributesDialog({ definitions, onCancel, onConfirm }: { definitions: ProjectAttributeDefinition[]; onCancel: () => void; onConfirm: () => void }) {
+  return <div className="confirm-layer"><button className="confirm-scrim" onClick={onCancel} aria-label="Cancel deletion"/><div className="confirm-dialog" role="alertdialog" aria-modal="true"><div className="confirm-icon">!</div><h2>Delete {definitions.length} project attribute{definitions.length === 1 ? "" : "s"}?</h2><p>This will delete <strong>{definitions.map((definition) => `E${String(definition.attribute_number).padStart(2, "0")} — ${definition.name}`).join(", ")}</strong>, remove its allowed values, and clear the attribute from all projects in this enterprise. This can't be undone.</p><div><button className="button secondary" onClick={onCancel}>Cancel</button><button className="button danger" onClick={onConfirm}>Delete</button></div></div></div>;
 }
