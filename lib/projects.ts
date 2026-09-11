@@ -1,6 +1,7 @@
 import { SupabaseRequestError, supabaseRequest } from "@/lib/supabase/browser";
 
 export type ProjectStatus = "Active" | "Inactive";
+export type EnterpriseAttributeKey = `e_attribute_${string}`;
 
 export type Project = {
   id: string;
@@ -12,6 +13,26 @@ export type Project = {
   created_by: string | null;
   created_at: string;
   updated_at: string;
+  e_attribute_01: string | null;
+  e_attribute_02: string | null;
+  e_attribute_03: string | null;
+  e_attribute_04: string | null;
+  e_attribute_05: string | null;
+  e_attribute_06: string | null;
+  e_attribute_07: string | null;
+  e_attribute_08: string | null;
+  e_attribute_09: string | null;
+  e_attribute_10: string | null;
+  e_attribute_11: string | null;
+  e_attribute_12: string | null;
+  e_attribute_13: string | null;
+  e_attribute_14: string | null;
+  e_attribute_15: string | null;
+  e_attribute_16: string | null;
+  e_attribute_17: string | null;
+  e_attribute_18: string | null;
+  e_attribute_19: string | null;
+  e_attribute_20: string | null;
 };
 
 export type ProjectInput = {
@@ -21,7 +42,12 @@ export type ProjectInput = {
   status: ProjectStatus;
 };
 
-const projectSelect = "id,public_id,enterprise_id,project_code,name,status,created_by,created_at,updated_at";
+const enterpriseAttributeColumns = Array.from({ length: 20 }, (_, index) => `e_attribute_${String(index + 1).padStart(2, "0")}`).join(",");
+const projectSelect = `id,public_id,enterprise_id,project_code,name,status,created_by,created_at,updated_at,${enterpriseAttributeColumns}`;
+
+export function enterpriseAttributeKey(attributeNumber: number) {
+  return `e_attribute_${String(attributeNumber).padStart(2, "0")}` as keyof Project;
+}
 
 export function listProjectsByEnterprise(enterpriseId: string) {
   return supabaseRequest<Project[]>(
@@ -57,6 +83,16 @@ export function setProjectStatus(projectId: string, status: ProjectStatus) {
     headers: { Prefer: "return=representation" },
     body: JSON.stringify({ status, updated_at: new Date().toISOString() }),
   }).then((rows) => rows[0]);
+}
+
+export function updateProjectAttributes(projectIds: string[], changes: Record<string, string | null>) {
+  if (projectIds.length === 0 || Object.keys(changes).length === 0) return Promise.resolve();
+  const filter = projectIds.map((id) => `\"${id}\"`).join(",");
+  return supabaseRequest<void>(`projects?id=in.(${filter})`, {
+    method: "PATCH",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify({ ...changes, updated_at: new Date().toISOString() }),
+  });
 }
 
 export function projectErrorMessage(error: unknown) {
