@@ -38,7 +38,7 @@ export default function EnterpriseProjectsPage({ enterprisePublicId }: { enterpr
       const currentEnterprise = enterprises.find((entry) => entry.public_id === enterprisePublicId) ?? null;
       setEnterprise(currentEnterprise);
       setProjects(currentEnterprise ? await listProjectsByEnterprise(currentEnterprise.id) : []);
-      setSelected((current) => current ? null : current);
+      setSelected(null);
     } catch (requestError) {
       setError(projectErrorMessage(requestError));
     } finally {
@@ -153,7 +153,7 @@ function ProjectDrawer({ enterprise, project, onClose, onSaved }: { enterprise: 
 
   function validate() {
     if (!code.trim()) return "Project Code is required.";
-    if (code.trim().length > 30) return "Project Code must be 30 characters or fewer.";
+    if (code.trim().length > 20) return "Project Code must be 20 characters or fewer.";
     if (!name.trim()) return "Project Name is required.";
     if (name.trim().length > 100) return "Project Name must be 100 characters or fewer.";
     return "";
@@ -183,7 +183,7 @@ function ProjectDrawer({ enterprise, project, onClose, onSaved }: { enterprise: 
       {!isSupabaseConfigured() && <div className="form-warning">Supabase environment variables are not configured in this build.</div>}
       <div className="form-grid">
         <FormField label="Enterprise" hint="Project ownership cannot be changed here"><input value={`${enterprise.enterprise_code} — ${enterprise.name}`} readOnly disabled /></FormField>
-        <FormField label="Project Code" required hint={`${code.length}/30`}><input value={code} maxLength={30} onChange={(event) => setCode(event.target.value)} autoFocus /></FormField>
+        <FormField label="Project Code" required hint={`${code.length}/20`}><input value={code} maxLength={20} onChange={(event) => setCode(event.target.value)} autoFocus /></FormField>
         <FormField label="Project Name" required hint={`${name.length}/100`}><input value={name} maxLength={100} onChange={(event) => setName(event.target.value)} /></FormField>
         <FormField label="Status"><select value={status} onChange={(event) => setStatus(event.target.value as ProjectStatus)}><option value="Active">Active</option><option value="Inactive">Inactive</option></select></FormField>
         {project && <FormField label="Public ID" hint="Stable URL identifier"><input value={project.public_id} readOnly disabled /></FormField>}
