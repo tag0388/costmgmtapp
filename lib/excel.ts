@@ -1,6 +1,6 @@
 "use client";
 
-import * as XLSX from "@keep-lts/xlsx";
+import * as XLSX from "xlsx";
 
 export type ExcelRow = Record<string, string>;
 
