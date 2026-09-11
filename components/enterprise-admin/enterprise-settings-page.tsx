@@ -55,7 +55,8 @@ export default function EnterpriseSettingsPage({ enterprisePublicId }: { enterpr
   }, [applyEnterprise, enterprisePublicId]);
 
   useEffect(() => {
-    void refresh();
+    const request = window.setTimeout(() => void refresh(), 0);
+    return () => window.clearTimeout(request);
   }, [refresh]);
 
   function selectEnterprise(id: string) {

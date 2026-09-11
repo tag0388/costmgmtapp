@@ -1,7 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import ExcelImportDialog, { ImportPreviewRow } from "@/components/common/excel-import-dialog";
+import { exportExcel, importExcel } from "@/lib/excel";
 import { Enterprise, listEnterprises } from "@/lib/enterprises";
 import {
   listEnterpriseProjectAttributes,
@@ -11,6 +13,9 @@ import {
 } from "@/lib/project-attributes";
 import {
   createProject,
+  createProjectWithAttributes,
+  deleteProjects,
+  deleteProjectsForEnterprise,
   listProjectsByEnterprise,
   Project,
   ProjectEnterpriseAttributeChanges,
@@ -20,6 +25,7 @@ import {
   setProjectStatus,
   updateProject,
   updateProjectEnterpriseAttributes,
+  updateProjectWithAttributes,
 } from "@/lib/projects";
 
 type StatusFilter = "all" | "active" | "inactive";
@@ -41,6 +47,12 @@ export default function EnterpriseProjectsPage({ enterprisePublicId }: { enterpr
   const [editingAttributes, setEditingAttributes] = useState(false);
   const [confirming, setConfirming] = useState<Project | null>(null);
   const [sort, setSort] = useState<{ key: SortKey; direction: "asc" | "desc" }>({ key: "project_code", direction: "asc" });
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [previewRows, setPreviewRows] = useState<ImportPreviewRow[] | null>(null);
+  const [previewErrors, setPreviewErrors] = useState<string[]>([]);
+  const [deleteExisting, setDeleteExisting] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [progress, setProgress] = useState(0);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -144,7 +156,124 @@ export default function EnterpriseProjectsPage({ enterprisePublicId }: { enterpr
     return definition?.attribute_values.find((value) => value.value_id.toLowerCase() === raw.toLowerCase())?.value_name ?? raw;
   }
 
+  function exportProjects() {
+    if (!enterprise) return;
+    const headers = ["Project Code", "Project Name", "Status", ...PROJECT_ATTRIBUTE_SLOTS.map((slot) => `E${String(slot).padStart(2, "0")}`)];
+    exportExcel(`${enterprise.enterprise_code}-Projects.xlsx`, "Projects", headers, projects.map((project) => {
+      const row: Record<string, string> = { "Project Code": project.project_code, "Project Name": project.name, Status: project.status };
+      for (const slot of PROJECT_ATTRIBUTE_SLOTS) row[`E${String(slot).padStart(2, "0")}`] = (project[projectAttributeColumn(slot) as keyof Project] as string | null) ?? "";
+      return row;
+    }));
+  }
+
+  function validateImportRows(importRows: ImportPreviewRow[]) {
+    const errors: string[] = [];
+    const seen = new Set<string>();
+    importRows.forEach((row, index) => {
+      const line = index + 2;
+      const code = (row["Project Code"] ?? "").trim();
+      const projectName = (row["Project Name"] ?? "").trim();
+      const projectStatus = (row.Status ?? "").trim();
+      if (!code) errors.push(`Row ${line}: Project Code is required.`);
+      if (code.length > 30) errors.push(`Row ${line}: Project Code exceeds the 30 character limit.`);
+      if (!projectName) errors.push(`Row ${line}: Project Name is required.`);
+      if (projectName.length > 120) errors.push(`Row ${line}: Project Name exceeds the 120 character limit.`);
+      if (projectStatus !== "Active" && projectStatus !== "Inactive") errors.push(`Row ${line}: Status must be Active or Inactive.`);
+      const key = code.toLowerCase();
+      if (key && seen.has(key)) errors.push(`Duplicate Project Code in Excel: ${code}.`);
+      if (key) seen.add(key);
+      for (const slot of PROJECT_ATTRIBUTE_SLOTS) {
+        const header = `E${String(slot).padStart(2, "0")}`;
+        const value = (row[header] ?? "").trim();
+        if (!value) continue;
+        const definition = attributesBySlot.get(slot);
+        if (!definition) errors.push(`Row ${line}: ${header} is not configured but contains '${value}'.`);
+        else if (!definition.attribute_values.some((entry) => entry.is_active && entry.value_id.toLowerCase() === value.toLowerCase())) errors.push(`Row ${line}: ${header} Value ID '${value}' is not an active allowed value.`);
+      }
+    });
+    return Array.from(new Set(errors));
+  }
+
+  async function chooseProjectExcel(file: File | null) {
+    if (!file) return;
+    try {
+      const parsed = await importExcel(file);
+      const required = ["Project Code", "Project Name", "Status"];
+      const missing = required.filter((header) => !parsed.headers.includes(header));
+      const normalized = parsed.rows.map((row) => {
+        const next: ImportPreviewRow = { "Project Code": row["Project Code"] ?? "", "Project Name": row["Project Name"] ?? "", Status: row.Status ?? "" };
+        for (const slot of PROJECT_ATTRIBUTE_SLOTS) next[`E${String(slot).padStart(2, "0")}`] = row[`E${String(slot).padStart(2, "0")}`] ?? "";
+        return next;
+      });
+      setPreviewRows(normalized);
+      setPreviewErrors(missing.length ? [`Missing required column${missing.length > 1 ? "s" : ""}: ${missing.join(", ")}.`] : validateImportRows(normalized));
+      setDeleteExisting(false);
+      setProgress(0);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unable to read the Excel file.");
+    } finally {
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  }
+
+  function rowAttributes(row: ImportPreviewRow) {
+    const changes: ProjectEnterpriseAttributeChanges = {};
+    for (const slot of PROJECT_ATTRIBUTE_SLOTS) {
+      const value = (row[`E${String(slot).padStart(2, "0")}`] ?? "").trim();
+      changes[projectAttributeColumn(slot)] = value || null;
+    }
+    return changes;
+  }
+
+  async function runProjectImport() {
+    if (!enterprise || !previewRows || previewErrors.length) return;
+    if (deleteExisting && !window.confirm("Are you sure you want to replace? This will delete all data and can't be undone.")) return;
+    setImporting(true);
+    setProgress(2);
+    try {
+      if (deleteExisting) {
+        await deleteProjectsForEnterprise(enterprise.id);
+        setProgress(10);
+      }
+      const existingByCode = new Map((deleteExisting ? [] : projects).map((project) => [project.project_code.toLowerCase(), project]));
+      for (let index = 0; index < previewRows.length; index += 1) {
+        const row = previewRows[index];
+        const input = { enterprise_id: enterprise.id, project_code: row["Project Code"].trim(), name: row["Project Name"].trim(), status: row.Status.trim() as ProjectStatus };
+        const attrs = rowAttributes(row);
+        const existing = existingByCode.get(input.project_code.toLowerCase());
+        if (existing) await updateProjectWithAttributes(existing.id, { project_code: input.project_code, name: input.name, status: input.status }, attrs);
+        else await createProjectWithAttributes(input, attrs);
+        setProgress(10 + ((index + 1) / previewRows.length) * 90);
+      }
+      setProgress(100);
+      announceProjectsChanged();
+      await refresh();
+      showNotice(`${previewRows.length} project row${previewRows.length === 1 ? "" : "s"} imported.`);
+      window.setTimeout(() => { setPreviewRows(null); setImporting(false); setProgress(0); }, 300);
+    } catch (requestError) {
+      setImporting(false);
+      setError(projectErrorMessage(requestError));
+    }
+  }
+
+  async function removeProjects(ids: string[]) {
+    if (!ids.length) return;
+    const names = projects.filter((project) => ids.includes(project.id)).map((project) => project.project_code).join(", ");
+    if (!window.confirm(`Delete ${ids.length} project${ids.length === 1 ? "" : "s"} (${names})? This can remove related project data and cannot be undone.`)) return;
+    try {
+      await deleteProjects(ids);
+      setSelected(null);
+      setSelectedIds([]);
+      announceProjectsChanged();
+      await refresh();
+      showNotice(`${ids.length} project${ids.length === 1 ? "" : "s"} deleted.`);
+    } catch (requestError) {
+      setError(projectErrorMessage(requestError));
+    }
+  }
+
   const allVisibleSelected = rows.length > 0 && rows.every((project) => selectedIds.includes(project.id));
+  const importColumns = [{ key: "Project Code", label: "Project Code" }, { key: "Project Name", label: "Project Name" }, { key: "Status", label: "Status" }, ...PROJECT_ATTRIBUTE_SLOTS.map((slot) => ({ key: `E${String(slot).padStart(2, "0")}`, label: attributesBySlot.get(slot)?.name ? `E${String(slot).padStart(2, "0")} — ${attributesBySlot.get(slot)!.name}` : `E${String(slot).padStart(2, "0")}` }))];
 
   return <div className="enterprise-admin-page">
     <div className="enterprise-page-title">
@@ -160,22 +289,26 @@ export default function EnterpriseProjectsPage({ enterprisePublicId }: { enterpr
         <label className="enterprise-search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search code, name or public ID…" aria-label="Search projects" /></label>
         <label className="status-filter"><span>Status</span><select value={status} onChange={(event) => setStatus(event.target.value as StatusFilter)}><option value="all">All</option><option value="active">Active</option><option value="inactive">Inactive</option></select></label>
         <button className="button secondary" onClick={() => void refresh()} disabled={loading}>↻ Refresh</button>
+        <button className="toolbar-icon-button" title="Export projects to Excel" disabled={!enterprise} onClick={exportProjects}>⇩</button>
+        <button className="toolbar-icon-button" title="Import projects from Excel" disabled={!enterprise} onClick={() => fileRef.current?.click()}>⇧</button>
+        <input ref={fileRef} className="file-input-hidden" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={(event) => void chooseProjectExcel(event.target.files?.[0] ?? null)} />
         <button className="button secondary" disabled={selectedProjects.length === 0} onClick={() => setEditingAttributes(true)}>Edit Attributes{selectedProjects.length > 1 ? ` (${selectedProjects.length})` : ""}</button>
+        <button className="toolbar-icon-button" title="Delete selected projects" disabled={selectedProjects.length === 0} onClick={() => void removeProjects(selectedProjects.map((project) => project.id))}>⌫</button>
         <button className="button secondary" disabled={!selected || selectedIds.length > 1} onClick={() => selected && openProject(selected)}>Open Project</button>
-        <button className="button secondary" disabled={!selected || selectedIds.length > 1} onClick={() => selected && setEditing(selected)}>Edit</button>
         <button className="button secondary" disabled={!selected || selectedIds.length > 1} onClick={() => selected && (selected.status === "Active" ? setConfirming(selected) : void toggleStatus(selected))}>{selected?.status === "Active" ? "Deactivate" : "Activate"}</button>
       </div>
 
       {error && <div className="data-message error"><strong>Unable to load projects</strong><span>{error}</span><button onClick={() => void refresh()}>Try again</button></div>}
       {!error && loading && <div className="data-message"><span className="spinner"/>Loading projects…</div>}
       {!error && !loading && rows.length === 0 && <div className="data-message"><strong>No projects found</strong><span>{projects.length ? "Try changing the search or status filter." : "Add the first project for this enterprise when you are ready."}</span></div>}
-      {!error && !loading && rows.length > 0 && <div className="enterprise-table-wrap"><table className="enterprise-table enterprise-projects-wide-table"><thead><tr><th className="row-select"><input type="checkbox" aria-label="Select all visible projects" checked={allVisibleSelected} onChange={(event) => toggleAllVisible(event.target.checked)} /></th><Sortable label="Project Code" column="project_code" sort={sort} onSort={changeSort}/><Sortable label="Project Name" column="name" sort={sort} onSort={changeSort}/><Sortable label="Status" column="status" sort={sort} onSort={changeSort}/>{PROJECT_ATTRIBUTE_SLOTS.map((slot) => <th className="attribute-column" key={slot} title={`Enterprise Project Attribute E${String(slot).padStart(2, "0")}`}>{attributesBySlot.get(slot)?.name ?? `E${String(slot).padStart(2, "0")}`}</th>)}<th>Public ID</th><Sortable label="Created Date" column="created_at" sort={sort} onSort={changeSort}/><Sortable label="Updated Date" column="updated_at" sort={sort} onSort={changeSort}/></tr></thead><tbody>{rows.map((project) => <tr key={project.id} className={selected?.id === project.id ? "selected" : ""} onClick={() => setSelected(project)} onDoubleClick={() => openProject(project)} tabIndex={0} onKeyDown={(event) => event.key === "Enter" && openProject(project)}><td className="row-select" onClick={(event) => event.stopPropagation()}><input type="checkbox" aria-label={`Select ${project.name}`} checked={selectedIds.includes(project.id)} onChange={(event) => toggleSelectedId(project.id, event.target.checked)} /></td><td className="enterprise-code">{project.project_code}</td><td>{project.name}</td><td><StatusBadge status={project.status}/></td>{PROJECT_ATTRIBUTE_SLOTS.map((slot) => <td className="attribute-column" key={slot} title={attributesBySlot.get(slot)?.name ?? `E${String(slot).padStart(2, "0")}`}>{attributeValue(project, slot)}</td>)}<td className="created-by" title={project.public_id}>{project.public_id}</td><td>{formatDate(project.created_at)}</td><td>{formatDate(project.updated_at)}</td></tr>)}</tbody></table></div>}
-      <div className="grid-footer"><span>{rows.length} of {projects.length} projects · {selectedIds.length} selected for bulk editing</span><span>All 20 enterprise project attribute slots are shown · Double-click a row to open project</span></div>
+      {!error && !loading && rows.length > 0 && <div className="enterprise-table-wrap"><table className="enterprise-table enterprise-projects-wide-table"><thead><tr><th className="row-select"><input type="checkbox" aria-label="Select all visible projects" checked={allVisibleSelected} onChange={(event) => toggleAllVisible(event.target.checked)} /></th><Sortable label="Project Code" column="project_code" sort={sort} onSort={changeSort}/><Sortable label="Project Name" column="name" sort={sort} onSort={changeSort}/><Sortable label="Status" column="status" sort={sort} onSort={changeSort}/>{PROJECT_ATTRIBUTE_SLOTS.map((slot) => <th className="attribute-column" key={slot} title={`Enterprise Project Attribute E${String(slot).padStart(2, "0")}`}>{attributesBySlot.get(slot)?.name ?? `E${String(slot).padStart(2, "0")}`}</th>)}<th>Public ID</th><Sortable label="Created Date" column="created_at" sort={sort} onSort={changeSort}/><Sortable label="Updated Date" column="updated_at" sort={sort} onSort={changeSort}/><th>Actions</th></tr></thead><tbody>{rows.map((project) => <tr key={project.id} className={selected?.id === project.id ? "selected" : ""} onClick={() => setSelected(project)} onDoubleClick={() => openProject(project)} tabIndex={0} onKeyDown={(event) => event.key === "Enter" && openProject(project)}><td className="row-select" onClick={(event) => event.stopPropagation()}><input type="checkbox" aria-label={`Select ${project.name}`} checked={selectedIds.includes(project.id)} onChange={(event) => toggleSelectedId(project.id, event.target.checked)} /></td><td className="enterprise-code">{project.project_code}</td><td>{project.name}</td><td><StatusBadge status={project.status}/></td>{PROJECT_ATTRIBUTE_SLOTS.map((slot) => <td className="attribute-column" key={slot} title={attributesBySlot.get(slot)?.name ?? `E${String(slot).padStart(2, "0")}`}>{attributeValue(project, slot)}</td>)}<td className="created-by" title={project.public_id}>{project.public_id}</td><td>{formatDate(project.created_at)}</td><td>{formatDate(project.updated_at)}</td><td className="row-action-cell" onClick={(event) => event.stopPropagation()}><button className="row-action-button" title="Edit project" onClick={() => setEditing(project)}>✎</button><button className="row-action-button danger" title="Delete project" onClick={() => void removeProjects([project.id])}>⌫</button></td></tr>)}</tbody></table></div>}
+      <div className="grid-footer"><span>{rows.length} of {projects.length} projects · {selectedIds.length} selected for bulk editing</span><span>All 20 enterprise project attribute slots are shown · Excel imports use Value IDs for attributes</span></div>
     </section>
 
     {editing && enterprise && <ProjectDrawer enterprise={enterprise} project={editing === "new" ? null : editing} onClose={() => setEditing(null)} onSaved={async (message) => { setEditing(null); showNotice(message); setSelected(null); announceProjectsChanged(); await refresh(); }}/>} 
     {editingAttributes && enterprise && selectedProjects.length > 0 && <ProjectAttributesDrawer projects={selectedProjects} definitions={attributes} onClose={() => setEditingAttributes(false)} onSaved={async () => { setEditingAttributes(false); showNotice(`Attributes updated for ${selectedProjects.length} project${selectedProjects.length === 1 ? "" : "s"}.`); announceProjectsChanged(); await refresh(); }}/>} 
     {confirming && <ConfirmDialog project={confirming} onCancel={() => setConfirming(null)} onConfirm={() => void toggleStatus(confirming)}/>} 
+    {previewRows && <ExcelImportDialog title="Import Enterprise Projects" rows={previewRows} columns={importColumns} errors={previewErrors} deleteExisting={deleteExisting} onDeleteExistingChange={setDeleteExisting} onCancel={() => !importing && setPreviewRows(null)} onImport={() => void runProjectImport()} importing={importing} progress={progress} replaceWarning="Are you sure you want to replace? This will delete all data and can't be undone." />}
     {notice && <div className="admin-toast" role="status">✓ {notice}</div>}
   </div>;
 }
