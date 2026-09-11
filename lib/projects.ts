@@ -68,8 +68,8 @@ export function setProjectStatus(projectId: string, status: ProjectStatus) {
 
 export function bulkUpdateProjectAttributes(projectIds: string[], changes: Record<ProjectAttributeKey, string | null>) {
   if (projectIds.length === 0 || Object.keys(changes).length === 0) return Promise.resolve([] as Project[]);
-  const filter = projectIds.map((id) => `\"${id}\"`).join(",");
-  return supabaseRequest<Project[]>(`projects?id=in.(${encodeURIComponent(filter)})&select=${encodeURIComponent(projectSelect)}`, {
+  const filter = projectIds.map((id) => encodeURIComponent(id)).join(",");
+  return supabaseRequest<Project[]>(`projects?id=in.(${filter})&select=${encodeURIComponent(projectSelect)}`, {
     method: "PATCH",
     headers: { Prefer: "return=representation" },
     body: JSON.stringify({ ...changes, updated_at: new Date().toISOString() }),
