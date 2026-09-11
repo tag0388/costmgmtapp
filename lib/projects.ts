@@ -12,7 +12,7 @@ export type Project = {
   created_by: string | null;
   created_at: string;
   updated_at: string;
-};
+} & Record<`e_attribute_${string}`, string | null>;
 
 export type ProjectInput = {
   enterprise_id: string;
@@ -21,7 +21,8 @@ export type ProjectInput = {
   status: ProjectStatus;
 };
 
-const projectSelect = "id,public_id,enterprise_id,project_code,name,status,created_by,created_at,updated_at";
+const enterpriseAttributeColumns = Array.from({ length: 20 }, (_, index) => `e_attribute_${String(index + 1).padStart(2, "0")}`).join(",");
+const projectSelect = `id,public_id,enterprise_id,project_code,name,status,created_by,created_at,updated_at,${enterpriseAttributeColumns}`;
 
 export function listProjectsByEnterprise(enterpriseId: string) {
   return supabaseRequest<Project[]>(
@@ -57,6 +58,16 @@ export function setProjectStatus(projectId: string, status: ProjectStatus) {
     headers: { Prefer: "return=representation" },
     body: JSON.stringify({ status, updated_at: new Date().toISOString() }),
   }).then((rows) => rows[0]);
+}
+
+export function updateProjectAttributes(projectIds: string[], attributes: Record<string, string | null>) {
+  if (!projectIds.length || !Object.keys(attributes).length) return Promise.resolve();
+  const ids = projectIds.join(",");
+  return supabaseRequest(`projects?id=in.(${ids})`, {
+    method: "PATCH",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify({ ...attributes, updated_at: new Date().toISOString() }),
+  });
 }
 
 export function projectErrorMessage(error: unknown) {
