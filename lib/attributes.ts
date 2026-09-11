@@ -59,9 +59,9 @@ export async function getEnterpriseProjectAttributes(enterpriseId: string): Prom
   );
   if (definitions.length === 0) return [];
 
-  const ids = definitions.map((definition) => definition.id).join(",");
+  const ids = definitions.map((definition) => encodeURIComponent(definition.id)).join(",");
   const values = await supabaseRequest<AttributeValue[]>(
-    `attribute_values?attribute_definition_id=in.(${encodeURIComponent(ids)})&select=${encodeURIComponent(valueSelect)}&order=sort_order.asc`,
+    `attribute_values?attribute_definition_id=in.(${ids})&select=${encodeURIComponent(valueSelect)}&order=sort_order.asc`,
   );
 
   return definitions.map((definition) => ({
