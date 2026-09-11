@@ -34,13 +34,7 @@ export type Project = {
   e_attribute_20: string | null;
 };
 
-export type ProjectInput = {
-  enterprise_id: string;
-  project_code: string;
-  name: string;
-  status: ProjectStatus;
-};
-
+export type ProjectInput = { enterprise_id: string; project_code: string; name: string; status: ProjectStatus };
 export type ProjectEnterpriseAttributeColumn = `e_attribute_${string}`;
 export type ProjectEnterpriseAttributeChanges = Partial<Record<ProjectEnterpriseAttributeColumn, string | null>>;
 
@@ -48,49 +42,37 @@ const attributeColumns = Array.from({ length: 20 }, (_, index) => `e_attribute_$
 const projectSelect = `id,public_id,enterprise_id,project_code,name,status,created_by,created_at,updated_at,${attributeColumns}`;
 
 export function listProjectsByEnterprise(enterpriseId: string) {
-  return supabaseRequest<Project[]>(
-    `projects?enterprise_id=eq.${encodeURIComponent(enterpriseId)}&select=${encodeURIComponent(projectSelect)}&order=project_code.asc`,
-  );
+  return supabaseRequest<Project[]>(`projects?enterprise_id=eq.${encodeURIComponent(enterpriseId)}&select=${encodeURIComponent(projectSelect)}&order=project_code.asc`);
 }
 
 export function getProjectByPublicId(publicId: string) {
-  return supabaseRequest<Project[]>(
-    `projects?public_id=eq.${encodeURIComponent(publicId)}&select=${encodeURIComponent(projectSelect)}&limit=1`,
-  ).then((rows) => rows[0] ?? null);
+  return supabaseRequest<Project[]>(`projects?public_id=eq.${encodeURIComponent(publicId)}&select=${encodeURIComponent(projectSelect)}&limit=1`).then((rows) => rows[0] ?? null);
 }
 
 export function createProject(input: ProjectInput) {
-  return supabaseRequest<Project[]>(`projects?select=${encodeURIComponent(projectSelect)}`, {
-    method: "POST",
-    headers: { Prefer: "return=representation" },
-    body: JSON.stringify(input),
-  }).then((rows) => rows[0]);
+  return supabaseRequest<Project[]>(`projects?select=${encodeURIComponent(projectSelect)}`, { method: "POST", headers: { Prefer: "return=representation" }, body: JSON.stringify(input) }).then((rows) => rows[0]);
 }
 
 export function updateProject(projectId: string, input: Omit<ProjectInput, "enterprise_id">) {
-  return supabaseRequest<Project[]>(`projects?id=eq.${encodeURIComponent(projectId)}&select=${encodeURIComponent(projectSelect)}`, {
-    method: "PATCH",
-    headers: { Prefer: "return=representation" },
-    body: JSON.stringify({ ...input, updated_at: new Date().toISOString() }),
-  }).then((rows) => rows[0]);
+  return supabaseRequest<Project[]>(`projects?id=eq.${encodeURIComponent(projectId)}&select=${encodeURIComponent(projectSelect)}`, { method: "PATCH", headers: { Prefer: "return=representation" }, body: JSON.stringify({ ...input, updated_at: new Date().toISOString() }) }).then((rows) => rows[0]);
 }
 
 export function setProjectStatus(projectId: string, status: ProjectStatus) {
-  return supabaseRequest<Project[]>(`projects?id=eq.${encodeURIComponent(projectId)}&select=${encodeURIComponent(projectSelect)}`, {
-    method: "PATCH",
-    headers: { Prefer: "return=representation" },
-    body: JSON.stringify({ status, updated_at: new Date().toISOString() }),
-  }).then((rows) => rows[0]);
+  return supabaseRequest<Project[]>(`projects?id=eq.${encodeURIComponent(projectId)}&select=${encodeURIComponent(projectSelect)}`, { method: "PATCH", headers: { Prefer: "return=representation" }, body: JSON.stringify({ status, updated_at: new Date().toISOString() }) }).then((rows) => rows[0]);
 }
 
 export function updateProjectEnterpriseAttributes(projectIds: string[], changes: ProjectEnterpriseAttributeChanges) {
   if (projectIds.length === 0 || Object.keys(changes).length === 0) return Promise.resolve([] as Project[]);
-  const filter = projectIds.join(",");
-  return supabaseRequest<Project[]>(`projects?id=in.(${filter})&select=${encodeURIComponent(projectSelect)}`, {
-    method: "PATCH",
-    headers: { Prefer: "return=representation" },
-    body: JSON.stringify({ ...changes, updated_at: new Date().toISOString() }),
-  });
+  return supabaseRequest<Project[]>(`projects?id=in.(${projectIds.join(",")})&select=${encodeURIComponent(projectSelect)}`, { method: "PATCH", headers: { Prefer: "return=representation" }, body: JSON.stringify({ ...changes, updated_at: new Date().toISOString() }) });
+}
+
+export function deleteProjects(projectIds: string[]) {
+  if (!projectIds.length) return Promise.resolve();
+  return supabaseRequest(`projects?id=in.(${projectIds.join(",")})`, { method: "DELETE" });
+}
+
+export function deleteAllProjectsForEnterprise(enterpriseId: string) {
+  return supabaseRequest(`projects?enterprise_id=eq.${encodeURIComponent(enterpriseId)}`, { method: "DELETE" });
 }
 
 export function projectErrorMessage(error: unknown) {
