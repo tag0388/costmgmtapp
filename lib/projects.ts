@@ -1,6 +1,7 @@
 import { SupabaseRequestError, supabaseRequest } from "@/lib/supabase/browser";
 
 export type ProjectStatus = "Active" | "Inactive";
+export type EnterpriseAttributeKey = `e_attribute_${string}`;
 
 export type Project = {
   id: string;
@@ -12,7 +13,7 @@ export type Project = {
   created_by: string | null;
   created_at: string;
   updated_at: string;
-} & Record<`e_attribute_${string}`, string | null>;
+} & Record<EnterpriseAttributeKey, string | null>;
 
 export type ProjectInput = {
   enterprise_id: string;
@@ -60,7 +61,7 @@ export function setProjectStatus(projectId: string, status: ProjectStatus) {
   }).then((rows) => rows[0]);
 }
 
-export function updateProjectAttributes(projectIds: string[], attributes: Record<string, string | null>) {
+export function updateProjectAttributes(projectIds: string[], attributes: Partial<Record<EnterpriseAttributeKey, string | null>>) {
   if (!projectIds.length || !Object.keys(attributes).length) return Promise.resolve();
   const ids = projectIds.join(",");
   return supabaseRequest(`projects?id=in.(${ids})`, {
