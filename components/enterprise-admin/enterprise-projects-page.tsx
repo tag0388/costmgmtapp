@@ -37,7 +37,7 @@ export default function EnterpriseProjectsPage({ enterprisePublicId }: { enterpr
       const enterprises = await listEnterprises();
       const currentEnterprise = enterprises.find((entry) => entry.public_id === enterprisePublicId) ?? null;
       setEnterprise(currentEnterprise);
-      setProjects(currentEnterprise ? await listProjectsByEnterprise(currentEnterprise.id) : []);
+      setProjects(currentEnterprise ? await listProjectsByEnterprise(currentEnterprise.id, true) : []);
       setSelected(null);
     } catch (requestError) {
       setError(projectErrorMessage(requestError));
