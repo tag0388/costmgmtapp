@@ -1,6 +1,7 @@
 import "@/app/system-admin-enterprises.css";
 import "@/app/system-admin-enterprises-shell-overrides.css";
 import "@/app/enterprise-admin-settings.css";
+import "@/app/enterprise-project-attributes.css";
 import EnterpriseProjectAttributesPage from "@/components/enterprise-admin/enterprise-project-attributes-page";
 import EnterpriseProjectsPage from "@/components/enterprise-admin/enterprise-projects-page";
 import EnterpriseSettingsPage from "@/components/enterprise-admin/enterprise-settings-page";
