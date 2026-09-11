@@ -139,6 +139,60 @@ export async function saveEnterpriseProjectAttribute(enterpriseId: string, slot:
   return definition;
 }
 
+export async function importEnterpriseProjectAttributeValues(
+  enterpriseId: string,
+  slot: number,
+  metadata: Omit<ProjectAttributeInput, "values">,
+  values: ProjectAttributeValueInput[],
+  replaceExisting: boolean,
+  onProgress?: (progress: number) => void,
+) {
+  const set = await ensureEnterpriseProjectAttributeSet(enterpriseId);
+  const existingDefinitions = await supabaseRequest<ProjectAttributeDefinition[]>(
+    `attribute_definitions?attribute_set_id=eq.${encodeURIComponent(set.id)}&attribute_number=eq.${slot}&select=${encodeURIComponent(definitionSelect)}&limit=1`,
+  );
+  let definition = existingDefinitions[0] ?? null;
+  const definitionBody = {
+    attribute_set_id: set.id,
+    attribute_number: slot,
+    name: metadata.name.trim(),
+    description: metadata.description?.trim() || null,
+    data_type: "Value List",
+    is_active: metadata.is_active,
+    updated_at: new Date().toISOString(),
+  };
+  if (definition) {
+    await supabaseRequest(`attribute_definitions?id=eq.${encodeURIComponent(definition.id)}`, { method: "PATCH", body: JSON.stringify(definitionBody) });
+  } else {
+    const rows = await supabaseRequest<ProjectAttributeDefinition[]>(`attribute_definitions?select=${encodeURIComponent(definitionSelect)}`, {
+      method: "POST",
+      headers: { Prefer: "return=representation" },
+      body: JSON.stringify(definitionBody),
+    });
+    definition = rows[0];
+  }
+
+  if (replaceExisting) {
+    await supabaseRequest(`attribute_values?attribute_definition_id=eq.${encodeURIComponent(definition.id)}`, { method: "DELETE" });
+  }
+  const currentRows = replaceExisting ? [] : await supabaseRequest<ProjectAttributeValue[]>(
+    `attribute_values?attribute_definition_id=eq.${encodeURIComponent(definition.id)}&select=id,attribute_definition_id,value_id,value_name,sort_order,is_active`,
+  );
+  onProgress?.(replaceExisting ? 5 : 10);
+  for (let index = 0; index < values.length; index++) {
+    const value = values[index];
+    const match = currentRows.find((current) => current.value_id.toLowerCase() === value.value_id.toLowerCase());
+    const payload = { value_id: value.value_id.trim(), value_name: value.value_name.trim(), sort_order: index + 1, is_active: true, updated_at: new Date().toISOString() };
+    if (match) {
+      await supabaseRequest(`attribute_values?id=eq.${encodeURIComponent(match.id)}`, { method: "PATCH", body: JSON.stringify(payload) });
+    } else {
+      await supabaseRequest("attribute_values", { method: "POST", body: JSON.stringify({ ...payload, attribute_definition_id: definition.id }) });
+    }
+    onProgress?.(10 + ((index + 1) / Math.max(values.length, 1)) * 90);
+  }
+  onProgress?.(100);
+}
+
 export function projectAttributeErrorMessage(error: unknown) {
   if (error instanceof SupabaseRequestError) {
     if (error.code === "23505") return "That attribute slot or Value ID already exists.";
