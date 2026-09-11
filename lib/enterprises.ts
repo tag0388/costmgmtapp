@@ -26,6 +26,12 @@ export function listEnterprises() {
   return supabaseRequest<Enterprise[]>(`enterprises?select=${encodeURIComponent(enterpriseSelect)}&order=created_at.desc`);
 }
 
+export function getEnterpriseByPublicId(publicId: string) {
+  return supabaseRequest<Enterprise[]>(
+    `enterprises?public_id=eq.${encodeURIComponent(publicId)}&select=${encodeURIComponent(enterpriseSelect)}&limit=1`,
+  ).then((rows) => rows[0] ?? null);
+}
+
 export async function createEnterprise(input: EnterpriseInput) {
   const [enterprise] = await supabaseRequest<Enterprise[]>(`enterprises?select=${encodeURIComponent(enterpriseCreateSelect)}`, {
     method: "POST",
