@@ -43,6 +43,7 @@ export type ProjectInput = {
 
 export type ProjectEnterpriseAttributeColumn = `e_attribute_${string}`;
 export type ProjectEnterpriseAttributeChanges = Partial<Record<ProjectEnterpriseAttributeColumn, string | null>>;
+export type ProjectImportRow = Omit<ProjectInput, "enterprise_id"> & ProjectEnterpriseAttributeChanges;
 
 const attributeColumns = Array.from({ length: 20 }, (_, index) => `e_attribute_${String(index + 1).padStart(2, "0")}`).join(",");
 const projectSelect = `id,public_id,enterprise_id,project_code,name,status,created_by,created_at,updated_at,${attributeColumns}`;
@@ -91,6 +92,37 @@ export function updateProjectEnterpriseAttributes(projectIds: string[], changes:
     headers: { Prefer: "return=representation" },
     body: JSON.stringify({ ...changes, updated_at: new Date().toISOString() }),
   });
+}
+
+export async function deleteProjects(projectIds: string[]) {
+  if (!projectIds.length) return;
+  const filter = projectIds.join(",");
+  await supabaseRequest(`projects?id=in.(${filter})`, { method: "DELETE" });
+}
+
+export async function importProjects(
+  enterpriseId: string,
+  rows: ProjectImportRow[],
+  replaceExisting: boolean,
+  onProgress?: (progress: number) => void,
+) {
+  if (replaceExisting) {
+    await supabaseRequest(`projects?enterprise_id=eq.${encodeURIComponent(enterpriseId)}`, { method: "DELETE" });
+    onProgress?.(5);
+  }
+  const current = replaceExisting ? [] : await listProjectsByEnterprise(enterpriseId);
+  for (let index = 0; index < rows.length; index++) {
+    const row = rows[index];
+    const match = current.find((project) => project.project_code.toLowerCase() === row.project_code.toLowerCase());
+    const payload = { ...row, updated_at: new Date().toISOString() };
+    if (match) {
+      await supabaseRequest(`projects?id=eq.${encodeURIComponent(match.id)}`, { method: "PATCH", body: JSON.stringify(payload) });
+    } else {
+      await supabaseRequest("projects", { method: "POST", body: JSON.stringify({ ...payload, enterprise_id: enterpriseId }) });
+    }
+    onProgress?.(5 + ((index + 1) / Math.max(rows.length, 1)) * 95);
+  }
+  onProgress?.(100);
 }
 
 export function projectErrorMessage(error: unknown) {
