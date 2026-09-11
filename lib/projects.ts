@@ -67,11 +67,27 @@ export function createProject(input: ProjectInput) {
   }).then((rows) => rows[0]);
 }
 
+export function createProjectWithAttributes(input: ProjectInput, attributes: ProjectEnterpriseAttributeChanges) {
+  return supabaseRequest<Project[]>(`projects?select=${encodeURIComponent(projectSelect)}`, {
+    method: "POST",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify({ ...input, ...attributes }),
+  }).then((rows) => rows[0]);
+}
+
 export function updateProject(projectId: string, input: Omit<ProjectInput, "enterprise_id">) {
   return supabaseRequest<Project[]>(`projects?id=eq.${encodeURIComponent(projectId)}&select=${encodeURIComponent(projectSelect)}`, {
     method: "PATCH",
     headers: { Prefer: "return=representation" },
     body: JSON.stringify({ ...input, updated_at: new Date().toISOString() }),
+  }).then((rows) => rows[0]);
+}
+
+export function updateProjectWithAttributes(projectId: string, input: Omit<ProjectInput, "enterprise_id">, attributes: ProjectEnterpriseAttributeChanges) {
+  return supabaseRequest<Project[]>(`projects?id=eq.${encodeURIComponent(projectId)}&select=${encodeURIComponent(projectSelect)}`, {
+    method: "PATCH",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify({ ...input, ...attributes, updated_at: new Date().toISOString() }),
   }).then((rows) => rows[0]);
 }
 
@@ -91,6 +107,15 @@ export function updateProjectEnterpriseAttributes(projectIds: string[], changes:
     headers: { Prefer: "return=representation" },
     body: JSON.stringify({ ...changes, updated_at: new Date().toISOString() }),
   });
+}
+
+export function deleteProjects(projectIds: string[]) {
+  if (projectIds.length === 0) return Promise.resolve();
+  return supabaseRequest<void>(`projects?id=in.(${projectIds.join(",")})`, { method: "DELETE" });
+}
+
+export function deleteProjectsForEnterprise(enterpriseId: string) {
+  return supabaseRequest<void>(`projects?enterprise_id=eq.${encodeURIComponent(enterpriseId)}`, { method: "DELETE" });
 }
 
 export function projectErrorMessage(error: unknown) {
