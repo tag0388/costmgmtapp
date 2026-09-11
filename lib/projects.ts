@@ -43,6 +43,7 @@ export type ProjectInput = {
 
 export type ProjectEnterpriseAttributeColumn = `e_attribute_${string}`;
 export type ProjectEnterpriseAttributeChanges = Partial<Record<ProjectEnterpriseAttributeColumn, string | null>>;
+export type ProjectImportInput = ProjectInput & ProjectEnterpriseAttributeChanges;
 
 const attributeColumns = Array.from({ length: 20 }, (_, index) => `e_attribute_${String(index + 1).padStart(2, "0")}`).join(",");
 const projectSelect = `id,public_id,enterprise_id,project_code,name,status,created_by,created_at,updated_at,${attributeColumns}`;
@@ -59,7 +60,7 @@ export function getProjectByPublicId(publicId: string) {
   ).then((rows) => rows[0] ?? null);
 }
 
-export function createProject(input: ProjectInput) {
+export function createProject(input: ProjectInput | ProjectImportInput) {
   return supabaseRequest<Project[]>(`projects?select=${encodeURIComponent(projectSelect)}`, {
     method: "POST",
     headers: { Prefer: "return=representation" },
@@ -67,7 +68,7 @@ export function createProject(input: ProjectInput) {
   }).then((rows) => rows[0]);
 }
 
-export function updateProject(projectId: string, input: Omit<ProjectInput, "enterprise_id">) {
+export function updateProject(projectId: string, input: Omit<ProjectInput, "enterprise_id"> | (Omit<ProjectInput, "enterprise_id"> & ProjectEnterpriseAttributeChanges)) {
   return supabaseRequest<Project[]>(`projects?id=eq.${encodeURIComponent(projectId)}&select=${encodeURIComponent(projectSelect)}`, {
     method: "PATCH",
     headers: { Prefer: "return=representation" },
@@ -91,6 +92,16 @@ export function updateProjectEnterpriseAttributes(projectIds: string[], changes:
     headers: { Prefer: "return=representation" },
     body: JSON.stringify({ ...changes, updated_at: new Date().toISOString() }),
   });
+}
+
+export function deleteProjects(projectIds: string[]) {
+  if (!projectIds.length) return Promise.resolve();
+  const filter = projectIds.join(",");
+  return supabaseRequest<void>(`projects?id=in.(${filter})`, { method: "DELETE" });
+}
+
+export function deleteProjectsByEnterprise(enterpriseId: string) {
+  return supabaseRequest<void>(`projects?enterprise_id=eq.${encodeURIComponent(enterpriseId)}`, { method: "DELETE" });
 }
 
 export function projectErrorMessage(error: unknown) {
