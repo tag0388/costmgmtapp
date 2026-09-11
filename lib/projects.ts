@@ -22,9 +22,10 @@ export type ProjectInput = {
 
 const projectSelect = "id,public_id,enterprise_id,project_code,name,status,created_by,created_at,updated_at";
 
-export function listProjectsByEnterprise(enterpriseId: string) {
+export function listProjectsByEnterprise(enterpriseId: string, includeInactive = false) {
+  const statusFilter = includeInactive ? "" : "&status=eq.Active";
   return supabaseRequest<Project[]>(
-    `projects?enterprise_id=eq.${encodeURIComponent(enterpriseId)}&select=${encodeURIComponent(projectSelect)}&order=project_code.asc`,
+    `projects?enterprise_id=eq.${encodeURIComponent(enterpriseId)}${statusFilter}&select=${encodeURIComponent(projectSelect)}&order=project_code.asc`,
   );
 }
 
@@ -56,6 +57,7 @@ export function updateProject(id: string, input: ProjectInput) {
       project_code: input.project_code,
       name: input.name,
       status: input.status,
+      updated_at: new Date().toISOString(),
     }),
   });
 }
@@ -64,7 +66,7 @@ export function setProjectStatus(id: string, status: ProjectStatus) {
   return supabaseRequest(`projects?id=eq.${encodeURIComponent(id)}`, {
     method: "PATCH",
     headers: { Prefer: "return=minimal" },
-    body: JSON.stringify({ status }),
+    body: JSON.stringify({ status, updated_at: new Date().toISOString() }),
   });
 }
 
