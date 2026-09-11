@@ -44,8 +44,7 @@ export async function ensureEnterpriseProjectAttributeSet(enterpriseId: string) 
   if (existing) return existing;
   try {
     const rows = await supabaseRequest<AttributeSet[]>("attribute_sets?select=id,enterprise_id,project_id,scope,category,is_active", {
-      method: "POST", headers: { Prefer: "return=representation" },
-      body: JSON.stringify({ enterprise_id: enterpriseId, project_id: null, scope: "Enterprise", category: "Project", is_active: true }),
+      method: "POST", headers: { Prefer: "return=representation" }, body: JSON.stringify({ enterprise_id: enterpriseId, project_id: null, scope: "Enterprise", category: "Project", is_active: true }),
     });
     return rows[0];
   } catch (error) {
@@ -64,7 +63,7 @@ export async function listEnterpriseProjectAttributes(enterpriseId: string) {
   return rows.map((definition) => ({ ...definition, attribute_values: [...(definition.attribute_values ?? [])].sort((a, b) => a.sort_order - b.sort_order) }));
 }
 
-export async function saveEnterpriseProjectAttribute(enterpriseId: string, slot: number, input: ProjectAttributeInput) {
+export async function saveEnterpriseProjectAttribute(enterpriseId: string, slot: number, input: ProjectAttributeInput, onProgress?: (done: number, total: number) => void) {
   const set = await ensureEnterpriseProjectAttributeSet(enterpriseId);
   const existingRows = await supabaseRequest<ProjectAttributeDefinition[]>(`attribute_definitions?attribute_set_id=eq.${encodeURIComponent(set.id)}&attribute_number=eq.${slot}&select=${encodeURIComponent(definitionSelect)}&limit=1`);
   const existing = existingRows[0] ?? null;
@@ -82,10 +81,14 @@ export async function saveEnterpriseProjectAttribute(enterpriseId: string, slot:
   const wanted = input.values.map((value, index) => ({ value_id: value.value_id.trim(), value_name: value.value_name.trim(), sort_order: index + 1 }));
   const wantedIds = new Set(wanted.map((value) => value.value_id.toLowerCase()));
   await Promise.all(existingValues.filter((value) => !wantedIds.has(value.value_id.toLowerCase())).map((value) => supabaseRequest(`attribute_values?id=eq.${encodeURIComponent(value.id)}`, { method: "PATCH", body: JSON.stringify({ is_active: false, updated_at: new Date().toISOString() }) })));
+  let done = 0;
+  onProgress?.(done, wanted.length);
   for (const value of wanted) {
     const match = existingValues.find((item) => item.value_id.toLowerCase() === value.value_id.toLowerCase());
     if (match) await supabaseRequest(`attribute_values?id=eq.${encodeURIComponent(match.id)}`, { method: "PATCH", body: JSON.stringify({ ...value, is_active: true, updated_at: new Date().toISOString() }) });
     else await supabaseRequest("attribute_values", { method: "POST", body: JSON.stringify({ attribute_definition_id: definition.id, ...value, is_active: true }) });
+    done += 1;
+    onProgress?.(done, wanted.length);
   }
   return definition;
 }
