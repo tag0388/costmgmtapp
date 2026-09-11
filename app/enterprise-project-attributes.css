@@ -72,14 +72,10 @@
   background: #fff;
 }
 .attribute-value-row button {
-  border: 0;
-  background: transparent;
-  color: #b42318;
   cursor: pointer;
-  padding: 7px;
 }
 
-.enterprise-projects-wide-table { min-width: 3300px; }
+.enterprise-projects-wide-table { min-width: 3440px; }
 .enterprise-projects-wide-table th,
 .enterprise-projects-wide-table td { white-space: nowrap; }
 .enterprise-projects-wide-table .attribute-column { min-width: 135px; }
@@ -103,8 +99,102 @@
   color: #475467;
 }
 
+.table-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+
+.table-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid #d0d5dd;
+  border-radius: 7px;
+  background: #fff;
+  color: #344054;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+.table-icon-button:hover:not(:disabled) { background: #f8fafc; border-color: #b8c2cf; }
+.table-icon-button:disabled { opacity: .45; cursor: not-allowed; }
+.table-icon-button.danger-icon { color: #b42318; }
+.table-icon-button.danger-icon:hover:not(:disabled) { background: #fff5f4; border-color: #f4b8b2; }
+.table-actions-column { width: 86px; min-width: 86px; text-align: center; }
+.table-row-actions { white-space: nowrap; text-align: center; }
+.table-row-actions .table-icon-button { width: 30px; height: 30px; margin: 0 2px; }
+.hidden-file-input { display: none; }
+
+.excel-modal-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+.excel-modal-scrim {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background: rgba(16, 24, 40, .56);
+}
+.excel-import-dialog {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(1180px, 96vw);
+  max-height: 88vh;
+  overflow: hidden;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 24px 64px rgba(16, 24, 40, .24);
+}
+.excel-import-dialog > header,
+.excel-import-dialog > footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 20px;
+  border-bottom: 1px solid #eaecf0;
+}
+.excel-import-dialog > footer { border-top: 1px solid #eaecf0; border-bottom: 0; justify-content: flex-end; }
+.excel-import-dialog > header span { display: block; font-size: 11px; color: #667085; text-transform: uppercase; letter-spacing: .06em; }
+.excel-import-dialog > header h2 { margin: 2px 0 0; font-size: 18px; }
+.excel-import-dialog > header > button { border: 0; background: transparent; font-size: 24px; cursor: pointer; color: #667085; }
+.excel-import-body { overflow: auto; padding: 18px 20px; }
+.excel-validation-summary { display: flex; flex-direction: column; gap: 3px; padding: 11px 13px; border-radius: 8px; border: 1px solid #a9dfbf; background: #f0fbf5; color: #166534; }
+.excel-validation-summary.invalid { border-color: #f2b8b5; background: #fff5f4; color: #b42318; }
+.excel-validation-summary span { font-size: 12px; }
+.excel-error-list { margin-top: 10px; max-height: 180px; overflow: auto; border: 1px solid #f0c2be; border-radius: 7px; padding: 10px 12px; background: #fffafa; color: #912018; font-size: 12px; }
+.excel-error-list div + div { margin-top: 4px; }
+.excel-replace-toggle { display: flex; gap: 10px; align-items: flex-start; margin: 14px 0; padding: 10px 12px; border: 1px solid #d0d5dd; border-radius: 8px; }
+.excel-replace-toggle input { margin-top: 3px; }
+.excel-replace-toggle span { display: flex; flex-direction: column; gap: 2px; }
+.excel-replace-toggle small { color: #667085; }
+.excel-preview-wrap { overflow: auto; border: 1px solid #d0d5dd; border-radius: 8px; }
+.excel-preview-table { width: max-content; min-width: 100%; border-collapse: collapse; font-size: 12px; }
+.excel-preview-table th { position: sticky; top: 0; z-index: 1; background: #f8fafc; }
+.excel-preview-table th,
+.excel-preview-table td { border-bottom: 1px solid #eaecf0; border-right: 1px solid #eaecf0; padding: 7px 9px; text-align: left; white-space: nowrap; max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+.excel-preview-note { padding: 8px 10px; color: #667085; font-size: 11px; background: #f8fafc; }
+.excel-progress { margin-top: 14px; }
+.excel-progress > div { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 5px; }
+.excel-progress progress { width: 100%; height: 10px; }
+.excel-replace-warning { margin-top: 14px; padding: 12px; border: 1px solid #f0b7b2; border-radius: 8px; background: #fff5f4; }
+.excel-replace-warning p { margin: 6px 0 10px; color: #7a271a; }
+.excel-replace-warning > div { display: flex; justify-content: flex-end; gap: 8px; }
+
 @media (max-width: 760px) {
   .attribute-values-header { display: none; }
   .attribute-value-row { grid-template-columns: 1fr; }
   .bulk-attribute-grid { grid-template-columns: 1fr; }
+  .excel-modal-layer { padding: 8px; }
+  .excel-import-dialog { width: 100%; max-height: 94vh; }
 }
