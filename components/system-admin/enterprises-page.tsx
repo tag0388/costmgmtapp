@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { IconActionButton, RowActions } from "@/components/data/table-actions";
 import { createEnterprise, enterpriseErrorMessage, Enterprise, EnterpriseInput, listEnterprises, normalizeDomains, setEnterpriseActive, updateEnterprise } from "@/lib/enterprises";
 import { isSupabaseConfigured } from "@/lib/supabase/browser";
 
@@ -15,14 +16,19 @@ export default function EnterprisesPage() {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<StatusFilter>("all");
   const [selected, setSelected] = useState<Enterprise | null>(null);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [editing, setEditing] = useState<Enterprise | "new" | null>(null);
   const [confirming, setConfirming] = useState<Enterprise | null>(null);
+  const [confirmingBulk, setConfirmingBulk] = useState(false);
   const [sort, setSort] = useState<{ key: SortKey; direction: "asc" | "desc" }>({ key: "created_at", direction: "desc" });
 
   const refresh = useCallback(async () => {
     setLoading(true); setError("");
-    try { setEnterprises(await listEnterprises()); }
-    catch (requestError) { setError(enterpriseErrorMessage(requestError)); }
+    try {
+      const rows = await listEnterprises();
+      setEnterprises(rows);
+      setSelectedIds((current) => current.filter((id) => rows.some((enterprise) => enterprise.id === id)));
+    } catch (requestError) { setError(enterpriseErrorMessage(requestError)); }
     finally { setLoading(false); }
   }, []);
   useEffect(() => {
@@ -42,12 +48,31 @@ export default function EnterprisesPage() {
     });
   }, [enterprises, search, sort, status]);
 
+  const allVisibleSelected = rows.length > 0 && rows.every((enterprise) => selectedIds.includes(enterprise.id));
+
   function changeSort(key: SortKey) { setSort((current) => ({ key, direction: current.key === key && current.direction === "asc" ? "desc" : "asc" })); }
   function showNotice(message: string) { setNotice(message); window.setTimeout(() => setNotice(""), 3500); }
+  function toggleSelected(id: string, checked: boolean) { setSelectedIds((current) => checked ? Array.from(new Set([...current, id])) : current.filter((value) => value !== id)); }
+  function toggleAllVisible(checked: boolean) { const ids = rows.map((row) => row.id); setSelectedIds((current) => checked ? Array.from(new Set([...current, ...ids])) : current.filter((id) => !ids.includes(id))); }
+
   async function toggleStatus(enterprise: Enterprise) {
     try { await setEnterpriseActive(enterprise.id, !enterprise.active); showNotice(`${enterprise.name} is now ${enterprise.active ? "inactive" : "active"}.`); await refresh(); setSelected(null); }
     catch (requestError) { setError(enterpriseErrorMessage(requestError)); }
     finally { setConfirming(null); }
+  }
+
+  async function deactivateSelected() {
+    const targets = enterprises.filter((enterprise) => selectedIds.includes(enterprise.id) && enterprise.active);
+    try {
+      for (const enterprise of targets) await setEnterpriseActive(enterprise.id, false);
+      showNotice(`${targets.length} enterprise${targets.length === 1 ? "" : "s"} deactivated.`);
+      setSelectedIds([]);
+      setConfirmingBulk(false);
+      await refresh();
+    } catch (requestError) {
+      setError(enterpriseErrorMessage(requestError));
+      setConfirmingBulk(false);
+    }
   }
 
   return <div className="enterprise-admin-page">
@@ -57,17 +82,17 @@ export default function EnterprisesPage() {
         <label className="enterprise-search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search code, name or domain…" aria-label="Search enterprises" /></label>
         <label className="status-filter"><span>Status</span><select value={status} onChange={(event) => setStatus(event.target.value as StatusFilter)}><option value="all">All</option><option value="active">Active</option><option value="inactive">Inactive</option></select></label>
         <button className="button secondary" onClick={() => void refresh()} disabled={loading}>↻ Refresh</button>
-        <button className="button secondary" disabled={!selected} onClick={() => selected && setEditing(selected)}>Edit</button>
-        <button className="button secondary" disabled={!selected} onClick={() => selected && (selected.active ? setConfirming(selected) : void toggleStatus(selected))}>{selected?.active ? "Deactivate" : "Activate"}</button>
+        <button className="button danger bulk-delete-button" disabled={!selectedIds.some((id) => enterprises.find((enterprise) => enterprise.id === id)?.active)} onClick={() => setConfirmingBulk(true)}>Deactivate Selected{selectedIds.length ? ` (${selectedIds.length})` : ""}</button>
       </div>
       {error && <div className="data-message error"><strong>Unable to load enterprises</strong><span>{error}</span><button onClick={() => void refresh()}>Try again</button></div>}
       {!error && loading && <div className="data-message"><span className="spinner"/>Loading enterprises…</div>}
       {!error && !loading && rows.length === 0 && <div className="data-message"><strong>No enterprises found</strong><span>{enterprises.length ? "Try changing the search or status filter." : "Add the first enterprise when you are ready."}</span></div>}
-      {!error && !loading && rows.length > 0 && <div className="enterprise-table-wrap"><table className="enterprise-table"><thead><tr><Sortable label="Enterprise Code" column="enterprise_code" sort={sort} onSort={changeSort}/><Sortable label="Enterprise Name" column="name" sort={sort} onSort={changeSort}/><Sortable label="Status" column="active" sort={sort} onSort={changeSort}/><th>Approved Domains</th><Sortable label="Created Date" column="created_at" sort={sort} onSort={changeSort}/><Sortable label="Created By" column="created_by" sort={sort} onSort={changeSort}/></tr></thead><tbody>{rows.map((enterprise) => <tr key={enterprise.id} className={selected?.id === enterprise.id ? "selected" : ""} onClick={() => setSelected(enterprise)} onDoubleClick={() => setEditing(enterprise)} tabIndex={0} onKeyDown={(event) => event.key === "Enter" && setEditing(enterprise)}><td className="enterprise-code">{enterprise.enterprise_code}</td><td>{enterprise.name}</td><td><StatusBadge active={enterprise.active}/></td><td><div className="domain-summary">{enterprise.enterprise_domains?.filter((domain) => domain.active).length ? enterprise.enterprise_domains.filter((domain) => domain.active).map((domain) => <span key={domain.id}>{domain.domain}</span>) : <em>None</em>}</div></td><td>{formatDate(enterprise.created_at)}</td><td className="created-by" title={enterprise.created_by ?? "Not recorded"}>{enterprise.created_by ?? "—"}</td></tr>)}</tbody></table></div>}
-      <div className="grid-footer"><span>{rows.length} of {enterprises.length} enterprises</span><span>Select a row to edit · Double-click to open</span></div>
+      {!error && !loading && rows.length > 0 && <div className="enterprise-table-wrap"><table className="enterprise-table"><thead><tr><th className="row-select"><input type="checkbox" aria-label="Select all visible enterprises" checked={allVisibleSelected} onChange={(event) => toggleAllVisible(event.target.checked)}/></th><Sortable label="Enterprise Code" column="enterprise_code" sort={sort} onSort={changeSort}/><Sortable label="Enterprise Name" column="name" sort={sort} onSort={changeSort}/><Sortable label="Status" column="active" sort={sort} onSort={changeSort}/><th>Approved Domains</th><Sortable label="Created Date" column="created_at" sort={sort} onSort={changeSort}/><Sortable label="Created By" column="created_by" sort={sort} onSort={changeSort}/><th className="actions-column">Actions</th></tr></thead><tbody>{rows.map((enterprise) => <tr key={enterprise.id} className={selected?.id === enterprise.id ? "selected" : ""} onClick={() => setSelected(enterprise)} onDoubleClick={() => setEditing(enterprise)} tabIndex={0} onKeyDown={(event) => event.key === "Enter" && setEditing(enterprise)}><td className="row-select" onClick={(event) => event.stopPropagation()}><input type="checkbox" aria-label={`Select ${enterprise.name}`} checked={selectedIds.includes(enterprise.id)} onChange={(event) => toggleSelected(enterprise.id, event.target.checked)}/></td><td className="enterprise-code">{enterprise.enterprise_code}</td><td>{enterprise.name}</td><td><StatusBadge active={enterprise.active}/></td><td><div className="domain-summary">{enterprise.enterprise_domains?.filter((domain) => domain.active).length ? enterprise.enterprise_domains.filter((domain) => domain.active).map((domain) => <span key={domain.id}>{domain.domain}</span>) : <em>None</em>}</div></td><td>{formatDate(enterprise.created_at)}</td><td className="created-by" title={enterprise.created_by ?? "Not recorded"}>{enterprise.created_by ?? "—"}</td><td className="actions-column"><RowActions><IconActionButton action="edit" label="Edit enterprise" onClick={() => setEditing(enterprise)}/><IconActionButton action="delete" label={enterprise.active ? "Deactivate enterprise" : "Enterprise already inactive"} danger disabled={!enterprise.active} onClick={() => setConfirming(enterprise)}/></RowActions></td></tr>)}</tbody></table></div>}
+      <div className="grid-footer"><span>{rows.length} of {enterprises.length} enterprises · {selectedIds.length} selected</span><span>Enterprise master records use deactivation instead of permanent delete to protect project data.</span></div>
     </section>
     {editing && <EnterpriseDrawer enterprise={editing === "new" ? null : editing} onClose={() => setEditing(null)} onSaved={async (message) => { setEditing(null); showNotice(message); await refresh(); }}/>} 
     {confirming && <ConfirmDialog enterprise={confirming} onCancel={() => setConfirming(null)} onConfirm={() => void toggleStatus(confirming)}/>} 
+    {confirmingBulk && <BulkDeactivateDialog count={selectedIds.length} onCancel={() => setConfirmingBulk(false)} onConfirm={() => void deactivateSelected()}/>} 
     {notice && <div className="admin-toast" role="status">✓ {notice}</div>}
   </div>;
 }
@@ -86,3 +111,4 @@ function EnterpriseDrawer({ enterprise, onClose, onSaved }: { enterprise:Enterpr
 }
 function FormField({ label, required, hint, children }: { label:string; required?:boolean; hint?:string; children:React.ReactNode }) { return <label className="form-field"><span><strong>{label}{required && <b> *</b>}</strong>{hint && <small>{hint}</small>}</span>{children}</label>; }
 function ConfirmDialog({ enterprise, onCancel, onConfirm }: { enterprise:Enterprise; onCancel:()=>void; onConfirm:()=>void }) { return <div className="confirm-layer"><button className="confirm-scrim" onClick={onCancel} aria-label="Cancel deactivation"/><div className="confirm-dialog" role="alertdialog" aria-modal="true"><div className="confirm-icon">!</div><h2>Deactivate enterprise?</h2><p><strong>{enterprise.name}</strong> will become inactive. Its projects, users and approved domains will not be deleted.</p><div><button className="button secondary" onClick={onCancel}>Cancel</button><button className="button danger" onClick={onConfirm}>Deactivate</button></div></div></div>; }
+function BulkDeactivateDialog({ count, onCancel, onConfirm }: { count:number; onCancel:()=>void; onConfirm:()=>void }) { return <div className="table-delete-confirm"><button className="confirm-scrim" onClick={onCancel} aria-label="Cancel bulk deactivation"/><div className="confirm-dialog" role="alertdialog" aria-modal="true"><div className="confirm-icon">!</div><h2>Deactivate selected enterprises?</h2><p>{count} selected enterprise record{count === 1 ? "" : "s"} will be made inactive. No projects, users or approved domains will be deleted.</p><div><button className="button secondary" onClick={onCancel}>Cancel</button><button className="button danger" onClick={onConfirm}>Deactivate Selected</button></div></div></div>; }

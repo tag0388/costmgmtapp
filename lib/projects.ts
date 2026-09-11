@@ -1,5 +1,8 @@
 import { SupabaseRequestError, supabaseRequest } from "@/lib/supabase/browser";
 
+export const PROJECT_CODE_MAX = 20;
+export const PROJECT_NAME_MAX = 100;
+
 export type ProjectStatus = "Active" | "Inactive";
 
 export type Project = {
@@ -43,6 +46,12 @@ export type ProjectInput = {
 
 export type ProjectEnterpriseAttributeColumn = `e_attribute_${string}`;
 export type ProjectEnterpriseAttributeChanges = Partial<Record<ProjectEnterpriseAttributeColumn, string | null>>;
+export type ProjectImportPayload = {
+  project_code: string;
+  name: string;
+  status: ProjectStatus;
+  attributes: ProjectEnterpriseAttributeChanges;
+};
 
 const attributeColumns = Array.from({ length: 20 }, (_, index) => `e_attribute_${String(index + 1).padStart(2, "0")}`).join(",");
 const projectSelect = `id,public_id,enterprise_id,project_code,name,status,created_by,created_at,updated_at,${attributeColumns}`;
@@ -93,10 +102,48 @@ export function updateProjectEnterpriseAttributes(projectIds: string[], changes:
   });
 }
 
+export async function deleteProjects(projectIds: string[]) {
+  const ids = Array.from(new Set(projectIds));
+  for (let index = 0; index < ids.length; index += 100) {
+    const batch = ids.slice(index, index + 100);
+    await supabaseRequest(`projects?id=in.(${batch.join(",")})`, { method: "DELETE" });
+  }
+}
+
+export function deleteProjectsByEnterprise(enterpriseId: string) {
+  return supabaseRequest(`projects?enterprise_id=eq.${encodeURIComponent(enterpriseId)}`, { method: "DELETE" });
+}
+
+export async function upsertImportedProject(enterpriseId: string, payload: ProjectImportPayload) {
+  const existing = await supabaseRequest<Project[]>(
+    `projects?enterprise_id=eq.${encodeURIComponent(enterpriseId)}&project_code=eq.${encodeURIComponent(payload.project_code)}&select=${encodeURIComponent(projectSelect)}&limit=1`,
+  );
+  const body = {
+    project_code: payload.project_code,
+    name: payload.name,
+    status: payload.status,
+    ...payload.attributes,
+    updated_at: new Date().toISOString(),
+  };
+  if (existing[0]) {
+    return supabaseRequest<Project[]>(`projects?id=eq.${encodeURIComponent(existing[0].id)}&select=${encodeURIComponent(projectSelect)}`, {
+      method: "PATCH",
+      headers: { Prefer: "return=representation" },
+      body: JSON.stringify(body),
+    }).then((rows) => rows[0]);
+  }
+  return supabaseRequest<Project[]>(`projects?select=${encodeURIComponent(projectSelect)}`, {
+    method: "POST",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify({ enterprise_id: enterpriseId, ...body }),
+  }).then((rows) => rows[0]);
+}
+
 export function projectErrorMessage(error: unknown) {
   if (error instanceof SupabaseRequestError) {
     if (error.code === "23505") return "That Project Code is already used in this enterprise.";
     if (error.code === "23514") return "Project Code and Project Name cannot be blank.";
+    if (error.code === "22001") return "A project field is longer than the database limit.";
     return error.message;
   }
   return error instanceof Error ? error.message : "Something went wrong while working with projects.";
