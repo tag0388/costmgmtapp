@@ -44,6 +44,14 @@ export type ProjectInput = {
 export type ProjectEnterpriseAttributeColumn = `e_attribute_${string}`;
 export type ProjectEnterpriseAttributeChanges = Partial<Record<ProjectEnterpriseAttributeColumn, string | null>>;
 
+export type ProjectImportRow = {
+  public_id?: string;
+  project_code: string;
+  name: string;
+  status: ProjectStatus;
+  attributes: ProjectEnterpriseAttributeChanges;
+};
+
 const attributeColumns = Array.from({ length: 20 }, (_, index) => `e_attribute_${String(index + 1).padStart(2, "0")}`).join(",");
 const projectSelect = `id,public_id,enterprise_id,project_code,name,status,created_by,created_at,updated_at,${attributeColumns}`;
 
@@ -93,9 +101,64 @@ export function updateProjectEnterpriseAttributes(projectIds: string[], changes:
   });
 }
 
+export function deleteProjects(projectIds: string[]) {
+  if (projectIds.length === 0) return Promise.resolve();
+  return supabaseRequest(`projects?id=in.(${projectIds.join(",")})`, { method: "DELETE" });
+}
+
+export function deleteProjectsByEnterprise(enterpriseId: string) {
+  return supabaseRequest(`projects?enterprise_id=eq.${encodeURIComponent(enterpriseId)}`, { method: "DELETE" });
+}
+
+export async function importProjects(
+  enterpriseId: string,
+  rows: ProjectImportRow[],
+  replaceExisting: boolean,
+  onProgress?: (progress: number) => void,
+) {
+  const existing = await listProjectsByEnterprise(enterpriseId);
+  onProgress?.(5);
+  if (replaceExisting) {
+    await deleteProjectsByEnterprise(enterpriseId);
+    onProgress?.(15);
+  }
+
+  const total = Math.max(1, rows.length);
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index];
+    const matched = replaceExisting ? null : (
+      (row.public_id ? existing.find((project) => project.public_id === row.public_id) : null) ??
+      existing.find((project) => project.project_code.toLowerCase() === row.project_code.toLowerCase()) ??
+      null
+    );
+    const payload = {
+      project_code: row.project_code.trim(),
+      name: row.name.trim(),
+      status: row.status,
+      ...row.attributes,
+      updated_at: new Date().toISOString(),
+    };
+
+    if (matched) {
+      await supabaseRequest(`projects?id=eq.${encodeURIComponent(matched.id)}`, { method: "PATCH", body: JSON.stringify(payload) });
+    } else {
+      await supabaseRequest("projects", {
+        method: "POST",
+        body: JSON.stringify({
+          enterprise_id: enterpriseId,
+          ...(row.public_id ? { public_id: row.public_id } : {}),
+          ...payload,
+        }),
+      });
+    }
+    onProgress?.(15 + ((index + 1) / total) * 85);
+  }
+  onProgress?.(100);
+}
+
 export function projectErrorMessage(error: unknown) {
   if (error instanceof SupabaseRequestError) {
-    if (error.code === "23505") return "That Project Code is already used in this enterprise.";
+    if (error.code === "23505") return "That Project Code or Public ID is already used.";
     if (error.code === "23514") return "Project Code and Project Name cannot be blank.";
     return error.message;
   }
