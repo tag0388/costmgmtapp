@@ -1,6 +1,16 @@
 import { SupabaseRequestError, supabaseRequest } from "@/lib/supabase/browser";
 
 export type ProjectStatus = "Active" | "Inactive";
+export type EnterpriseProjectAttributeColumn =
+  | "e_attribute_01" | "e_attribute_02" | "e_attribute_03" | "e_attribute_04" | "e_attribute_05"
+  | "e_attribute_06" | "e_attribute_07" | "e_attribute_08" | "e_attribute_09" | "e_attribute_10"
+  | "e_attribute_11" | "e_attribute_12" | "e_attribute_13" | "e_attribute_14" | "e_attribute_15"
+  | "e_attribute_16" | "e_attribute_17" | "e_attribute_18" | "e_attribute_19" | "e_attribute_20";
+
+export const enterpriseProjectAttributeColumns: EnterpriseProjectAttributeColumn[] = Array.from(
+  { length: 20 },
+  (_, index) => `e_attribute_${String(index + 1).padStart(2, "0")}` as EnterpriseProjectAttributeColumn,
+);
 
 export type Project = {
   id: string;
@@ -12,7 +22,7 @@ export type Project = {
   created_by: string | null;
   created_at: string;
   updated_at: string;
-};
+} & Record<EnterpriseProjectAttributeColumn, string | null>;
 
 export type ProjectInput = {
   enterprise_id: string;
@@ -21,7 +31,8 @@ export type ProjectInput = {
   status: ProjectStatus;
 };
 
-const projectSelect = "id,public_id,enterprise_id,project_code,name,status,created_by,created_at,updated_at";
+const attributeSelect = enterpriseProjectAttributeColumns.join(",");
+const projectSelect = `id,public_id,enterprise_id,project_code,name,status,created_by,created_at,updated_at,${attributeSelect}`;
 
 export function listProjectsByEnterprise(enterpriseId: string) {
   return supabaseRequest<Project[]>(
@@ -57,6 +68,18 @@ export function setProjectStatus(projectId: string, status: ProjectStatus) {
     headers: { Prefer: "return=representation" },
     body: JSON.stringify({ status, updated_at: new Date().toISOString() }),
   }).then((rows) => rows[0]);
+}
+
+export function updateProjectEnterpriseAttributes(projectIds: string[], changes: Partial<Record<EnterpriseProjectAttributeColumn, string | null>>) {
+  if (!projectIds.length || !Object.keys(changes).length) return Promise.resolve([] as Project[]);
+  return supabaseRequest<Project[]>(
+    `projects?id=in.(${projectIds.join(",")})&select=${encodeURIComponent(projectSelect)}`,
+    {
+      method: "PATCH",
+      headers: { Prefer: "return=representation" },
+      body: JSON.stringify({ ...changes, updated_at: new Date().toISOString() }),
+    },
+  );
 }
 
 export function projectErrorMessage(error: unknown) {
