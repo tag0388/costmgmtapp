@@ -1,0 +1,11 @@
+.attribute-drawer{width:min(720px,100vw)}
+.attribute-value-row{display:grid;grid-template-columns:minmax(120px,.8fr) minmax(180px,1.4fr) auto auto;gap:10px;align-items:center;margin-top:10px}
+.attribute-value-row>label{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-muted,#667085)}
+.attribute-value-row>button{border:0;background:transparent;color:#b42318;font-weight:600;cursor:pointer}
+.enterprise-projects-wide .enterprise-table{min-width:2850px}
+.enterprise-projects-wide .attribute-cell{min-width:150px;max-width:220px}
+.enterprise-projects-wide .selection-cell{width:42px;text-align:center}
+.enterprise-projects-wide .selection-cell input{width:16px;height:16px}
+.bulk-attribute-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.bulk-attribute-grid .form-field{min-width:0}
+@media(max-width:850px){.attribute-value-row{grid-template-columns:1fr}.bulk-attribute-grid{grid-template-columns:1fr}}
