@@ -175,6 +175,18 @@ export async function importProjectAttributeValues(
   if (cleanValues.length === 0) onProgress?.(100);
 }
 
+export async function deleteEnterpriseProjectAttributes(enterpriseId: string, definitions: ProjectAttributeDefinition[]) {
+  for (const definition of definitions) {
+    const column = projectAttributeColumn(definition.attribute_number);
+    await supabaseRequest(`projects?enterprise_id=eq.${encodeURIComponent(enterpriseId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ [column]: null, updated_at: new Date().toISOString() }),
+    });
+    await supabaseRequest(`attribute_values?attribute_definition_id=eq.${encodeURIComponent(definition.id)}`, { method: "DELETE" });
+    await supabaseRequest(`attribute_definitions?id=eq.${encodeURIComponent(definition.id)}`, { method: "DELETE" });
+  }
+}
+
 export function projectAttributeErrorMessage(error: unknown) {
   if (error instanceof SupabaseRequestError) {
     if (error.code === "23505") return "That attribute slot or Value ID already exists.";
