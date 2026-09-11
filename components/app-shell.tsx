@@ -96,10 +96,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const [contextLoading, setContextLoading] = useState(true);
 
   const selectedEnterprise = useMemo(() => enterprises.find((entry) => entry.public_id === route.enterprisePublicId) ?? enterprises.find((entry) => entry.active) ?? enterprises[0] ?? null, [enterprises, route.enterprisePublicId]);
-  const selectedProject = useMemo(() => projects.find((entry) => entry.public_id === route.projectPublicId) ?? projects[0] ?? null, [projects, route.projectPublicId]);
+  const selectedProject = useMemo(() => projects.find((entry) => entry.public_id === route.projectPublicId) ?? projects.find((entry) => entry.status === "Active") ?? projects[0] ?? null, [projects, route.projectPublicId]);
   const workspaceTitle = activeItem?.name ?? activeModule.name;
   const enterpriseEnabled = activeModule.path !== "/system-admin" && activeModule.path !== "/my-profile";
-  const projectEnabled = activeModule.scope === "project";
+  const projectEnabled = enterpriseEnabled;
 
   const loadProjects = useCallback(async (enterprise: Enterprise | null) => {
     if (!enterprise) { setProjects([]); return []; }
@@ -124,6 +124,12 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     return () => { cancelled = true; };
   }, [loadProjects, route.enterprisePublicId]);
 
+  useEffect(() => {
+    const refreshProjects = () => { void loadProjects(selectedEnterprise); };
+    window.addEventListener("costwise:projects-changed", refreshProjects);
+    return () => window.removeEventListener("costwise:projects-changed", refreshProjects);
+  }, [loadProjects, selectedEnterprise]);
+
   async function changeEnterprise(publicId: string) {
     const enterprise = enterprises.find((entry) => entry.public_id === publicId) ?? null;
     if (!enterprise) return;
@@ -133,7 +139,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       return;
     }
     if (activeModule.scope === "project") {
-      const project = nextProjects[0];
+      const project = nextProjects.find((entry) => entry.status === "Active") ?? nextProjects[0];
       if (project) router.push(`/enterprises/${enterprise.public_id}/projects/${project.public_id}${activeModule.path}/${currentSubPath ?? "overview"}`);
       else router.push(`/enterprises/${enterprise.public_id}/enterprise-admin/projects`);
     }
@@ -185,7 +191,8 @@ function NavGroup({ title, modules: entries, active, enterprise, project, collap
 }
 
 function Header({ enterprises, projects, enterprise, project, loading, enterpriseEnabled, projectEnabled, onEnterpriseChange, onProjectChange, focusMode, setFocusMode, onMenu }: { enterprises: Enterprise[]; projects: Project[]; enterprise: Enterprise | null; project: Project | null; loading: boolean; enterpriseEnabled: boolean; projectEnabled: boolean; onEnterpriseChange: (v:string)=>void; onProjectChange:(v:string)=>void; focusMode:boolean; setFocusMode:(v:boolean)=>void; onMenu:()=>void }) {
-  return <header className="top-header"><button className="icon-button mobile-menu" aria-label="Open navigation" onClick={onMenu}><Icon name="table"/></button><div className="context-selectors"><label><span>Enterprise</span><select value={enterpriseEnabled ? enterprise?.public_id ?? "" : ""} onChange={(e)=>void onEnterpriseChange(e.target.value)} disabled={loading || !enterpriseEnabled || enterprises.length === 0}><option value="">{enterpriseEnabled ? (enterprises.length ? "Select enterprise" : "No enterprises") : "No enterprise context"}</option>{enterpriseEnabled && enterprises.map((entry)=><option key={entry.public_id} value={entry.public_id}>{entry.enterprise_code} — {entry.name}</option>)}</select></label><span className="selector-divider"/><label><span>Project</span><select value={projectEnabled ? project?.public_id ?? "" : ""} onChange={(e)=>onProjectChange(e.target.value)} disabled={loading || !projectEnabled || projects.length === 0}><option value="">{projectEnabled ? (projects.length ? "Select project" : "No projects") : "No project context"}</option>{projectEnabled && projects.map((entry)=><option key={entry.public_id} value={entry.public_id}>{entry.project_code} — {entry.name}</option>)}</select></label></div><div className="header-actions"><button className={`focus-button ${focusMode ? "active" : ""}`} onClick={()=>setFocusMode(!focusMode)} title="Hide navigation for maximum table workspace"><Icon name="dashboard" size={16}/><span>{focusMode ? "Exit focus" : "Max workspace"}</span></button><button className="icon-button notification" aria-label="Notifications"><Icon name="flag" size={17}/><i/></button><button className="help-button" aria-label="Help">?</button></div></header>;
+  const activeProjects = projects.filter((entry) => entry.status === "Active");
+  return <header className="top-header"><button className="icon-button mobile-menu" aria-label="Open navigation" onClick={onMenu}><Icon name="table"/></button><div className="context-selectors"><label><span>Enterprise</span><select value={enterpriseEnabled ? enterprise?.public_id ?? "" : ""} onChange={(e)=>void onEnterpriseChange(e.target.value)} disabled={loading || !enterpriseEnabled || enterprises.length === 0}><option value="">{enterpriseEnabled ? (enterprises.length ? "Select enterprise" : "No enterprises") : "No enterprise context"}</option>{enterpriseEnabled && enterprises.map((entry)=><option key={entry.public_id} value={entry.public_id}>{entry.enterprise_code} — {entry.name}</option>)}</select></label><span className="selector-divider"/><label><span>Project</span><select value={projectEnabled ? project?.public_id ?? "" : ""} onChange={(e)=>onProjectChange(e.target.value)} disabled={loading || !projectEnabled || activeProjects.length === 0}><option value="">{projectEnabled ? (activeProjects.length ? "Select project" : "No projects") : "No project context"}</option>{projectEnabled && activeProjects.map((entry)=><option key={entry.public_id} value={entry.public_id}>{entry.project_code} — {entry.name}</option>)}</select></label></div><div className="header-actions"><button className={`focus-button ${focusMode ? "active" : ""}`} onClick={()=>setFocusMode(!focusMode)} title="Hide navigation for maximum table workspace"><Icon name="dashboard" size={16}/><span>{focusMode ? "Exit focus" : "Max workspace"}</span></button><button className="icon-button notification" aria-label="Notifications"><Icon name="flag" size={17}/><i/></button><button className="help-button" aria-label="Help">?</button></div></header>;
 }
 
 function ContextSidebar({ module, groups, activePath, enterprise, project, collapsed, onCollapse }: { module:Module; groups:MenuGroup[]; activePath:string; enterprise: Enterprise | null; project: Project | null; collapsed:boolean; onCollapse:()=>void }) {
