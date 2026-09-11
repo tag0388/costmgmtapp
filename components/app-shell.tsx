@@ -99,7 +99,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const selectedProject = useMemo(() => projects.find((entry) => entry.public_id === route.projectPublicId) ?? projects[0] ?? null, [projects, route.projectPublicId]);
   const workspaceTitle = activeItem?.name ?? activeModule.name;
   const enterpriseEnabled = activeModule.path !== "/system-admin" && activeModule.path !== "/my-profile";
-  const projectEnabled = activeModule.scope === "project";
+  const projectEnabled = enterpriseEnabled;
 
   const loadProjects = useCallback(async (enterprise: Enterprise | null) => {
     if (!enterprise) { setProjects([]); return []; }
@@ -123,6 +123,15 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     })();
     return () => { cancelled = true; };
   }, [loadProjects, route.enterprisePublicId]);
+
+  useEffect(() => {
+    const refreshProjects = () => {
+      const enterprise = enterprises.find((entry) => entry.public_id === route.enterprisePublicId) ?? enterprises.find((entry) => entry.active) ?? enterprises[0] ?? null;
+      void loadProjects(enterprise);
+    };
+    window.addEventListener("costwise:projects-changed", refreshProjects);
+    return () => window.removeEventListener("costwise:projects-changed", refreshProjects);
+  }, [enterprises, loadProjects, route.enterprisePublicId]);
 
   async function changeEnterprise(publicId: string) {
     const enterprise = enterprises.find((entry) => entry.public_id === publicId) ?? null;
