@@ -23,9 +23,10 @@ export type ProjectInput = {
 
 const projectSelect = "id,public_id,enterprise_id,project_code,name,status,created_by,created_at,updated_at";
 
-export function listProjectsByEnterprise(enterpriseId: string) {
+export function listProjectsByEnterprise(enterpriseId: string, includeInactive = false) {
+  const statusFilter = includeInactive ? "" : "&status=eq.Active";
   return supabaseRequest<Project[]>(
-    `projects?enterprise_id=eq.${encodeURIComponent(enterpriseId)}&select=${encodeURIComponent(projectSelect)}&order=project_code.asc`,
+    `projects?enterprise_id=eq.${encodeURIComponent(enterpriseId)}${statusFilter}&select=${encodeURIComponent(projectSelect)}&order=project_code.asc`,
   );
 }
 
