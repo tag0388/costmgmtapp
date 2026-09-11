@@ -139,6 +139,54 @@ export async function saveEnterpriseProjectAttribute(enterpriseId: string, slot:
   return definition;
 }
 
+export async function importProjectAttributeValues(
+  definitionId: string,
+  values: ProjectAttributeValueInput[],
+  deleteExisting: boolean,
+  onProgress?: (progress: number) => void,
+) {
+  const cleanValues = values.map((value) => ({ value_id: value.value_id.trim(), value_name: value.value_name.trim() }));
+  const existing = await supabaseRequest<ProjectAttributeValue[]>(
+    `attribute_values?attribute_definition_id=eq.${encodeURIComponent(definitionId)}&select=id,attribute_definition_id,value_id,value_name,sort_order,is_active&order=sort_order.asc`,
+  );
+
+  if (deleteExisting && existing.length) {
+    await supabaseRequest(`attribute_values?attribute_definition_id=eq.${encodeURIComponent(definitionId)}`, { method: "DELETE" });
+  }
+
+  const source = deleteExisting ? [] : existing;
+  for (let index = 0; index < cleanValues.length; index += 1) {
+    const value = cleanValues[index];
+    const match = source.find((row) => row.value_id.toLowerCase() === value.value_id.toLowerCase());
+    if (match) {
+      await supabaseRequest(`attribute_values?id=eq.${encodeURIComponent(match.id)}`, {
+        method: "PATCH",
+        body: JSON.stringify({ value_name: value.value_name, sort_order: index + 1, is_active: true, updated_at: new Date().toISOString() }),
+      });
+    } else {
+      await supabaseRequest("attribute_values", {
+        method: "POST",
+        body: JSON.stringify({ attribute_definition_id: definitionId, value_id: value.value_id, value_name: value.value_name, sort_order: index + 1, is_active: true }),
+      });
+    }
+    onProgress?.(((index + 1) / Math.max(cleanValues.length, 1)) * 100);
+  }
+
+  if (cleanValues.length === 0) onProgress?.(100);
+}
+
+export async function deleteEnterpriseProjectAttributes(enterpriseId: string, definitions: ProjectAttributeDefinition[]) {
+  for (const definition of definitions) {
+    const column = projectAttributeColumn(definition.attribute_number);
+    await supabaseRequest(`projects?enterprise_id=eq.${encodeURIComponent(enterpriseId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ [column]: null, updated_at: new Date().toISOString() }),
+    });
+    await supabaseRequest(`attribute_values?attribute_definition_id=eq.${encodeURIComponent(definition.id)}`, { method: "DELETE" });
+    await supabaseRequest(`attribute_definitions?id=eq.${encodeURIComponent(definition.id)}`, { method: "DELETE" });
+  }
+}
+
 export function projectAttributeErrorMessage(error: unknown) {
   if (error instanceof SupabaseRequestError) {
     if (error.code === "23505") return "That attribute slot or Value ID already exists.";

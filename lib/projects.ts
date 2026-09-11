@@ -43,6 +43,7 @@ export type ProjectInput = {
 
 export type ProjectEnterpriseAttributeColumn = `e_attribute_${string}`;
 export type ProjectEnterpriseAttributeChanges = Partial<Record<ProjectEnterpriseAttributeColumn, string | null>>;
+export type ProjectImportInput = Omit<ProjectInput, "enterprise_id"> & ProjectEnterpriseAttributeChanges;
 
 const attributeColumns = Array.from({ length: 20 }, (_, index) => `e_attribute_${String(index + 1).padStart(2, "0")}`).join(",");
 const projectSelect = `id,public_id,enterprise_id,project_code,name,status,created_by,created_at,updated_at,${attributeColumns}`;
@@ -67,7 +68,23 @@ export function createProject(input: ProjectInput) {
   }).then((rows) => rows[0]);
 }
 
+export function createImportedProject(enterpriseId: string, input: ProjectImportInput) {
+  return supabaseRequest<Project[]>(`projects?select=${encodeURIComponent(projectSelect)}`, {
+    method: "POST",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify({ enterprise_id: enterpriseId, ...input }),
+  }).then((rows) => rows[0]);
+}
+
 export function updateProject(projectId: string, input: Omit<ProjectInput, "enterprise_id">) {
+  return supabaseRequest<Project[]>(`projects?id=eq.${encodeURIComponent(projectId)}&select=${encodeURIComponent(projectSelect)}`, {
+    method: "PATCH",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify({ ...input, updated_at: new Date().toISOString() }),
+  }).then((rows) => rows[0]);
+}
+
+export function updateImportedProject(projectId: string, input: ProjectImportInput) {
   return supabaseRequest<Project[]>(`projects?id=eq.${encodeURIComponent(projectId)}&select=${encodeURIComponent(projectSelect)}`, {
     method: "PATCH",
     headers: { Prefer: "return=representation" },
@@ -91,6 +108,11 @@ export function updateProjectEnterpriseAttributes(projectIds: string[], changes:
     headers: { Prefer: "return=representation" },
     body: JSON.stringify({ ...changes, updated_at: new Date().toISOString() }),
   });
+}
+
+export function deleteProjects(projectIds: string[]) {
+  if (projectIds.length === 0) return Promise.resolve();
+  return supabaseRequest<void>(`projects?id=in.(${projectIds.join(",")})`, { method: "DELETE" });
 }
 
 export function projectErrorMessage(error: unknown) {
