@@ -44,7 +44,8 @@ export type AttributeDefinitionInput = {
   values: AttributeValueInput[];
 };
 
-const definitionSelect = "id,attribute_set_id,attribute_number,name,description,data_type,is_active,attribute_values(id,attribute_definition_id,value_id,value_name,sort_order,is_active)";
+const definitionBaseSelect = "id,attribute_set_id,attribute_number,name,description,data_type,is_active";
+const definitionSelect = `${definitionBaseSelect},attribute_values(id,attribute_definition_id,value_id,value_name,sort_order,is_active)`;
 
 export async function getOrCreateEnterpriseProjectAttributeSet(enterpriseId: string) {
   const existing = await supabaseRequest<AttributeSet[]>(
@@ -78,7 +79,7 @@ export async function saveEnterpriseProjectAttribute(enterpriseId: string, exist
   let definition = existing;
   if (definition) {
     const updated = await supabaseRequest<AttributeDefinition[]>(
-      `attribute_definitions?id=eq.${definition.id}&select=${encodeURIComponent(definitionSelect)}`,
+      `attribute_definitions?id=eq.${definition.id}&select=${encodeURIComponent(definitionBaseSelect)}`,
       {
         method: "PATCH",
         headers: { Prefer: "return=representation" },
@@ -88,7 +89,7 @@ export async function saveEnterpriseProjectAttribute(enterpriseId: string, exist
     definition = updated[0] ?? definition;
   } else {
     const created = await supabaseRequest<AttributeDefinition[]>(
-      `attribute_definitions?select=${encodeURIComponent(definitionSelect)}`,
+      `attribute_definitions?select=${encodeURIComponent(definitionBaseSelect)}`,
       {
         method: "POST",
         headers: { Prefer: "return=representation" },
@@ -109,11 +110,11 @@ export async function saveEnterpriseProjectAttribute(enterpriseId: string, exist
 
   for (let index = 0; index < input.values.length; index += 1) {
     const value = input.values[index];
-    const payload = { value_id: value.value_id.trim(), value_name: value.value_name.trim(), is_active: value.is_active, sort_order: index + 1 };
+    const shared = { value_name: value.value_name.trim(), is_active: value.is_active, sort_order: index + 1 };
     if (value.id) {
-      await supabaseRequest(`attribute_values?id=eq.${value.id}`, { method: "PATCH", body: JSON.stringify(payload) });
+      await supabaseRequest(`attribute_values?id=eq.${value.id}`, { method: "PATCH", body: JSON.stringify(shared) });
     } else {
-      await supabaseRequest("attribute_values", { method: "POST", body: JSON.stringify({ attribute_definition_id: definition.id, ...payload }) });
+      await supabaseRequest("attribute_values", { method: "POST", body: JSON.stringify({ attribute_definition_id: definition.id, value_id: value.value_id.trim(), ...shared }) });
     }
   }
   return definition;
