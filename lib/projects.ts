@@ -1,6 +1,7 @@
 import { SupabaseRequestError, supabaseRequest } from "@/lib/supabase/browser";
 
 export type ProjectStatus = "Active" | "Inactive";
+export type ProjectAttributeKey = `e_attribute_${string}`;
 
 export type Project = {
   id: string;
@@ -12,6 +13,7 @@ export type Project = {
   created_by: string | null;
   created_at: string;
   updated_at: string;
+  [key: ProjectAttributeKey]: string | null | undefined;
 };
 
 export type ProjectInput = {
@@ -21,7 +23,12 @@ export type ProjectInput = {
   status: ProjectStatus;
 };
 
-const projectSelect = "id,public_id,enterprise_id,project_code,name,status,created_by,created_at,updated_at";
+const enterpriseAttributeColumns = Array.from({ length: 20 }, (_, index) => `e_attribute_${String(index + 1).padStart(2, "0")}`);
+const projectSelect = ["id", "public_id", "enterprise_id", "project_code", "name", "status", "created_by", "created_at", "updated_at", ...enterpriseAttributeColumns].join(",");
+
+export function projectAttributeKey(attributeNumber: number): ProjectAttributeKey {
+  return `e_attribute_${String(attributeNumber).padStart(2, "0")}` as ProjectAttributeKey;
+}
 
 export function listProjectsByEnterprise(enterpriseId: string) {
   return supabaseRequest<Project[]>(
@@ -57,6 +64,16 @@ export function setProjectStatus(projectId: string, status: ProjectStatus) {
     headers: { Prefer: "return=representation" },
     body: JSON.stringify({ status, updated_at: new Date().toISOString() }),
   }).then((rows) => rows[0]);
+}
+
+export function bulkUpdateProjectAttributes(projectIds: string[], changes: Record<ProjectAttributeKey, string | null>) {
+  if (projectIds.length === 0 || Object.keys(changes).length === 0) return Promise.resolve([] as Project[]);
+  const filter = projectIds.map((id) => `\"${id}\"`).join(",");
+  return supabaseRequest<Project[]>(`projects?id=in.(${encodeURIComponent(filter)})&select=${encodeURIComponent(projectSelect)}`, {
+    method: "PATCH",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify({ ...changes, updated_at: new Date().toISOString() }),
+  });
 }
 
 export function projectErrorMessage(error: unknown) {
