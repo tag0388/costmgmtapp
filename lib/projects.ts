@@ -1,4 +1,6 @@
-import { supabaseRequest } from "@/lib/supabase/browser";
+import { SupabaseRequestError, supabaseRequest } from "@/lib/supabase/browser";
+
+export type ProjectStatus = "Active" | "Inactive";
 
 export type Project = {
   id: string;
@@ -6,14 +8,23 @@ export type Project = {
   enterprise_id: string;
   project_code: string;
   name: string;
-  status: string;
+  status: ProjectStatus;
+  created_at: string;
+  updated_at: string;
 };
 
-const projectSelect = "id,public_id,enterprise_id,project_code,name,status";
+export type ProjectInput = {
+  project_code: string;
+  name: string;
+  status: ProjectStatus;
+};
 
-export function listProjectsByEnterprise(enterpriseId: string) {
+const projectSelect = "id,public_id,enterprise_id,project_code,name,status,created_at,updated_at";
+
+export function listProjectsByEnterprise(enterpriseId: string, includeInactive = false) {
+  const statusFilter = includeInactive ? "" : "&status=eq.Active";
   return supabaseRequest<Project[]>(
-    `projects?enterprise_id=eq.${encodeURIComponent(enterpriseId)}&select=${encodeURIComponent(projectSelect)}&order=project_code.asc`,
+    `projects?enterprise_id=eq.${encodeURIComponent(enterpriseId)}${statusFilter}&select=${encodeURIComponent(projectSelect)}&order=project_code.asc`,
   );
 }
 
@@ -21,4 +32,45 @@ export function getProjectByPublicId(publicId: string) {
   return supabaseRequest<Project[]>(
     `projects?public_id=eq.${encodeURIComponent(publicId)}&select=${encodeURIComponent(projectSelect)}&limit=1`,
   ).then((rows) => rows[0] ?? null);
+}
+
+export function createProject(enterpriseId: string, input: ProjectInput) {
+  return supabaseRequest<Project[]>(`projects?select=${encodeURIComponent(projectSelect)}`, {
+    method: "POST",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify({
+      enterprise_id: enterpriseId,
+      project_code: input.project_code,
+      name: input.name,
+      status: input.status,
+    }),
+  }).then((rows) => rows[0]);
+}
+
+export function updateProject(id: string, input: ProjectInput) {
+  return supabaseRequest(`projects?id=eq.${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify({
+      project_code: input.project_code,
+      name: input.name,
+      status: input.status,
+      updated_at: new Date().toISOString(),
+    }),
+  });
+}
+
+export function setProjectStatus(id: string, status: ProjectStatus) {
+  return supabaseRequest(`projects?id=eq.${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify({ status, updated_at: new Date().toISOString() }),
+  });
+}
+
+export function projectErrorMessage(error: unknown) {
+  if (error instanceof SupabaseRequestError && (error.code === "23505" || error.status === 409)) {
+    return "That project code is already in use for this enterprise.";
+  }
+  return error instanceof Error ? error.message : "An unexpected error occurred.";
 }
