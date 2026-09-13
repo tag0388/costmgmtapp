@@ -71,7 +71,6 @@ export async function importEnterpriseCalendars(enterpriseId: string, rows: Omit
   const existing = await listEnterpriseCalendars(enterpriseId);
   if (replace && existing.length) await setEnterpriseCalendarActive(existing.map((row) => row.id), false);
   const existingById = new Map(existing.map((row) => [row.calendar_id.toLowerCase(), row]));
-
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index];
     const match = existingById.get(row.calendar_id.toLowerCase());
@@ -110,7 +109,6 @@ export async function importEnterpriseCalendarDays(calendarId: string, rows: Omi
   const existing = await listEnterpriseCalendarDays(calendarId);
   if (replace && existing.length) await deleteEnterpriseCalendarDays(existing.map((row) => row.id));
   const existingByDate = new Map((replace ? [] : existing).map((row) => [row.calendar_date, row]));
-
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index];
     const match = existingByDate.get(row.calendar_date);
@@ -118,6 +116,32 @@ export async function importEnterpriseCalendarDays(calendarId: string, rows: Omi
     else await createEnterpriseCalendarDay({ enterprise_calendar_id: calendarId, ...row });
     onProgress?.(((index + 1) / Math.max(rows.length, 1)) * 100);
   }
+}
+
+export async function copyEnterpriseCalendar(source: EnterpriseCalendar, calendarId: string, calendarName: string) {
+  const copied = await createEnterpriseCalendar({
+    enterprise_id: source.enterprise_id,
+    calendar_id: calendarId.trim(),
+    calendar_name: calendarName.trim(),
+    sunday_working: source.sunday_working,
+    monday_working: source.monday_working,
+    tuesday_working: source.tuesday_working,
+    wednesday_working: source.wednesday_working,
+    thursday_working: source.thursday_working,
+    friday_working: source.friday_working,
+    saturday_working: source.saturday_working,
+    is_active: true,
+  });
+  const days = await listEnterpriseCalendarDays(source.id);
+  for (const day of days) {
+    await createEnterpriseCalendarDay({
+      enterprise_calendar_id: copied.id,
+      calendar_date: day.calendar_date,
+      is_working_day: day.is_working_day,
+      description: day.description,
+    });
+  }
+  return copied;
 }
 
 export function enterpriseCalendarErrorMessage(error: unknown) {
