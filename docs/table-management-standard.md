@@ -5,12 +5,13 @@ All editable data grids in Costwise should follow the same interaction pattern u
 ## Toolbar
 
 - Search / filters relevant to the table.
-- Export to Excel.
-- Import from Excel.
+- **Export** action.
+- **Import** action.
 - Refresh.
 - Bulk edit when the table supports editable business fields.
 - Bulk delete when permanent deletion is permitted for that record type.
 - Primary create action remains in the page header.
+- User-facing action labels are **Export** and **Import**. Do not label the buttons `Excel`; the file format can be described in tooltips, dialogs, help text, and documentation.
 
 ## Row actions
 
