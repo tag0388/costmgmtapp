@@ -7,6 +7,7 @@ import EnterpriseCostCodeAttributesPage from "@/components/enterprise-admin/ente
 import EnterpriseLineItemAttributesPage from "@/components/enterprise-admin/enterprise-line-item-attributes-page";
 import EnterpriseProjectAttributesPage from "@/components/enterprise-admin/enterprise-project-attributes-page";
 import EnterpriseProjectsPage from "@/components/enterprise-admin/enterprise-projects-page";
+import EnterpriseResourceRatesPage from "@/components/enterprise-admin/enterprise-resource-rates-page";
 import EnterpriseSettingsPage from "@/components/enterprise-admin/enterprise-settings-page";
 import EnterpriseSubcontractAttributesPage from "@/components/enterprise-admin/enterprise-subcontract-attributes-page";
 import { notFound } from "next/navigation";
@@ -21,6 +22,7 @@ export default async function EnterpriseContextPage({ params }: { params: Promis
   if (submodule === "project-attributes") return <EnterpriseProjectAttributesPage enterprisePublicId={enterprisePublicId} />;
   if (submodule === "line-item-attributes") return <EnterpriseLineItemAttributesPage enterprisePublicId={enterprisePublicId} />;
   if (submodule === "cost-code-attributes") return <EnterpriseCostCodeAttributesPage enterprisePublicId={enterprisePublicId} />;
+  if (submodule === "resource-rates") return <EnterpriseResourceRatesPage enterprisePublicId={enterprisePublicId} />;
   if (submodule === "change-attributes") return <EnterpriseChangeAttributesPage enterprisePublicId={enterprisePublicId} />;
   if (submodule === "subcontract-attributes") return <EnterpriseSubcontractAttributesPage enterprisePublicId={enterprisePublicId} />;
   return null;
