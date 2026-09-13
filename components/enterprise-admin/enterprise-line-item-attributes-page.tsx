@@ -5,7 +5,7 @@ export default function EnterpriseLineItemAttributesPage({ enterprisePublicId }:
     enterprisePublicId={enterprisePublicId}
     category="Line Item"
     pageTitle="Enterprise Line-Item Attributes"
-    description={(enterpriseName) => `Configure up to 20 enterprise-level attributes for cost and commercial line items in ${enterpriseName}.`}
+    description="Configure up to 20 enterprise-level attributes for cost and commercial line items."
     recordLabel="Line Item"
     filenameSegment="line-item"
   />;
