@@ -2,6 +2,7 @@ import "@/app/system-admin-enterprises.css";
 import "@/app/system-admin-enterprises-shell-overrides.css";
 import "@/app/enterprise-admin-settings.css";
 import "@/app/enterprise-project-attributes.css";
+import EnterpriseLineItemAttributesPage from "@/components/enterprise-admin/enterprise-line-item-attributes-page";
 import EnterpriseProjectAttributesPage from "@/components/enterprise-admin/enterprise-project-attributes-page";
 import EnterpriseProjectsPage from "@/components/enterprise-admin/enterprise-projects-page";
 import EnterpriseSettingsPage from "@/components/enterprise-admin/enterprise-settings-page";
@@ -15,5 +16,6 @@ export default async function EnterpriseContextPage({ params }: { params: Promis
   if (submodule === "settings") return <EnterpriseSettingsPage enterprisePublicId={enterprisePublicId} />;
   if (submodule === "projects") return <EnterpriseProjectsPage enterprisePublicId={enterprisePublicId} />;
   if (submodule === "project-attributes") return <EnterpriseProjectAttributesPage enterprisePublicId={enterprisePublicId} />;
+  if (submodule === "line-item-attributes") return <EnterpriseLineItemAttributesPage enterprisePublicId={enterprisePublicId} />;
   return null;
 }
