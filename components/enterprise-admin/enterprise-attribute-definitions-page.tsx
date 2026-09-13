@@ -22,7 +22,7 @@ type Props = {
   enterprisePublicId: string;
   category: EnterpriseAttributeCategory;
   pageTitle: string;
-  description: (enterpriseName: string) => string;
+  description: string;
   recordLabel: string;
   filenameSegment: string;
 };
@@ -73,7 +73,7 @@ export default function EnterpriseAttributeDefinitionsPage({ enterprisePublicId,
     <div className="enterprise-page-title">
       <div>
         <h2>{pageTitle}</h2>
-        <p>{description(enterprise?.name ?? "this enterprise")}</p>
+        <p>{description}</p>
       </div>
       <span className="attribute-count">{configuredCount} of 20 active</span>
     </div>
