@@ -1,10 +1,14 @@
+import "@/app/system-admin-enterprises.css";
+import "@/app/enterprise-admin-settings.css";
+import ProjectCalendarsPage from "@/components/project-admin/project-calendars-page";
 import { notFound } from "next/navigation";
 import { isModuleSlug, isSubmoduleSlug } from "@/lib/navigation";
 
 const projectModules = new Set(["project-dashboard", "project-admin", "cost-management", "change-management", "subcontract-management"]);
 
 export default async function ProjectContextPage({ params }: { params: Promise<{ enterprisePublicId: string; projectPublicId: string; module: string; submodule: string }> }) {
-  const { module, submodule } = await params;
+  const { projectPublicId, module, submodule } = await params;
   if (!isModuleSlug(module) || !isSubmoduleSlug(module, submodule) || !projectModules.has(module)) notFound();
+  if (module === "project-admin" && submodule === "calendar") return <ProjectCalendarsPage projectPublicId={projectPublicId}/>;
   return null;
 }
