@@ -1,6 +1,7 @@
 import "@/app/system-admin-enterprises.css";
 import "@/app/enterprise-admin-settings.css";
 import ProjectGeneralInfoPage from "@/components/project-admin/project-general-info-page";
+import ProjectCalendarsPage from "@/components/project-admin/project-calendars-page";
 import { notFound } from "next/navigation";
 import { isModuleSlug, isSubmoduleSlug } from "@/lib/navigation";
 
@@ -10,5 +11,6 @@ export default async function ProjectContextPage({ params }: { params: Promise<{
   const { projectPublicId, module, submodule } = await params;
   if (!isModuleSlug(module) || !isSubmoduleSlug(module, submodule) || !projectModules.has(module)) notFound();
   if (module === "project-admin" && submodule === "general-info") return <ProjectGeneralInfoPage projectPublicId={projectPublicId}/>;
+  if (module === "project-admin" && submodule === "calendar") return <ProjectCalendarsPage projectPublicId={projectPublicId}/>;
   return null;
 }
