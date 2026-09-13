@@ -1,0 +1,228 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import ExcelImportDialog from "@/components/shared/excel-import-dialog";
+import { ExcelRow, exportExcel, readExcel } from "@/lib/excel";
+import { Enterprise, listEnterprises } from "@/lib/enterprises";
+import {
+  createEnterpriseCalendar,
+  createEnterpriseCalendarDay,
+  deleteEnterpriseCalendarDays,
+  EnterpriseCalendar,
+  EnterpriseCalendarDay,
+  enterpriseCalendarErrorMessage,
+  importEnterpriseCalendarDays,
+  importEnterpriseCalendars,
+  listEnterpriseCalendarDays,
+  listEnterpriseCalendars,
+  setEnterpriseCalendarActive,
+  updateEnterpriseCalendar,
+  updateEnterpriseCalendarDay,
+} from "@/lib/enterprise-calendars";
+
+const CALENDAR_COLUMNS = ["Calendar ID", "Calendar Name", "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Status"];
+const DAY_COLUMNS = ["Date", "Working Day", "Description"];
+const WEEKDAYS = [
+  ["sunday_working", "Sun"], ["monday_working", "Mon"], ["tuesday_working", "Tue"], ["wednesday_working", "Wed"],
+  ["thursday_working", "Thu"], ["friday_working", "Fri"], ["saturday_working", "Sat"],
+] as const;
+
+type StatusFilter = "all" | "active" | "inactive";
+type CalendarForm = {
+  calendar_id: string; calendar_name: string; sunday_working: boolean; monday_working: boolean; tuesday_working: boolean;
+  wednesday_working: boolean; thursday_working: boolean; friday_working: boolean; saturday_working: boolean; is_active: boolean;
+};
+
+const blankCalendar: CalendarForm = {
+  calendar_id: "", calendar_name: "", sunday_working: false, monday_working: true, tuesday_working: true,
+  wednesday_working: true, thursday_working: true, friday_working: true, saturday_working: false, is_active: true,
+};
+
+function yesNo(value: boolean) { return value ? "Yes" : "No"; }
+function parseYesNo(value: string) {
+  const normalized = value.trim().toLowerCase();
+  if (["yes", "y", "true", "1", "working"].includes(normalized)) return true;
+  if (["no", "n", "false", "0", "non-working", "non working"].includes(normalized)) return false;
+  return null;
+}
+function formatDateTime(value: string) { return new Date(value).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }); }
+function exactColumns(rows: ExcelRow[], expected: string[]) {
+  if (!rows.length) return true;
+  const actual = Object.keys(rows[0]);
+  return actual.length === expected.length && expected.every((column, index) => actual[index] === column);
+}
+
+export default function EnterpriseCalendarsPage({ enterprisePublicId }: { enterprisePublicId: string }) {
+  const calendarFile = useRef<HTMLInputElement>(null);
+  const dayFile = useRef<HTMLInputElement>(null);
+  const [enterprise, setEnterprise] = useState<Enterprise | null>(null);
+  const [calendars, setCalendars] = useState<EnterpriseCalendar[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [search, setSearch] = useState("");
+  const [status, setStatus] = useState<StatusFilter>("all");
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [editing, setEditing] = useState<EnterpriseCalendar | "new" | null>(null);
+  const [managingDays, setManagingDays] = useState<EnterpriseCalendar | null>(null);
+  const [calendarImport, setCalendarImport] = useState<ExcelRow[] | null>(null);
+  const [calendarImportErrors, setCalendarImportErrors] = useState<string[]>([]);
+  const [calendarReplace, setCalendarReplace] = useState(false);
+  const [calendarImporting, setCalendarImporting] = useState(false);
+  const [calendarProgress, setCalendarProgress] = useState(0);
+
+  const refresh = useCallback(async () => {
+    setLoading(true); setError("");
+    try {
+      const enterprises = await listEnterprises();
+      const current = enterprises.find((row) => row.public_id === enterprisePublicId) ?? null;
+      setEnterprise(current);
+      if (!current) { setCalendars([]); setError("The selected enterprise could not be found."); return; }
+      const rows = await listEnterpriseCalendars(current.id);
+      setCalendars(rows);
+      setSelectedIds((ids) => ids.filter((id) => rows.some((row) => row.id === id)));
+    } catch (requestError) { setError(enterpriseCalendarErrorMessage(requestError)); }
+    finally { setLoading(false); }
+  }, [enterprisePublicId]);
+
+  useEffect(() => { void refresh(); }, [refresh]);
+
+  const rows = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    return calendars.filter((calendar) => {
+      const matchesSearch = !term || calendar.calendar_id.toLowerCase().includes(term) || calendar.calendar_name.toLowerCase().includes(term);
+      const matchesStatus = status === "all" || (status === "active" ? calendar.is_active : !calendar.is_active);
+      return matchesSearch && matchesStatus;
+    });
+  }, [calendars, search, status]);
+
+  const allVisibleSelected = rows.length > 0 && rows.every((row) => selectedIds.includes(row.id));
+  function showNotice(message: string) { setNotice(message); window.setTimeout(() => setNotice(""), 3500); }
+  function toggleAll(checked: boolean) {
+    const visible = rows.map((row) => row.id);
+    setSelectedIds((current) => checked ? Array.from(new Set([...current, ...visible])) : current.filter((id) => !visible.includes(id)));
+  }
+
+  async function deactivate(ids: string[]) {
+    if (!ids.length || !window.confirm(`Deactivate ${ids.length} calendar${ids.length === 1 ? "" : "s"}? Existing history and day overrides will be retained.`)) return;
+    try { await setEnterpriseCalendarActive(ids, false); setSelectedIds([]); showNotice("Calendar status updated."); await refresh(); }
+    catch (requestError) { setError(enterpriseCalendarErrorMessage(requestError)); }
+  }
+
+  function exportCalendars() {
+    if (!enterprise) return;
+    const exportRows = calendars.map((calendar) => ({
+      "Calendar ID": calendar.calendar_id, "Calendar Name": calendar.calendar_name,
+      Sunday: yesNo(calendar.sunday_working), Monday: yesNo(calendar.monday_working), Tuesday: yesNo(calendar.tuesday_working),
+      Wednesday: yesNo(calendar.wednesday_working), Thursday: yesNo(calendar.thursday_working), Friday: yesNo(calendar.friday_working), Saturday: yesNo(calendar.saturday_working),
+      Status: calendar.is_active ? "Active" : "Inactive",
+    }));
+    exportExcel(`${enterprise.enterprise_code}-enterprise-calendars`, "Calendars", exportRows.length ? exportRows : [Object.fromEntries(CALENDAR_COLUMNS.map((column) => [column, ""]))]);
+  }
+
+  async function chooseCalendarImport(file: File | undefined) {
+    if (!file) return;
+    try {
+      const incoming = await readExcel(file);
+      const errors: string[] = [];
+      if (!incoming.length) errors.push("The file does not contain any calendar rows.");
+      if (incoming.length && !exactColumns(incoming, CALENDAR_COLUMNS)) errors.push(`Columns must be exactly: ${CALENDAR_COLUMNS.join(", ")}.`);
+      const ids = new Set<string>();
+      incoming.forEach((row, index) => {
+        const line = index + 2;
+        const id = (row["Calendar ID"] ?? "").trim(); const name = (row["Calendar Name"] ?? "").trim();
+        if (!id) errors.push(`Row ${line}: Calendar ID is required.`); if (id.length > 40) errors.push(`Row ${line}: Calendar ID is longer than 40 characters.`);
+        if (!name) errors.push(`Row ${line}: Calendar Name is required.`); if (name.length > 120) errors.push(`Row ${line}: Calendar Name is longer than 120 characters.`);
+        const key = id.toLowerCase(); if (key && ids.has(key)) errors.push(`Row ${line}: duplicate Calendar ID “${id}”.`); if (key) ids.add(key);
+        ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"].forEach((day) => { if (parseYesNo(row[day] ?? "") === null) errors.push(`Row ${line}: ${day} must be Yes or No.`); });
+        if (!["Active", "Inactive"].includes(row.Status ?? "")) errors.push(`Row ${line}: Status must be Active or Inactive.`);
+      });
+      setCalendarImport(incoming); setCalendarImportErrors(errors); setCalendarReplace(false); setCalendarProgress(0);
+    } catch (requestError) { setError(requestError instanceof Error ? requestError.message : "Unable to read the file."); }
+    finally { if (calendarFile.current) calendarFile.current.value = ""; }
+  }
+
+  async function runCalendarImport() {
+    if (!enterprise || !calendarImport || calendarImportErrors.length) return;
+    if (calendarReplace && !window.confirm("Are you sure you want to replace? Existing calendars omitted from the file will be made inactive.")) return;
+    setCalendarImporting(true); setCalendarProgress(0);
+    try {
+      await importEnterpriseCalendars(enterprise.id, calendarImport.map((row) => ({
+        calendar_id: row["Calendar ID"].trim(), calendar_name: row["Calendar Name"].trim(),
+        sunday_working: parseYesNo(row.Sunday)!, monday_working: parseYesNo(row.Monday)!, tuesday_working: parseYesNo(row.Tuesday)!,
+        wednesday_working: parseYesNo(row.Wednesday)!, thursday_working: parseYesNo(row.Thursday)!, friday_working: parseYesNo(row.Friday)!, saturday_working: parseYesNo(row.Saturday)!,
+        is_active: row.Status === "Active",
+      })), calendarReplace, setCalendarProgress);
+      setCalendarImport(null); showNotice("Calendars imported."); await refresh();
+    } catch (requestError) { setCalendarImportErrors([enterpriseCalendarErrorMessage(requestError)]); }
+    finally { setCalendarImporting(false); }
+  }
+
+  return <div className="enterprise-admin-page">
+    <div className="enterprise-page-title"><div><h2>Enterprise Calendars</h2><p>Define normal working weeks and date-specific working/non-working exceptions for forecasting.</p></div><button className="button primary" disabled={!enterprise} onClick={() => setEditing("new")}>+ Add Calendar</button></div>
+    <section className="enterprise-grid-card">
+      <div className="enterprise-toolbar">
+        <label className="enterprise-search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search Calendar ID or name…" /></label>
+        <label className="status-filter"><span>Status</span><select value={status} onChange={(event) => setStatus(event.target.value as StatusFilter)}><option value="all">All</option><option value="active">Active</option><option value="inactive">Inactive</option></select></label>
+        <button className="button secondary" onClick={exportCalendars}>⇩ Export</button>
+        <button className="button secondary" onClick={() => calendarFile.current?.click()}>⇧ Import</button>
+        <input ref={calendarFile} hidden type="file" accept=".xlsx,.xls" onChange={(event) => void chooseCalendarImport(event.target.files?.[0])}/>
+        <button className="button secondary" onClick={() => void refresh()} disabled={loading}>↻ Refresh</button>
+        <button className="button danger" disabled={!selectedIds.length} onClick={() => void deactivate(selectedIds)}>Deactivate{selectedIds.length > 1 ? ` (${selectedIds.length})` : ""}</button>
+      </div>
+      {error && <div className="data-message error"><strong>Unable to load calendars</strong><span>{error}</span></div>}
+      {!error && loading && <div className="data-message"><span className="spinner"/>Loading calendars…</div>}
+      {!error && !loading && rows.length === 0 && <div className="data-message"><strong>No calendars found</strong><span>Add or import the first enterprise calendar.</span></div>}
+      {!error && !loading && rows.length > 0 && <div className="enterprise-table-wrap"><table className="enterprise-table" style={{ minWidth: 1180 }}><thead><tr>
+        <th style={{ width: 42 }}><input type="checkbox" checked={allVisibleSelected} onChange={(event) => toggleAll(event.target.checked)}/></th><th>Calendar ID</th><th>Calendar Name</th><th style={{ width: 250 }}>Working Days</th><th style={{ width: 90 }}>Status</th><th style={{ width: 155 }}>Created</th><th style={{ width: 155 }}>Modified</th><th style={{ width: 150 }}>Actions</th>
+      </tr></thead><tbody>{rows.map((calendar) => <tr key={calendar.id}><td onClick={(event) => event.stopPropagation()}><input type="checkbox" checked={selectedIds.includes(calendar.id)} onChange={(event) => setSelectedIds((current) => event.target.checked ? [...current, calendar.id] : current.filter((id) => id !== calendar.id))}/></td><td className="enterprise-code">{calendar.calendar_id}</td><td>{calendar.calendar_name}</td><td>{WEEKDAYS.filter(([key]) => calendar[key]).map(([, label]) => label).join(" · ") || "No regular working days"}</td><td><span className={`enterprise-status ${calendar.is_active ? "active" : "inactive"}`}><i/>{calendar.is_active ? "Active" : "Inactive"}</span></td><td>{formatDateTime(calendar.created_at)}</td><td>{formatDateTime(calendar.modified_at)}</td><td style={{ whiteSpace: "nowrap" }}><button className="button secondary compact" onClick={() => setEditing(calendar)}>✎</button> <button className="button secondary compact" onClick={() => setManagingDays(calendar)}>Days</button></td></tr>)}</tbody></table></div>}
+      <div className="grid-footer"><span>{rows.length} of {calendars.length} calendars · {selectedIds.length} selected</span><span>Weekly pattern + date exceptions drive future forecasting calendars</span></div>
+    </section>
+    {editing && enterprise && <CalendarDrawer enterpriseId={enterprise.id} calendar={editing === "new" ? null : editing} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); showNotice("Calendar saved."); await refresh(); }}/>} 
+    {managingDays && <CalendarDaysDrawer calendar={managingDays} fileInput={dayFile} onClose={() => setManagingDays(null)} />}
+    {calendarImport && <ExcelImportDialog title="Import Enterprise Calendars" rows={calendarImport} columns={CALENDAR_COLUMNS} errors={calendarImportErrors} replace={calendarReplace} setReplace={setCalendarReplace} importing={calendarImporting} progress={calendarProgress} onCancel={() => !calendarImporting && setCalendarImport(null)} onImport={() => void runCalendarImport()}/>} 
+    {notice && <div className="admin-toast">{notice}</div>}
+  </div>;
+}
+
+function CalendarDrawer({ enterpriseId, calendar, onClose, onSaved }: { enterpriseId: string; calendar: EnterpriseCalendar | null; onClose: () => void; onSaved: () => void }) {
+  const [form, setForm] = useState<CalendarForm>(calendar ? { calendar_id: calendar.calendar_id, calendar_name: calendar.calendar_name, sunday_working: calendar.sunday_working, monday_working: calendar.monday_working, tuesday_working: calendar.tuesday_working, wednesday_working: calendar.wednesday_working, thursday_working: calendar.thursday_working, friday_working: calendar.friday_working, saturday_working: calendar.saturday_working, is_active: calendar.is_active } : blankCalendar);
+  const [saving, setSaving] = useState(false); const [error, setError] = useState("");
+  async function save() {
+    if (!form.calendar_id.trim() || !form.calendar_name.trim()) return setError("Calendar ID and Calendar Name are required.");
+    if (form.calendar_id.trim().length > 40 || form.calendar_name.trim().length > 120) return setError("Calendar ID max 40 characters; Calendar Name max 120 characters.");
+    setSaving(true); setError("");
+    try {
+      const clean = { ...form, calendar_id: form.calendar_id.trim(), calendar_name: form.calendar_name.trim() };
+      if (calendar) await updateEnterpriseCalendar(calendar.id, clean); else await createEnterpriseCalendar({ enterprise_id: enterpriseId, ...clean });
+      onSaved();
+    } catch (requestError) { setError(enterpriseCalendarErrorMessage(requestError)); }
+    finally { setSaving(false); }
+  }
+  return <><button className="drawer-scrim" onClick={onClose}/><aside className="admin-drawer"><header><div><span>{calendar ? "Edit" : "New"}</span><h2>{calendar ? calendar.calendar_name : "Enterprise Calendar"}</h2></div><button onClick={onClose}>×</button></header><div className="drawer-body">
+    {error && <div className="form-error">{error}</div>}
+    <div className="form-grid"><label className="form-field"><span>Calendar ID <b>*</b><small>{form.calendar_id.length}/40</small></span><input maxLength={40} value={form.calendar_id} onChange={(event) => setForm({ ...form, calendar_id: event.target.value })}/></label><label className="form-field"><span>Calendar Name <b>*</b><small>{form.calendar_name.length}/120</small></span><input maxLength={120} value={form.calendar_name} onChange={(event) => setForm({ ...form, calendar_name: event.target.value })}/></label></div>
+    <div style={{ marginTop: 20 }}><strong style={{ fontSize: 10 }}>Regular Working Week</strong><p style={{ color: "#8a94a4", fontSize: 9 }}>Select the weekdays normally worked. Date exceptions are managed separately.</p><div style={{ display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 8 }}>{WEEKDAYS.map(([key, label]) => <label className="toggle-field" key={key}><span><strong>{label}</strong><small>{form[key] ? "Working" : "Non-working"}</small></span><input type="checkbox" checked={form[key]} onChange={(event) => setForm({ ...form, [key]: event.target.checked })}/><i/></label>)}</div></div>
+    <label className="toggle-field" style={{ marginTop: 16 }}><span><strong>Active</strong><small>Inactive calendars remain available historically but should not be assigned to new records.</small></span><input type="checkbox" checked={form.is_active} onChange={(event) => setForm({ ...form, is_active: event.target.checked })}/><i/></label>
+  </div><footer><button className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={saving} onClick={() => void save()}>{saving ? "Saving…" : "Save"}</button></footer></aside></>;
+}
+
+function CalendarDaysDrawer({ calendar, fileInput, onClose }: { calendar: EnterpriseCalendar; fileInput: React.RefObject<HTMLInputElement | null>; onClose: () => void }) {
+  const [days, setDays] = useState<EnterpriseCalendarDay[]>([]); const [loading, setLoading] = useState(true); const [error, setError] = useState("");
+  const [editing, setEditing] = useState<EnterpriseCalendarDay | "new" | null>(null); const [importRows, setImportRows] = useState<ExcelRow[] | null>(null); const [importErrors, setImportErrors] = useState<string[]>([]); const [replace, setReplace] = useState(false); const [importing, setImporting] = useState(false); const [progress, setProgress] = useState(0);
+  const refresh = useCallback(async () => { setLoading(true); try { setDays(await listEnterpriseCalendarDays(calendar.id)); setError(""); } catch (requestError) { setError(enterpriseCalendarErrorMessage(requestError)); } finally { setLoading(false); } }, [calendar.id]);
+  useEffect(() => { void refresh(); }, [refresh]);
+  function exportDays() { exportExcel(`${calendar.calendar_id}-calendar-days`, "Calendar Days", days.length ? days.map((day) => ({ Date: day.calendar_date, "Working Day": yesNo(day.is_working_day), Description: day.description ?? "" })) : [Object.fromEntries(DAY_COLUMNS.map((column) => [column, ""]))]); }
+  async function chooseFile(file: File | undefined) {
+    if (!file) return; try { const incoming = await readExcel(file); const errors: string[] = []; if (!incoming.length) errors.push("The file does not contain any calendar day rows."); if (incoming.length && !exactColumns(incoming, DAY_COLUMNS)) errors.push(`Columns must be exactly: ${DAY_COLUMNS.join(", ")}.`); const dates = new Set<string>(); incoming.forEach((row, index) => { const line = index + 2; const date = row.Date ?? ""; if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(`${date}T00:00:00Z`))) errors.push(`Row ${line}: Date must be a valid YYYY-MM-DD date.`); if (dates.has(date)) errors.push(`Row ${line}: duplicate Date “${date}”.`); dates.add(date); if (parseYesNo(row["Working Day"] ?? "") === null) errors.push(`Row ${line}: Working Day must be Yes or No.`); if ((row.Description ?? "").length > 160) errors.push(`Row ${line}: Description is longer than 160 characters.`); }); setImportRows(incoming); setImportErrors(errors); setReplace(false); setProgress(0); } catch (requestError) { setError(requestError instanceof Error ? requestError.message : "Unable to read the file."); } finally { if (fileInput.current) fileInput.current.value = ""; }
+  }
+  async function runImport() { if (!importRows || importErrors.length) return; if (replace && !window.confirm("Replace all existing date exceptions for this calendar?")) return; setImporting(true); try { await importEnterpriseCalendarDays(calendar.id, importRows.map((row) => ({ calendar_date: row.Date, is_working_day: parseYesNo(row["Working Day"])!, description: row.Description?.trim() || null })), replace, setProgress); setImportRows(null); await refresh(); } catch (requestError) { setImportErrors([enterpriseCalendarErrorMessage(requestError)]); } finally { setImporting(false); } }
+  async function remove(day: EnterpriseCalendarDay) { if (!window.confirm(`Remove the override for ${day.calendar_date}?`)) return; try { await deleteEnterpriseCalendarDays([day.id]); await refresh(); } catch (requestError) { setError(enterpriseCalendarErrorMessage(requestError)); } }
+  return <><button className="drawer-scrim" onClick={onClose}/><aside className="admin-drawer" style={{ width: "min(620px,100vw)" }}><header><div><span>Date Exceptions</span><h2>{calendar.calendar_id} · {calendar.calendar_name}</h2></div><button onClick={onClose}>×</button></header><div className="drawer-body"><p style={{ fontSize: 9, color: "#7c8798" }}>Only exceptions to the normal weekly pattern are stored here—for example public holidays, shutdowns, or special working weekends.</p><div style={{ display: "flex", gap: 7, marginBottom: 12 }}><button className="button primary" onClick={() => setEditing("new")}>+ Add Date</button><button className="button secondary" onClick={exportDays}>⇩ Export</button><button className="button secondary" onClick={() => fileInput.current?.click()}>⇧ Import</button><input ref={fileInput} hidden type="file" accept=".xlsx,.xls" onChange={(event) => void chooseFile(event.target.files?.[0])}/></div>{error && <div className="form-error">{error}</div>}{loading ? <div className="data-message" style={{ minHeight: 120 }}>Loading…</div> : days.length === 0 ? <div className="data-message" style={{ minHeight: 140 }}><strong>No date exceptions</strong><span>The regular working week applies to all dates.</span></div> : <div className="enterprise-table-wrap"><table className="enterprise-table" style={{ minWidth: 520 }}><thead><tr><th>Date</th><th>Day</th><th>Description</th><th>Actions</th></tr></thead><tbody>{days.map((day) => <tr key={day.id}><td>{day.calendar_date}</td><td>{day.is_working_day ? "Working" : "Non-working"}</td><td>{day.description ?? "—"}</td><td><button className="button secondary compact" onClick={() => setEditing(day)}>✎</button> <button className="button secondary compact" onClick={() => void remove(day)}>🗑</button></td></tr>)}</tbody></table></div>}</div><footer><button className="button secondary" onClick={onClose}>Close</button></footer></aside>{editing && <DayDialog calendarId={calendar.id} day={editing === "new" ? null : editing} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); await refresh(); }}/>} {importRows && <ExcelImportDialog title={`Import ${calendar.calendar_id} Date Exceptions`} rows={importRows} columns={DAY_COLUMNS} errors={importErrors} replace={replace} setReplace={setReplace} importing={importing} progress={progress} onCancel={() => !importing && setImportRows(null)} onImport={() => void runImport()}/>}</>;
+}
+
+function DayDialog({ calendarId, day, onClose, onSaved }: { calendarId: string; day: EnterpriseCalendarDay | null; onClose: () => void; onSaved: () => void }) {
+  const [date, setDate] = useState(day?.calendar_date ?? ""); const [working, setWorking] = useState(day?.is_working_day ?? false); const [description, setDescription] = useState(day?.description ?? ""); const [error, setError] = useState(""); const [saving, setSaving] = useState(false);
+  async function save() { if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return setError("Enter a date in YYYY-MM-DD format."); if (description.length > 160) return setError("Description cannot exceed 160 characters."); setSaving(true); try { const input = { calendar_date: date, is_working_day: working, description: description.trim() || null }; if (day) await updateEnterpriseCalendarDay(day.id, input); else await createEnterpriseCalendarDay({ enterprise_calendar_id: calendarId, ...input }); onSaved(); } catch (requestError) { setError(enterpriseCalendarErrorMessage(requestError)); } finally { setSaving(false); } }
+  return <div className="confirm-layer"><button className="confirm-scrim" onClick={onClose}/><div className="confirm-dialog" style={{ width: "min(430px,calc(100vw - 28px))", textAlign: "left" }}><h2>{day ? "Edit Date Exception" : "Add Date Exception"}</h2>{error && <div className="form-error">{error}</div>}<div className="form-grid"><label className="form-field"><span>Date</span><input type="date" value={date} onChange={(event) => setDate(event.target.value)}/></label><label className="toggle-field"><span><strong>Working Day</strong><small>{working ? "This date works even if its weekday normally does not." : "This date does not work even if its weekday normally does."}</small></span><input type="checkbox" checked={working} onChange={(event) => setWorking(event.target.checked)}/><i/></label><label className="form-field"><span>Description <small>{description.length}/160</small></span><input maxLength={160} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="e.g. Christmas Day, site shutdown"/></label></div><div style={{ display: "flex", justifyContent: "flex-end", gap: 7, marginTop: 18 }}><button className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={saving} onClick={() => void save()}>{saving ? "Saving…" : "Save"}</button></div></div></div>;
+}
