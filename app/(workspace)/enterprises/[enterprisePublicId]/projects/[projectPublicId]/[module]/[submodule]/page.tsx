@@ -5,6 +5,7 @@ import ProjectGeneralInfoPage from "@/components/project-admin/project-general-i
 import ProjectCalendarsPage from "@/components/project-admin/project-calendars-page";
 import ProjectLineItemAttributesPage from "@/components/project-admin/project-line-item-attributes-page";
 import CostCodesPage from "@/components/cost-management/cost-codes-page";
+import CostReportingPeriodsPage from "@/components/cost-management/cost-reporting-periods-page";
 import { notFound } from "next/navigation";
 import { isModuleSlug, isSubmoduleSlug } from "@/lib/navigation";
 
@@ -17,5 +18,6 @@ export default async function ProjectContextPage({ params }: { params: Promise<{
   if (module === "project-admin" && submodule === "line-item-attributes") return <ProjectLineItemAttributesPage projectPublicId={projectPublicId}/>;
   if (module === "project-admin" && submodule === "calendar") return <ProjectCalendarsPage projectPublicId={projectPublicId}/>;
   if (module === "cost-management" && submodule === "cost-codes") return <CostCodesPage projectPublicId={projectPublicId}/>;
+  if (module === "cost-management" && submodule === "reporting-periods") return <CostReportingPeriodsPage projectPublicId={projectPublicId}/>;
   return null;
 }
