@@ -48,7 +48,6 @@ export type ProjectInput = {
 };
 
 export type ProjectGeneralInfoInput = {
-  project_code: string;
   name: string;
   status: ProjectStatus;
   start_date: string | null;
