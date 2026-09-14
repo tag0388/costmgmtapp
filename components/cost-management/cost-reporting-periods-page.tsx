@@ -15,8 +15,8 @@ import {
   updateCostReportingSettings,
 } from "@/lib/cost-reporting";
 
-type Form = CostReportingSettingsInput;
-const blankForm: Form = { frequency: "Monthly", start_date: "", number_of_periods: 60 };
+type Form = Omit<CostReportingSettingsInput, "number_of_periods"> & { number_of_periods: string };
+const blankForm: Form = { frequency: "Monthly", start_date: "", number_of_periods: "60" };
 
 export default function CostReportingPeriodsPage({ projectPublicId }: { projectPublicId: string }) {
   const [project, setProject] = useState<Project | null>(null);
@@ -45,7 +45,7 @@ export default function CostReportingPeriodsPage({ projectPublicId }: { projectP
       setForm(currentSettings ? {
         frequency: currentSettings.frequency,
         start_date: currentSettings.start_date,
-        number_of_periods: currentSettings.number_of_periods,
+        number_of_periods: String(currentSettings.number_of_periods),
       } : { ...blankForm, start_date: currentProject.start_date ?? "" });
     } catch (requestError) { setError(costReportingErrorMessage(requestError)); }
     finally { setLoading(false); }
@@ -53,20 +53,35 @@ export default function CostReportingPeriodsPage({ projectPublicId }: { projectP
 
   useEffect(() => { void load(); }, [load]);
 
-  function validate() {
-    if (!form.start_date) return "Start Date is required.";
-    if (!Number.isInteger(form.number_of_periods) || form.number_of_periods <= 0) return "Number of Periods must be a whole number greater than zero.";
-    return "";
+  function getValidatedInput(): CostReportingSettingsInput | null {
+    if (!form.start_date) {
+      setError("Start Date is required.");
+      return null;
+    }
+    if (!/^\d+$/.test(form.number_of_periods)) {
+      setError("Number of Periods must be a whole number greater than zero.");
+      return null;
+    }
+    const periodCount = Number(form.number_of_periods);
+    if (!Number.isSafeInteger(periodCount) || periodCount <= 0) {
+      setError("Number of Periods must be a whole number greater than zero.");
+      return null;
+    }
+    return {
+      frequency: form.frequency,
+      start_date: form.start_date,
+      number_of_periods: periodCount,
+    };
   }
 
   async function saveSettings() {
     if (!project) return;
-    const validation = validate(); if (validation) return setError(validation);
+    const input = getValidatedInput(); if (!input) return;
     setSaving(true); setError(""); setNotice("");
     try {
       const saved = settings
-        ? await updateCostReportingSettings(settings.id, form)
-        : await createCostReportingSettings(project.id, form);
+        ? await updateCostReportingSettings(settings.id, input)
+        : await createCostReportingSettings(project.id, input);
       setSettings(saved);
       setNotice(periods.length ? "Settings saved. Existing generated periods were not changed." : "Reporting settings saved.");
     } catch (requestError) { setError(costReportingErrorMessage(requestError)); }
@@ -75,16 +90,16 @@ export default function CostReportingPeriodsPage({ projectPublicId }: { projectP
 
   async function generatePeriods() {
     if (!project) return;
-    const validation = validate(); if (validation) return setError(validation);
+    const input = getValidatedInput(); if (!input) return;
     if (periods.length) return setError("Reporting periods already exist and are protected from regeneration because cost history may reference them.");
-    if (!window.confirm(`Generate ${form.number_of_periods} ${form.frequency.toLowerCase()} reporting periods from ${form.start_date}?`)) return;
+    if (!window.confirm(`Generate ${input.number_of_periods} ${input.frequency.toLowerCase()} reporting periods from ${input.start_date}?`)) return;
     setGenerating(true); setProgress(0); setError(""); setNotice("");
     try {
       const saved = settings
-        ? await updateCostReportingSettings(settings.id, form)
-        : await createCostReportingSettings(project.id, form);
+        ? await updateCostReportingSettings(settings.id, input)
+        : await createCostReportingSettings(project.id, input);
       setSettings(saved);
-      await generateCostReportingPeriods(project.id, form, setProgress);
+      await generateCostReportingPeriods(project.id, input, setProgress);
       setPeriods(await listCostReportingPeriods(project.id));
       setNotice("Cost reporting periods generated.");
     } catch (requestError) { setError(costReportingErrorMessage(requestError)); }
@@ -104,7 +119,7 @@ export default function CostReportingPeriodsPage({ projectPublicId }: { projectP
         <div className="form-grid">
           <label className="form-field"><span>Frequency <b>*</b></span><select value={form.frequency} onChange={(event) => setForm({ ...form, frequency: event.target.value as CostPeriodFrequency })}><option>Weekly</option><option>Monthly</option></select></label>
           <label className="form-field"><span>Start Date <b>*</b></span><input type="date" value={form.start_date} onChange={(event) => setForm({ ...form, start_date: event.target.value })}/></label>
-          <label className="form-field"><span>Number of Periods <b>*</b></span><input type="number" min={1} step={1} inputMode="numeric" value={form.number_of_periods} onChange={(event) => setForm({ ...form, number_of_periods: event.target.value === "" ? 0 : Number(event.target.value) })}/></label>
+          <label className="form-field"><span>Number of Periods <b>*</b></span><input type="number" min={1} step={1} inputMode="numeric" value={form.number_of_periods} onChange={(event) => setForm({ ...form, number_of_periods: event.target.value })}/></label>
         </div>
         <div className="data-message" style={{ minHeight: 64, marginTop: 14 }}>
           <span>{form.frequency === "Monthly" ? "Monthly periods always use full calendar months. If the selected Start Date is mid-month, Period 1 starts on the first day of that month and ends on the last day." : "Weekly Period 1 starts on the selected Start Date and runs for 7 days. Each following period starts 7 days after the prior period start."}</span>
