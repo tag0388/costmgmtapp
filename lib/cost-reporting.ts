@@ -8,7 +8,7 @@ export type CostReportingSettings = {
   project_id: string;
   frequency: CostPeriodFrequency;
   start_date: string;
-  number_of_periods: 60 | 100 | 200;
+  number_of_periods: number;
   created_at: string;
   created_by: string | null;
 };
@@ -28,7 +28,7 @@ export type CostReportingPeriod = {
 export type CostReportingSettingsInput = {
   frequency: CostPeriodFrequency;
   start_date: string;
-  number_of_periods: 60 | 100 | 200;
+  number_of_periods: number;
 };
 
 const settingsSelect = "id,project_id,frequency,start_date,number_of_periods,created_at,created_by";
@@ -62,28 +62,25 @@ function isoDate(date: Date) {
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
 }
 
-function addMonthsClamped(date: Date, months: number) {
-  const year = date.getUTCFullYear();
-  const month = date.getUTCMonth() + months;
-  const day = date.getUTCDate();
-  const targetFirst = new Date(Date.UTC(year, month, 1));
-  const lastDay = new Date(Date.UTC(targetFirst.getUTCFullYear(), targetFirst.getUTCMonth() + 1, 0)).getUTCDate();
-  return new Date(Date.UTC(targetFirst.getUTCFullYear(), targetFirst.getUTCMonth(), Math.min(day, lastDay)));
-}
-
 export function buildReportingPeriods(projectId: string, input: CostReportingSettingsInput) {
-  const firstStart = new Date(`${input.start_date}T00:00:00Z`);
-  if (Number.isNaN(firstStart.getTime())) throw new Error("Start Date is invalid.");
+  const selectedStart = new Date(`${input.start_date}T00:00:00Z`);
+  if (Number.isNaN(selectedStart.getTime())) throw new Error("Start Date is invalid.");
+  if (!Number.isInteger(input.number_of_periods) || input.number_of_periods <= 0) throw new Error("Number of Periods must be a whole number greater than zero.");
+
+  const monthlyFirstStart = new Date(Date.UTC(selectedStart.getUTCFullYear(), selectedStart.getUTCMonth(), 1));
+
   return Array.from({ length: input.number_of_periods }, (_, index) => {
     let start: Date;
     let nextStart: Date;
+
     if (input.frequency === "Weekly") {
-      start = new Date(firstStart.getTime() + index * 7 * 86400000);
-      nextStart = new Date(firstStart.getTime() + (index + 1) * 7 * 86400000);
+      start = new Date(selectedStart.getTime() + index * 7 * 86400000);
+      nextStart = new Date(selectedStart.getTime() + (index + 1) * 7 * 86400000);
     } else {
-      start = addMonthsClamped(firstStart, index);
-      nextStart = addMonthsClamped(firstStart, index + 1);
+      start = new Date(Date.UTC(monthlyFirstStart.getUTCFullYear(), monthlyFirstStart.getUTCMonth() + index, 1));
+      nextStart = new Date(Date.UTC(monthlyFirstStart.getUTCFullYear(), monthlyFirstStart.getUTCMonth() + index + 1, 1));
     }
+
     const end = new Date(nextStart.getTime() - 86400000);
     return { project_id: projectId, period_number: index + 1, start_date: isoDate(start), end_date: isoDate(end), status: "Future" as CostPeriodStatus };
   });
