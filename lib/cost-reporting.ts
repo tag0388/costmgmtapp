@@ -34,6 +34,17 @@ export type CostReportingSettingsInput = {
 const settingsSelect = "id,project_id,frequency,start_date,number_of_periods,created_at,created_by";
 const periodSelect = "id,project_id,period_number,start_date,end_date,status,closed_at,closed_by,created_at";
 
+function normalizeSettingsInput(input: CostReportingSettingsInput): CostReportingSettingsInput {
+  const periodCount = Number(input.number_of_periods);
+  if (!Number.isSafeInteger(periodCount) || periodCount <= 0) {
+    throw new Error("Number of Periods must be a whole number greater than zero.");
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.start_date)) {
+    throw new Error("Start Date is invalid.");
+  }
+  return { ...input, number_of_periods: periodCount };
+}
+
 export function getCostReportingSettings(projectId: string) {
   return supabaseRequest<CostReportingSettings[]>(`cost_reporting_settings?project_id=eq.${encodeURIComponent(projectId)}&select=${encodeURIComponent(settingsSelect)}&limit=1`).then((rows) => rows[0] ?? null);
 }
@@ -43,18 +54,20 @@ export function listCostReportingPeriods(projectId: string) {
 }
 
 export function createCostReportingSettings(projectId: string, input: CostReportingSettingsInput) {
+  const normalized = normalizeSettingsInput(input);
   return supabaseRequest<CostReportingSettings[]>(`cost_reporting_settings?select=${encodeURIComponent(settingsSelect)}`, {
     method: "POST",
     headers: { Prefer: "return=representation" },
-    body: JSON.stringify({ project_id: projectId, ...input }),
+    body: JSON.stringify({ project_id: projectId, ...normalized }),
   }).then((rows) => rows[0]);
 }
 
 export function updateCostReportingSettings(settingsId: string, input: CostReportingSettingsInput) {
+  const normalized = normalizeSettingsInput(input);
   return supabaseRequest<CostReportingSettings[]>(`cost_reporting_settings?id=eq.${encodeURIComponent(settingsId)}&select=${encodeURIComponent(settingsSelect)}`, {
     method: "PATCH",
     headers: { Prefer: "return=representation" },
-    body: JSON.stringify(input),
+    body: JSON.stringify(normalized),
   }).then((rows) => rows[0]);
 }
 
@@ -63,17 +76,17 @@ function isoDate(date: Date) {
 }
 
 export function buildReportingPeriods(projectId: string, input: CostReportingSettingsInput) {
-  const selectedStart = new Date(`${input.start_date}T00:00:00Z`);
+  const normalized = normalizeSettingsInput(input);
+  const selectedStart = new Date(`${normalized.start_date}T00:00:00Z`);
   if (Number.isNaN(selectedStart.getTime())) throw new Error("Start Date is invalid.");
-  if (!Number.isInteger(input.number_of_periods) || input.number_of_periods <= 0) throw new Error("Number of Periods must be a whole number greater than zero.");
 
   const monthlyFirstStart = new Date(Date.UTC(selectedStart.getUTCFullYear(), selectedStart.getUTCMonth(), 1));
 
-  return Array.from({ length: input.number_of_periods }, (_, index) => {
+  return Array.from({ length: normalized.number_of_periods }, (_, index) => {
     let start: Date;
     let nextStart: Date;
 
-    if (input.frequency === "Weekly") {
+    if (normalized.frequency === "Weekly") {
       start = new Date(selectedStart.getTime() + index * 7 * 86400000);
       nextStart = new Date(selectedStart.getTime() + (index + 1) * 7 * 86400000);
     } else {
@@ -82,7 +95,10 @@ export function buildReportingPeriods(projectId: string, input: CostReportingSet
     }
 
     const end = new Date(nextStart.getTime() - 86400000);
-    return { project_id: projectId, period_number: index + 1, start_date: isoDate(start), end_date: isoDate(end), status: "Future" as CostPeriodStatus };
+    const startDate = isoDate(start);
+    const endDate = isoDate(end);
+    if (endDate < startDate) throw new Error(`Generated reporting period ${index + 1} has an invalid date range.`);
+    return { project_id: projectId, period_number: index + 1, start_date: startDate, end_date: endDate, status: "Future" as CostPeriodStatus };
   });
 }
 
@@ -105,7 +121,7 @@ export async function generateCostReportingPeriods(projectId: string, input: Cos
 export function costReportingErrorMessage(error: unknown) {
   if (error instanceof SupabaseRequestError) {
     if (error.code === "23505") return "These reporting settings or periods conflict with existing project reporting data.";
-    if (error.code === "23514") return "Check the reporting start date and number of periods.";
+    if (error.code === "23514") return `A reporting value failed a database validation rule: ${error.message}`;
     return error.message;
   }
   return error instanceof Error ? error.message : "Something went wrong while working with cost reporting periods.";
