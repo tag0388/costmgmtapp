@@ -19,7 +19,8 @@ import {
 
 const COLUMNS = ["Cost Code ID", "Cost Code Name", "Description", "EAC Method", "Manual EAC", "Baseline Timephasing", "Current Budget Timephasing", "CTC Timephasing", "Status"];
 const EAC_METHODS: EacMethod[] = ["Manual", "Change Management", "Subcontract", "Cost Details"];
-const TIMEPHASING_METHODS: TimephasingMethod[] = ["Manual", "Dates", "Cost Details"];
+const BUDGET_TIMEPHASING_METHODS: TimephasingMethod[] = ["Manual", "Dates"];
+const CTC_TIMEPHASING_METHODS: TimephasingMethod[] = ["Manual", "Dates", "Cost Details"];
 type StatusFilter = "all" | "active" | "inactive";
 type Form = Omit<CostCodeInput, "project_id">;
 
@@ -132,9 +133,9 @@ export default function CostCodesPage({ projectPublicId }: { projectPublicId: st
         if (description.length > 255) errors.push(`Row ${line}: Description is longer than 255 characters.`);
         const key = id.toLowerCase(); if (key && ids.has(key)) errors.push(`Row ${line}: duplicate Cost Code ID “${id}”.`); if (key) ids.add(key);
         if (!EAC_METHODS.includes(eac as EacMethod)) errors.push(`Row ${line}: EAC Method is invalid.`);
-        if (!TIMEPHASING_METHODS.includes(baseline as TimephasingMethod)) errors.push(`Row ${line}: Baseline Timephasing is invalid.`);
-        if (!TIMEPHASING_METHODS.includes(current as TimephasingMethod)) errors.push(`Row ${line}: Current Budget Timephasing is invalid.`);
-        if (!TIMEPHASING_METHODS.includes(ctc as TimephasingMethod)) errors.push(`Row ${line}: CTC Timephasing is invalid.`);
+        if (!BUDGET_TIMEPHASING_METHODS.includes(baseline as TimephasingMethod)) errors.push(`Row ${line}: Baseline Timephasing must be Manual or Dates.`);
+        if (!BUDGET_TIMEPHASING_METHODS.includes(current as TimephasingMethod)) errors.push(`Row ${line}: Current Budget Timephasing must be Manual or Dates.`);
+        if (!CTC_TIMEPHASING_METHODS.includes(ctc as TimephasingMethod)) errors.push(`Row ${line}: CTC Timephasing is invalid.`);
         if (Number.isNaN(manual)) errors.push(`Row ${line}: Manual EAC must be a valid number.`);
         if (parseStatus(row.Status ?? "") === null) errors.push(`Row ${line}: Status must be Active or Inactive.`);
       });
@@ -210,6 +211,8 @@ function CostCodeDrawer({ projectId, costCode, onClose, onSaved }: { projectId: 
     if (form.cost_code_id.trim().length > 30 || form.name.trim().length > 100) return setError("Cost Code ID max 30 characters; Cost Code Name max 100 characters.");
     if ((form.description ?? "").length > 255) return setError("Description cannot exceed 255 characters.");
     if (form.eac_method === "Manual" && form.manual_eac == null) return setError("Manual EAC is required when EAC Method is Manual.");
+    if (!BUDGET_TIMEPHASING_METHODS.includes(form.baseline_timephasing_method)) return setError("Baseline Timephasing must be Manual or Dates.");
+    if (!BUDGET_TIMEPHASING_METHODS.includes(form.current_budget_timephasing_method)) return setError("Current Budget Timephasing must be Manual or Dates.");
     setSaving(true); setError("");
     const clean = { ...form, cost_code_id: form.cost_code_id.trim(), name: form.name.trim(), description: form.description?.trim() || null, manual_eac: form.eac_method === "Manual" ? form.manual_eac : null };
     try { if (costCode) await updateCostCode(costCode.id, clean); else await createCostCode({ project_id: projectId, ...clean }); onSaved(); }
@@ -220,8 +223,8 @@ function CostCodeDrawer({ projectId, costCode, onClose, onSaved }: { projectId: 
     <div className="form-grid"><label className="form-field"><span>Cost Code ID <b>*</b><small>{form.cost_code_id.length}/30</small></span><input maxLength={30} value={form.cost_code_id} onChange={(event) => setForm({ ...form, cost_code_id: event.target.value })}/></label><label className="form-field"><span>Cost Code Name <b>*</b><small>{form.name.length}/100</small></span><input maxLength={100} value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })}/></label></div>
     <label className="form-field" style={{ marginTop: 12 }}><span>Description <small>{(form.description ?? "").length}/255</small></span><textarea maxLength={255} value={form.description ?? ""} onChange={(event) => setForm({ ...form, description: event.target.value })}/></label>
     <div className="form-grid" style={{ marginTop: 12 }}><label className="form-field"><span>EAC Method</span><select value={form.eac_method} onChange={(event) => setForm({ ...form, eac_method: event.target.value as EacMethod })}>{EAC_METHODS.map((value) => <option key={value}>{value}</option>)}</select></label><label className="form-field"><span>Manual EAC</span><input type="number" step="0.01" disabled={form.eac_method !== "Manual"} value={form.manual_eac ?? ""} onChange={(event) => setForm({ ...form, manual_eac: event.target.value === "" ? null : Number(event.target.value) })}/></label></div>
-    <div className="form-grid" style={{ marginTop: 12 }}><label className="form-field"><span>Baseline Timephasing</span><select value={form.baseline_timephasing_method} onChange={(event) => setForm({ ...form, baseline_timephasing_method: event.target.value as TimephasingMethod })}>{TIMEPHASING_METHODS.map((value) => <option key={value}>{value}</option>)}</select></label><label className="form-field"><span>Current Budget Timephasing</span><select value={form.current_budget_timephasing_method} onChange={(event) => setForm({ ...form, current_budget_timephasing_method: event.target.value as TimephasingMethod })}>{TIMEPHASING_METHODS.map((value) => <option key={value}>{value}</option>)}</select></label></div>
-    <label className="form-field" style={{ marginTop: 12 }}><span>Cost to Complete Timephasing</span><select value={form.ctc_timephasing_method} onChange={(event) => setForm({ ...form, ctc_timephasing_method: event.target.value as TimephasingMethod })}>{TIMEPHASING_METHODS.map((value) => <option key={value}>{value}</option>)}</select></label>
+    <div className="form-grid" style={{ marginTop: 12 }}><label className="form-field"><span>Baseline Timephasing</span><select value={form.baseline_timephasing_method} onChange={(event) => setForm({ ...form, baseline_timephasing_method: event.target.value as TimephasingMethod })}>{BUDGET_TIMEPHASING_METHODS.map((value) => <option key={value}>{value}</option>)}</select></label><label className="form-field"><span>Current Budget Timephasing</span><select value={form.current_budget_timephasing_method} onChange={(event) => setForm({ ...form, current_budget_timephasing_method: event.target.value as TimephasingMethod })}>{BUDGET_TIMEPHASING_METHODS.map((value) => <option key={value}>{value}</option>)}</select></label></div>
+    <label className="form-field" style={{ marginTop: 12 }}><span>Cost to Complete Timephasing</span><select value={form.ctc_timephasing_method} onChange={(event) => setForm({ ...form, ctc_timephasing_method: event.target.value as TimephasingMethod })}>{CTC_TIMEPHASING_METHODS.map((value) => <option key={value}>{value}</option>)}</select></label>
     <label className="toggle-field" style={{ marginTop: 16 }}><span><strong>Active</strong><small>Inactive cost codes remain available for historical reporting but should not receive new cost entries.</small></span><input type="checkbox" checked={form.is_active} onChange={(event) => setForm({ ...form, is_active: event.target.checked })}/><i/></label>
   </div><footer><button className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={saving} onClick={() => void save()}>{saving ? "Saving…" : "Save"}</button></footer></aside></>;
 }
