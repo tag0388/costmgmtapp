@@ -8,6 +8,7 @@ import { AllEnterpriseModule } from "ag-grid-enterprise";
 import ExcelImportDialog from "@/components/shared/excel-import-dialog";
 import { ExcelRow, exportExcel, readExcel } from "@/lib/excel";
 import { listEnterpriseAttributes, EnterpriseAttributeDefinition } from "@/lib/enterprise-attributes";
+import { deleteProjectGridView, gridViewErrorMessage, listProjectGridViews, ProjectGridView, saveProjectGridView } from "@/lib/grid-views";
 import { listProjectAttributes, ProjectAttributeDefinition } from "@/lib/project-scope-attributes";
 import { getProjectByPublicId, Project } from "@/lib/projects";
 import {
@@ -28,9 +29,9 @@ import {
 const EAC_METHODS: EacMethod[] = ["Manual", "Change Management", "Subcontract", "Cost Details"];
 const BUDGET_TIMEPHASING_METHODS: TimephasingMethod[] = ["Manual", "Dates"];
 const CTC_TIMEPHASING_METHODS: TimephasingMethod[] = ["Manual", "Dates", "Cost Details"];
+const GRID_KEY = "cost-codes";
 type StatusFilter = "all" | "active" | "inactive";
 type Form = Omit<CostCodeInput, "project_id">;
-type SavedView = { name: string; columnState: ColumnState[]; filterModel: Record<string, unknown> };
 
 const blankForm: Form = {
   cost_code_id: "",
@@ -100,14 +101,13 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
   const [replace, setReplace] = useState(false);
   const [importing, setImporting] = useState(false);
   const [progress, setProgress] = useState(0);
-  const [views, setViews] = useState<SavedView[]>([]);
+  const [views, setViews] = useState<ProjectGridView[]>([]);
   const [selectedView, setSelectedView] = useState("Default");
   const [showSaveView, setShowSaveView] = useState(false);
   const [viewName, setViewName] = useState("");
 
   const activeEnterprise = useMemo(() => enterpriseAttributes.filter((definition) => definition.is_active).sort((a, b) => a.attribute_number - b.attribute_number), [enterpriseAttributes]);
   const activeProject = useMemo(() => projectAttributes.filter((definition) => definition.is_active).sort((a, b) => a.attribute_number - b.attribute_number), [projectAttributes]);
-  const viewStorageKey = `costwise:cost-code-grid-views:${projectPublicId}`;
 
   const refresh = useCallback(async () => {
     setLoading(true); setError("");
@@ -115,30 +115,27 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
       const currentProject = await getProjectByPublicId(projectPublicId);
       setProject(currentProject);
       if (!currentProject) {
-        setCostCodes([]); setEnterpriseAttributes([]); setProjectAttributes([]);
+        setCostCodes([]); setEnterpriseAttributes([]); setProjectAttributes([]); setViews([]);
         setError("The selected project could not be found.");
         return;
       }
-      const [codes, enterpriseDefs, projectDefs] = await Promise.all([
+      const [codes, enterpriseDefs, projectDefs, savedViews] = await Promise.all([
         listCostCodes(currentProject.id),
         listEnterpriseAttributes(currentProject.enterprise_id, "Cost Code"),
         listProjectAttributes(currentProject.id, "Cost Code"),
+        listProjectGridViews(currentProject.id, GRID_KEY),
       ]);
       setCostCodes(codes);
       setEnterpriseAttributes(enterpriseDefs);
       setProjectAttributes(projectDefs);
+      setViews(savedViews);
       setSelected((ids) => ids.filter((id) => codes.some((row) => row.id === id)));
+      setSelectedView((current) => current === "Default" || savedViews.some((view) => view.id === current) ? current : "Default");
     } catch (requestError) { setError(costCodeErrorMessage(requestError)); }
     finally { setLoading(false); }
   }, [projectPublicId]);
 
   useEffect(() => { void refresh(); }, [refresh]);
-  useEffect(() => {
-    try {
-      const stored = window.localStorage.getItem(viewStorageKey);
-      setViews(stored ? JSON.parse(stored) as SavedView[] : []);
-    } catch { setViews([]); }
-  }, [viewStorageKey]);
 
   const rows = useMemo(() => costCodes.filter((row) => status === "all" || (status === "active" ? row.is_active : !row.is_active)), [costCodes, status]);
 
@@ -287,27 +284,48 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
     catch (requestError) { setError(costCodeErrorMessage(requestError)); }
   }
 
-  function saveView() {
-    if (!gridApi || !viewName.trim()) return;
-    const saved: SavedView = { name: viewName.trim(), columnState: gridApi.getColumnState(), filterModel: gridApi.getFilterModel() as Record<string, unknown> };
-    const next = [...views.filter((view) => view.name.toLowerCase() !== saved.name.toLowerCase()), saved].sort((a, b) => a.name.localeCompare(b.name));
-    setViews(next); window.localStorage.setItem(viewStorageKey, JSON.stringify(next)); setSelectedView(saved.name); setShowSaveView(false); setViewName(""); showNotice("View saved.");
+  async function saveView() {
+    if (!gridApi || !project || !viewName.trim()) return;
+    setError("");
+    try {
+      const saved = await saveProjectGridView(project.id, GRID_KEY, viewName, {
+        columnState: gridApi.getColumnState(),
+        filterModel: gridApi.getFilterModel() as Record<string, unknown>,
+      });
+      const next = await listProjectGridViews(project.id, GRID_KEY);
+      setViews(next);
+      setSelectedView(saved.id);
+      setShowSaveView(false);
+      setViewName("");
+      showNotice("View saved.");
+    } catch (requestError) { setError(gridViewErrorMessage(requestError)); }
   }
-  function applyView(name: string) {
-    setSelectedView(name);
+
+  function applyView(id: string) {
+    setSelectedView(id);
     if (!gridApi) return;
-    if (name === "Default") {
+    if (id === "Default") {
       gridApi.resetColumnState(); gridApi.setFilterModel(null); gridApi.onFilterChanged();
       return;
     }
-    const view = views.find((entry) => entry.name === name); if (!view) return;
-    gridApi.applyColumnState({ state: view.columnState, applyOrder: true }); gridApi.setFilterModel(view.filterModel); gridApi.onFilterChanged();
+    const view = views.find((entry) => entry.id === id); if (!view) return;
+    gridApi.applyColumnState({ state: view.grid_state.columnState as ColumnState[], applyOrder: true });
+    gridApi.setFilterModel(view.grid_state.filterModel ?? null);
+    gridApi.onFilterChanged();
   }
-  function deleteView() {
+
+  async function deleteView() {
     if (selectedView === "Default") return;
-    const next = views.filter((view) => view.name !== selectedView);
-    setViews(next); window.localStorage.setItem(viewStorageKey, JSON.stringify(next)); applyView("Default"); showNotice("View deleted.");
+    setError("");
+    try {
+      await deleteProjectGridView(selectedView);
+      if (project) setViews(await listProjectGridViews(project.id, GRID_KEY));
+      applyView("Default");
+      showNotice("View deleted.");
+    } catch (requestError) { setError(gridViewErrorMessage(requestError)); }
   }
+
+  const selectedViewName = selectedView === "Default" ? "" : views.find((view) => view.id === selectedView)?.view_name ?? "";
 
   return <div className="enterprise-admin-page">
     <div className="enterprise-page-title"><div><h2>Cost Codes</h2><p>Maintain cost codes, attributes and forecasting methods. Group, subtotal, pin and save grid layouts for recurring cost reviews.</p></div><button className="button primary" disabled={!project} onClick={() => setEditing("new")}>+ Add Cost Code</button></div>
@@ -315,9 +333,9 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
       <div className="enterprise-toolbar" style={{ flexWrap: "wrap" }}>
         <label className="enterprise-search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search cost codes or attributes…" /></label>
         <label className="status-filter"><span>Status</span><select value={status} onChange={(event) => setStatus(event.target.value as StatusFilter)}><option value="all">All</option><option value="active">Active</option><option value="inactive">Inactive</option></select></label>
-        <label className="status-filter"><span>View</span><select value={selectedView} onChange={(event) => applyView(event.target.value)}><option>Default</option>{views.map((view) => <option key={view.name}>{view.name}</option>)}</select></label>
-        <button className="button secondary" onClick={() => { setViewName(selectedView === "Default" ? "" : selectedView); setShowSaveView(true); }}>Save View</button>
-        <button className="button secondary" disabled={selectedView === "Default"} onClick={deleteView}>Delete View</button>
+        <label className="status-filter"><span>View</span><select value={selectedView} onChange={(event) => applyView(event.target.value)}><option value="Default">Default</option>{views.map((view) => <option key={view.id} value={view.id}>{view.view_name}</option>)}</select></label>
+        <button className="button secondary" onClick={() => { setViewName(selectedViewName); setShowSaveView(true); }}>Save View</button>
+        <button className="button secondary" disabled={selectedView === "Default"} onClick={() => void deleteView()}>Delete View</button>
         <button className="button secondary" onClick={() => gridApi?.openToolPanel("columns")}>Columns</button>
         <button className="button secondary" onClick={() => gridApi?.openToolPanel("columns")}>Group By</button>
         <button className="button secondary" onClick={() => gridApi?.expandAll()}>Expand All</button>
@@ -359,7 +377,7 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
 
     {project && editing && <CostCodeDrawer projectId={project.id} costCode={editing === "new" ? null : editing} enterpriseAttributes={activeEnterprise} projectAttributes={activeProject} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); showNotice("Cost code saved."); await refresh(); }}/>} 
     {importRows && <ExcelImportDialog title="Import Cost Codes" rows={importRows} columns={excelColumns} errors={importErrors} replace={replace} setReplace={setReplace} importing={importing} progress={progress} onCancel={() => !importing && setImportRows(null)} onImport={() => void runImport()}/>} 
-    {showSaveView && <CenteredModal title="Save Cost Code View" onClose={() => setShowSaveView(false)}><label className="form-field"><span>View Name</span><input autoFocus maxLength={80} value={viewName} onChange={(event) => setViewName(event.target.value)} placeholder="e.g. Commercial Review"/></label><p className="muted-value" style={{ marginTop: 10 }}>The view stores column visibility, order, width, sorting, grouping, pinning and filters on this browser.</p><div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 18 }}><button className="button secondary" onClick={() => setShowSaveView(false)}>Cancel</button><button className="button primary" disabled={!viewName.trim()} onClick={saveView}>Save View</button></div></CenteredModal>}
+    {showSaveView && <CenteredModal title="Save Cost Code View" onClose={() => setShowSaveView(false)}><label className="form-field"><span>View Name</span><input autoFocus maxLength={80} value={viewName} onChange={(event) => setViewName(event.target.value)} placeholder="e.g. Commercial Review"/></label><p className="muted-value" style={{ marginTop: 10 }}>This saves column visibility, order, width, sorting, grouping, pinning and filters for the Cost Codes grid in Supabase.</p><div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 18 }}><button className="button secondary" onClick={() => setShowSaveView(false)}>Cancel</button><button className="button primary" disabled={!viewName.trim()} onClick={() => void saveView()}>Save View</button></div></CenteredModal>}
     {notice && <div className="admin-toast">{notice}</div>}
   </div>;
 }
