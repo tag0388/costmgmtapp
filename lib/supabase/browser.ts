@@ -6,7 +6,13 @@ export function isSupabaseConfigured() {
 }
 
 export class SupabaseRequestError extends Error {
-  constructor(message: string, public status: number, public code?: string) {
+  constructor(
+    message: string,
+    public status: number,
+    public code?: string,
+    public details?: string,
+    public hint?: string,
+  ) {
     super(message);
     this.name = "SupabaseRequestError";
   }
@@ -26,8 +32,14 @@ export async function supabaseRequest<T>(path: string, init: RequestInit = {}): 
     },
   });
   if (!response.ok) {
-    const body = await response.json().catch(() => ({})) as { message?: string; details?: string; code?: string };
-    throw new SupabaseRequestError(body.message ?? body.details ?? `Supabase request failed (${response.status})`, response.status, body.code);
+    const body = await response.json().catch(() => ({})) as { message?: string; details?: string; hint?: string; code?: string };
+    throw new SupabaseRequestError(
+      body.message ?? body.details ?? `Supabase request failed (${response.status})`,
+      response.status,
+      body.code,
+      body.details,
+      body.hint,
+    );
   }
   if (response.status === 204) return undefined as T;
   const text = await response.text();
