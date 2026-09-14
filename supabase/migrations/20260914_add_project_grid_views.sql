@@ -15,6 +15,9 @@ create table if not exists public.project_grid_views (
 create index if not exists project_grid_views_project_grid_idx
   on public.project_grid_views(project_id, grid_key);
 
+create index if not exists project_grid_views_owner_user_idx
+  on public.project_grid_views(owner_user_id);
+
 create unique index if not exists project_grid_views_owner_name_uidx
   on public.project_grid_views(
     project_id,
@@ -35,7 +38,7 @@ on public.project_grid_views
 for select
 to authenticated
 using (
-  owner_user_id = (select auth.uid())
+  (owner_user_id = (select auth.uid()) and has_project_read_access(project_id))
   or (is_shared and has_project_read_access(project_id))
   or exists (
     select 1 from public.system_admins sa
@@ -60,12 +63,44 @@ using (
 );
 
 drop policy if exists project_grid_views_owner_write on public.project_grid_views;
-create policy project_grid_views_owner_write
+drop policy if exists project_grid_views_insert on public.project_grid_views;
+drop policy if exists project_grid_views_update on public.project_grid_views;
+drop policy if exists project_grid_views_delete on public.project_grid_views;
+
+create policy project_grid_views_insert
 on public.project_grid_views
-for all
+for insert
+to authenticated
+with check (
+  (owner_user_id = (select auth.uid()) and has_project_read_access(project_id))
+  or exists (
+    select 1 from public.system_admins sa
+    where sa.user_id = (select auth.uid())
+  )
+  or exists (
+    select 1
+    from public.projects p
+    join public.enterprise_users eu on eu.enterprise_id = p.enterprise_id
+    where p.id = project_grid_views.project_id
+      and eu.user_id = (select auth.uid())
+      and eu.role = 'Enterprise Admin'::enterprise_role
+      and eu.is_active
+  )
+  or exists (
+    select 1 from public.project_users pu
+    where pu.project_id = project_grid_views.project_id
+      and pu.user_id = (select auth.uid())
+      and pu.access_level = 'Project Admin'::project_access_level
+      and pu.is_active
+  )
+);
+
+create policy project_grid_views_update
+on public.project_grid_views
+for update
 to authenticated
 using (
-  owner_user_id = (select auth.uid())
+  (owner_user_id = (select auth.uid()) and has_project_read_access(project_id))
   or exists (
     select 1 from public.system_admins sa
     where sa.user_id = (select auth.uid())
@@ -88,7 +123,35 @@ using (
   )
 )
 with check (
-  owner_user_id = (select auth.uid())
+  (owner_user_id = (select auth.uid()) and has_project_read_access(project_id))
+  or exists (
+    select 1 from public.system_admins sa
+    where sa.user_id = (select auth.uid())
+  )
+  or exists (
+    select 1
+    from public.projects p
+    join public.enterprise_users eu on eu.enterprise_id = p.enterprise_id
+    where p.id = project_grid_views.project_id
+      and eu.user_id = (select auth.uid())
+      and eu.role = 'Enterprise Admin'::enterprise_role
+      and eu.is_active
+  )
+  or exists (
+    select 1 from public.project_users pu
+    where pu.project_id = project_grid_views.project_id
+      and pu.user_id = (select auth.uid())
+      and pu.access_level = 'Project Admin'::project_access_level
+      and pu.is_active
+  )
+);
+
+create policy project_grid_views_delete
+on public.project_grid_views
+for delete
+to authenticated
+using (
+  (owner_user_id = (select auth.uid()) and has_project_read_access(project_id))
   or exists (
     select 1 from public.system_admins sa
     where sa.user_id = (select auth.uid())
