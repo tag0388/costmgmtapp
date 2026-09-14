@@ -3,6 +3,16 @@ import { SupabaseRequestError, supabaseRequest } from "@/lib/supabase/browser";
 export type EacMethod = "Manual" | "Change Management" | "Subcontract" | "Cost Details";
 export type TimephasingMethod = "Manual" | "Dates" | "Cost Details";
 
+export const PROJECT_COST_CODE_ATTRIBUTE_FIELDS = [
+  "p_attribute_01", "p_attribute_02", "p_attribute_03", "p_attribute_04", "p_attribute_05",
+  "p_attribute_06", "p_attribute_07", "p_attribute_08", "p_attribute_09", "p_attribute_10",
+  "p_attribute_11", "p_attribute_12", "p_attribute_13", "p_attribute_14", "p_attribute_15",
+  "p_attribute_16", "p_attribute_17", "p_attribute_18", "p_attribute_19", "p_attribute_20",
+] as const;
+
+export type ProjectCostCodeAttributeField = typeof PROJECT_COST_CODE_ATTRIBUTE_FIELDS[number];
+export type ProjectCostCodeAttributeValues = Partial<Record<ProjectCostCodeAttributeField, string | null>>;
+
 export type CostCode = {
   id: string;
   project_id: string;
@@ -17,11 +27,16 @@ export type CostCode = {
   is_active: boolean;
   created_at: string;
   updated_at: string;
-};
+} & ProjectCostCodeAttributeValues;
 
 export type CostCodeInput = Omit<CostCode, "id" | "created_at" | "updated_at">;
 
-const select = "id,project_id,cost_code_id,name,description,eac_method,baseline_timephasing_method,current_budget_timephasing_method,ctc_timephasing_method,manual_eac,is_active,created_at,updated_at";
+const select = [
+  "id", "project_id", "cost_code_id", "name", "description", "eac_method",
+  "baseline_timephasing_method", "current_budget_timephasing_method", "ctc_timephasing_method",
+  "manual_eac", "is_active", "created_at", "updated_at",
+  ...PROJECT_COST_CODE_ATTRIBUTE_FIELDS,
+].join(",");
 
 export function listCostCodes(projectId: string) {
   return supabaseRequest<CostCode[]>(`cost_codes?project_id=eq.${encodeURIComponent(projectId)}&select=${encodeURIComponent(select)}&order=cost_code_id.asc`);

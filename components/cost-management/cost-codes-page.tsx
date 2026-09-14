@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ExcelImportDialog from "@/components/shared/excel-import-dialog";
 import { ExcelRow, exportExcel, readExcel } from "@/lib/excel";
 import { getProjectByPublicId, Project } from "@/lib/projects";
+import { listProjectAttributes, ProjectAttributeDefinition } from "@/lib/project-scope-attributes";
 import {
   CostCode,
   CostCodeInput,
@@ -12,12 +13,15 @@ import {
   EacMethod,
   importCostCodes,
   listCostCodes,
+  ProjectCostCodeAttributeField,
+  ProjectCostCodeAttributeValues,
   setCostCodesActive,
   TimephasingMethod,
   updateCostCode,
 } from "@/lib/cost-codes";
 
-const COLUMNS = ["Cost Code ID", "Cost Code Name", "Description", "EAC Method", "Manual EAC", "Baseline Timephasing", "Current Budget Timephasing", "CTC Timephasing", "Status"];
+const BASE_COLUMNS_BEFORE_ATTRIBUTES = ["Cost Code ID", "Cost Code Name", "Description"];
+const BASE_COLUMNS_AFTER_ATTRIBUTES = ["EAC Method", "Manual EAC", "Baseline Timephasing", "Current Budget Timephasing", "CTC Timephasing", "Status"];
 const EAC_METHODS: EacMethod[] = ["Manual", "Change Management", "Subcontract", "Cost Details"];
 const BUDGET_TIMEPHASING_METHODS: TimephasingMethod[] = ["Manual", "Dates"];
 const CTC_TIMEPHASING_METHODS: TimephasingMethod[] = ["Manual", "Dates", "Cost Details"];
@@ -36,10 +40,16 @@ const blankForm: Form = {
   is_active: true,
 };
 
-function exactColumns(rows: ExcelRow[]) {
+function attributeField(slot: number) {
+  return `p_attribute_${String(slot).padStart(2, "0")}` as ProjectCostCodeAttributeField;
+}
+function attributeColumn(definition: ProjectAttributeDefinition) {
+  return `P${String(definition.attribute_number).padStart(2, "0")} - ${definition.name}`;
+}
+function exactColumns(rows: ExcelRow[], columns: string[]) {
   if (!rows.length) return true;
   const actual = Object.keys(rows[0]);
-  return actual.length === COLUMNS.length && COLUMNS.every((column, index) => actual[index] === column);
+  return actual.length === columns.length && columns.every((column, index) => actual[index] === column);
 }
 function parseStatus(value: string) { return value === "Active" ? true : value === "Inactive" ? false : null; }
 function parseNumber(value: string) {
@@ -48,11 +58,16 @@ function parseNumber(value: string) {
   return Number.isFinite(parsed) ? parsed : Number.NaN;
 }
 function formatMoney(value: number | null) { return value == null ? "—" : new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(value); }
+function attributeDisplay(definition: ProjectAttributeDefinition, valueId: string | null | undefined) {
+  if (!valueId) return "—";
+  return definition.attribute_values.find((value) => value.value_id.toLowerCase() === valueId.toLowerCase())?.value_name ?? valueId;
+}
 
 export default function CostCodesPage({ projectPublicId }: { projectPublicId: string }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [project, setProject] = useState<Project | null>(null);
   const [costCodes, setCostCodes] = useState<CostCode[]>([]);
+  const [attributeDefinitions, setAttributeDefinitions] = useState<ProjectAttributeDefinition[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -66,15 +81,28 @@ export default function CostCodesPage({ projectPublicId }: { projectPublicId: st
   const [importing, setImporting] = useState(false);
   const [progress, setProgress] = useState(0);
 
+  const activeAttributes = useMemo(
+    () => attributeDefinitions.filter((definition) => definition.is_active).sort((a, b) => a.attribute_number - b.attribute_number),
+    [attributeDefinitions],
+  );
+  const columns = useMemo(
+    () => [...BASE_COLUMNS_BEFORE_ATTRIBUTES, ...activeAttributes.map(attributeColumn), ...BASE_COLUMNS_AFTER_ATTRIBUTES],
+    [activeAttributes],
+  );
+
   const refresh = useCallback(async () => {
     setLoading(true); setError("");
     try {
       const currentProject = await getProjectByPublicId(projectPublicId);
       setProject(currentProject);
-      if (!currentProject) { setCostCodes([]); setError("The selected project could not be found."); return; }
-      const rows = await listCostCodes(currentProject.id);
-      setCostCodes(rows);
-      setSelected((ids) => ids.filter((id) => rows.some((row) => row.id === id)));
+      if (!currentProject) { setCostCodes([]); setAttributeDefinitions([]); setError("The selected project could not be found."); return; }
+      const [costCodeRows, definitions] = await Promise.all([
+        listCostCodes(currentProject.id),
+        listProjectAttributes(currentProject.id, "Cost Code"),
+      ]);
+      setCostCodes(costCodeRows);
+      setAttributeDefinitions(definitions);
+      setSelected((ids) => ids.filter((id) => costCodeRows.some((row) => row.id === id)));
     } catch (requestError) { setError(costCodeErrorMessage(requestError)); }
     finally { setLoading(false); }
   }, [projectPublicId]);
@@ -84,28 +112,37 @@ export default function CostCodesPage({ projectPublicId }: { projectPublicId: st
   const rows = useMemo(() => {
     const term = search.trim().toLowerCase();
     return costCodes.filter((row) => {
-      const matchesSearch = !term || row.cost_code_id.toLowerCase().includes(term) || row.name.toLowerCase().includes(term) || (row.description ?? "").toLowerCase().includes(term);
+      const attributeText = activeAttributes.map((definition) => {
+        const raw = row[attributeField(definition.attribute_number)];
+        return `${raw ?? ""} ${attributeDisplay(definition, raw)}`;
+      }).join(" ").toLowerCase();
+      const matchesSearch = !term || row.cost_code_id.toLowerCase().includes(term) || row.name.toLowerCase().includes(term) || (row.description ?? "").toLowerCase().includes(term) || attributeText.includes(term);
       const matchesStatus = status === "all" || (status === "active" ? row.is_active : !row.is_active);
       return matchesSearch && matchesStatus;
     });
-  }, [costCodes, search, status]);
+  }, [costCodes, search, status, activeAttributes]);
 
   const allSelected = rows.length > 0 && rows.every((row) => selected.includes(row.id));
   function showNotice(message: string) { setNotice(message); window.setTimeout(() => setNotice(""), 3500); }
+
   function exportRows() {
     if (!project) return;
-    const data = costCodes.map((row) => ({
-      "Cost Code ID": row.cost_code_id,
-      "Cost Code Name": row.name,
-      Description: row.description ?? "",
-      "EAC Method": row.eac_method,
-      "Manual EAC": row.manual_eac == null ? "" : String(row.manual_eac),
-      "Baseline Timephasing": row.baseline_timephasing_method,
-      "Current Budget Timephasing": row.current_budget_timephasing_method,
-      "CTC Timephasing": row.ctc_timephasing_method,
-      Status: row.is_active ? "Active" : "Inactive",
-    }));
-    exportExcel(`${project.project_code}-cost-codes`, "Cost Codes", data.length ? data : [Object.fromEntries(COLUMNS.map((column) => [column, ""]))]);
+    const data = costCodes.map((row) => {
+      const attributes = Object.fromEntries(activeAttributes.map((definition) => [attributeColumn(definition), row[attributeField(definition.attribute_number)] ?? ""]));
+      return {
+        "Cost Code ID": row.cost_code_id,
+        "Cost Code Name": row.name,
+        Description: row.description ?? "",
+        ...attributes,
+        "EAC Method": row.eac_method,
+        "Manual EAC": row.manual_eac == null ? "" : String(row.manual_eac),
+        "Baseline Timephasing": row.baseline_timephasing_method,
+        "Current Budget Timephasing": row.current_budget_timephasing_method,
+        "CTC Timephasing": row.ctc_timephasing_method,
+        Status: row.is_active ? "Active" : "Inactive",
+      };
+    });
+    exportExcel(`${project.project_code}-cost-codes`, "Cost Codes", data.length ? data : [Object.fromEntries(columns.map((column) => [column, ""]))]);
   }
 
   async function chooseImport(file: File | undefined) {
@@ -114,7 +151,7 @@ export default function CostCodesPage({ projectPublicId }: { projectPublicId: st
       const incoming = await readExcel(file);
       const errors: string[] = [];
       if (!incoming.length) errors.push("The file does not contain any cost code rows.");
-      if (incoming.length && !exactColumns(incoming)) errors.push(`Columns must be exactly: ${COLUMNS.join(", ")}.`);
+      if (incoming.length && !exactColumns(incoming, columns)) errors.push(`Columns must be exactly: ${columns.join(", ")}.`);
       const ids = new Set<string>();
       incoming.forEach((row, index) => {
         const line = index + 2;
@@ -138,6 +175,12 @@ export default function CostCodesPage({ projectPublicId }: { projectPublicId: st
         if (!CTC_TIMEPHASING_METHODS.includes(ctc as TimephasingMethod)) errors.push(`Row ${line}: CTC Timephasing is invalid.`);
         if (Number.isNaN(manual)) errors.push(`Row ${line}: Manual EAC must be a valid number.`);
         if (parseStatus(row.Status ?? "") === null) errors.push(`Row ${line}: Status must be Active or Inactive.`);
+        activeAttributes.forEach((definition) => {
+          const valueId = (row[attributeColumn(definition)] ?? "").trim();
+          if (!valueId) return;
+          const valid = definition.attribute_values.some((value) => value.is_active && value.value_id.toLowerCase() === valueId.toLowerCase());
+          if (!valid) errors.push(`Row ${line}: ${attributeColumn(definition)} must contain an active Value ID from the configured list.`);
+        });
       });
       setImportRows(incoming); setImportErrors(errors); setReplace(false); setProgress(0);
     } catch (requestError) { setError(requestError instanceof Error ? requestError.message : "Unable to read the file."); }
@@ -149,17 +192,21 @@ export default function CostCodesPage({ projectPublicId }: { projectPublicId: st
     if (replace && !window.confirm("Are you sure you want to replace? This will delete all data and can't be undone.")) return;
     setImporting(true); setProgress(0);
     try {
-      await importCostCodes(project.id, importRows.map((row) => ({
-        cost_code_id: row["Cost Code ID"].trim(),
-        name: row["Cost Code Name"].trim(),
-        description: row.Description?.trim() || null,
-        eac_method: row["EAC Method"] as EacMethod,
-        manual_eac: parseNumber(row["Manual EAC"] ?? ""),
-        baseline_timephasing_method: row["Baseline Timephasing"] as TimephasingMethod,
-        current_budget_timephasing_method: row["Current Budget Timephasing"] as TimephasingMethod,
-        ctc_timephasing_method: row["CTC Timephasing"] as TimephasingMethod,
-        is_active: parseStatus(row.Status)! ,
-      })), replace, setProgress);
+      await importCostCodes(project.id, importRows.map((row) => {
+        const attributes = Object.fromEntries(activeAttributes.map((definition) => [attributeField(definition.attribute_number), row[attributeColumn(definition)]?.trim() || null])) as ProjectCostCodeAttributeValues;
+        return {
+          cost_code_id: row["Cost Code ID"].trim(),
+          name: row["Cost Code Name"].trim(),
+          description: row.Description?.trim() || null,
+          ...attributes,
+          eac_method: row["EAC Method"] as EacMethod,
+          manual_eac: parseNumber(row["Manual EAC"] ?? ""),
+          baseline_timephasing_method: row["Baseline Timephasing"] as TimephasingMethod,
+          current_budget_timephasing_method: row["Current Budget Timephasing"] as TimephasingMethod,
+          ctc_timephasing_method: row["CTC Timephasing"] as TimephasingMethod,
+          is_active: parseStatus(row.Status)!,
+        };
+      }), replace, setProgress);
       setImportRows(null); showNotice("Cost codes imported."); await refresh();
     } catch (requestError) { setImportErrors([costCodeErrorMessage(requestError)]); }
     finally { setImporting(false); }
@@ -172,10 +219,10 @@ export default function CostCodesPage({ projectPublicId }: { projectPublicId: st
   }
 
   return <div className="enterprise-admin-page">
-    <div className="enterprise-page-title"><div><h2>Cost Codes</h2><p>Maintain the project cost breakdown and the forecasting method used by each cost code.</p></div><button className="button primary" disabled={!project} onClick={() => setEditing("new")}>+ Add Cost Code</button></div>
+    <div className="enterprise-page-title"><div><h2>Cost Codes</h2><p>Maintain the project cost breakdown, project attributes and forecasting method used by each cost code.</p></div><button className="button primary" disabled={!project} onClick={() => setEditing("new")}>+ Add Cost Code</button></div>
     <section className="enterprise-grid-card">
       <div className="enterprise-toolbar">
-        <label className="enterprise-search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search Cost Code ID or name…" /></label>
+        <label className="enterprise-search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search Cost Code ID, name or attribute…" /></label>
         <label className="status-filter"><span>Status</span><select value={status} onChange={(event) => setStatus(event.target.value as StatusFilter)}><option value="all">All</option><option value="active">Active</option><option value="inactive">Inactive</option></select></label>
         <button className="button secondary" onClick={exportRows}>⇩ Export</button>
         <button className="button secondary" onClick={() => fileRef.current?.click()}>⇧ Import</button>
@@ -186,26 +233,28 @@ export default function CostCodesPage({ projectPublicId }: { projectPublicId: st
       {error && <div className="data-message error"><strong>Unable to load cost codes</strong><span>{error}</span></div>}
       {!error && loading && <div className="data-message"><span className="spinner"/>Loading cost codes…</div>}
       {!error && !loading && rows.length === 0 && <div className="data-message"><strong>No cost codes found</strong><span>Add or import the first cost code for this project.</span></div>}
-      {!error && !loading && rows.length > 0 && <div className="enterprise-table-wrap"><table className="enterprise-table" style={{ minWidth: 1320 }}><thead><tr>
+      {!error && !loading && rows.length > 0 && <div className="enterprise-table-wrap"><table className="enterprise-table" style={{ minWidth: 1320 + activeAttributes.length * 170 }}><thead><tr>
         <th style={{ width: 42 }}><input type="checkbox" checked={allSelected} onChange={(event) => { const ids = rows.map((row) => row.id); setSelected(event.target.checked ? Array.from(new Set([...selected, ...ids])) : selected.filter((id) => !ids.includes(id))); }}/></th>
-        <th>Cost Code ID</th><th>Cost Code Name</th><th>EAC Method</th><th>Manual EAC</th><th>Baseline Timephasing</th><th>Current Budget</th><th>CTC Timephasing</th><th>Status</th><th>Actions</th>
-      </tr></thead><tbody>{rows.map((row) => <tr key={row.id}><td><input type="checkbox" checked={selected.includes(row.id)} onChange={(event) => setSelected((current) => event.target.checked ? [...current, row.id] : current.filter((id) => id !== row.id))}/></td><td className="enterprise-code">{row.cost_code_id}</td><td>{row.name}</td><td>{row.eac_method}</td><td>{formatMoney(row.manual_eac)}</td><td>{row.baseline_timephasing_method}</td><td>{row.current_budget_timephasing_method}</td><td>{row.ctc_timephasing_method}</td><td><span className={`enterprise-status ${row.is_active ? "active" : "inactive"}`}><i/>{row.is_active ? "Active" : "Inactive"}</span></td><td><button className="button secondary compact" onClick={() => setEditing(row)}>✎ Edit</button></td></tr>)}</tbody></table></div>}
-      <div className="grid-footer"><span>{rows.length} of {costCodes.length} cost codes · {selected.length} selected</span><span>Cost Code ID is unique within this project</span></div>
+        <th>Cost Code ID</th><th>Cost Code Name</th>{activeAttributes.map((definition) => <th key={definition.id}>{definition.name}</th>)}<th>EAC Method</th><th>Manual EAC</th><th>Baseline Timephasing</th><th>Current Budget</th><th>CTC Timephasing</th><th>Status</th><th>Actions</th>
+      </tr></thead><tbody>{rows.map((row) => <tr key={row.id}><td><input type="checkbox" checked={selected.includes(row.id)} onChange={(event) => setSelected((current) => event.target.checked ? [...current, row.id] : current.filter((id) => id !== row.id))}/></td><td className="enterprise-code">{row.cost_code_id}</td><td>{row.name}</td>{activeAttributes.map((definition) => <td key={definition.id}>{attributeDisplay(definition, row[attributeField(definition.attribute_number)])}</td>)}<td>{row.eac_method}</td><td>{formatMoney(row.manual_eac)}</td><td>{row.baseline_timephasing_method}</td><td>{row.current_budget_timephasing_method}</td><td>{row.ctc_timephasing_method}</td><td><span className={`enterprise-status ${row.is_active ? "active" : "inactive"}`}><i/>{row.is_active ? "Active" : "Inactive"}</span></td><td><button className="button secondary compact" onClick={() => setEditing(row)}>✎ Edit</button></td></tr>)}</tbody></table></div>}
+      <div className="grid-footer"><span>{rows.length} of {costCodes.length} cost codes · {selected.length} selected</span><span>{activeAttributes.length} active project cost code attribute{activeAttributes.length === 1 ? "" : "s"}</span></div>
     </section>
-    {project && editing && <CostCodeDrawer projectId={project.id} costCode={editing === "new" ? null : editing} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); showNotice("Cost code saved."); await refresh(); }}/>} 
-    {importRows && <ExcelImportDialog title="Import Cost Codes" rows={importRows} columns={COLUMNS} errors={importErrors} replace={replace} setReplace={setReplace} importing={importing} progress={progress} onCancel={() => !importing && setImportRows(null)} onImport={() => void runImport()}/>} 
+    {project && editing && <CostCodeDrawer projectId={project.id} costCode={editing === "new" ? null : editing} attributeDefinitions={activeAttributes} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); showNotice("Cost code saved."); await refresh(); }}/>} 
+    {importRows && <ExcelImportDialog title="Import Cost Codes" rows={importRows} columns={columns} errors={importErrors} replace={replace} setReplace={setReplace} importing={importing} progress={progress} onCancel={() => !importing && setImportRows(null)} onImport={() => void runImport()}/>} 
     {notice && <div className="admin-toast">{notice}</div>}
   </div>;
 }
 
-function CostCodeDrawer({ projectId, costCode, onClose, onSaved }: { projectId: string; costCode: CostCode | null; onClose: () => void; onSaved: () => void }) {
+function CostCodeDrawer({ projectId, costCode, attributeDefinitions, onClose, onSaved }: { projectId: string; costCode: CostCode | null; attributeDefinitions: ProjectAttributeDefinition[]; onClose: () => void; onSaved: () => void }) {
   const [form, setForm] = useState<Form>(costCode ? {
     cost_code_id: costCode.cost_code_id, name: costCode.name, description: costCode.description,
     eac_method: costCode.eac_method, baseline_timephasing_method: costCode.baseline_timephasing_method,
     current_budget_timephasing_method: costCode.current_budget_timephasing_method, ctc_timephasing_method: costCode.ctc_timephasing_method,
     manual_eac: costCode.manual_eac, is_active: costCode.is_active,
+    ...Object.fromEntries(attributeDefinitions.map((definition) => [attributeField(definition.attribute_number), costCode[attributeField(definition.attribute_number)] ?? null])),
   } : blankForm);
   const [saving, setSaving] = useState(false); const [error, setError] = useState("");
+
   async function save() {
     if (!form.cost_code_id.trim() || !form.name.trim()) return setError("Cost Code ID and Cost Code Name are required.");
     if (form.cost_code_id.trim().length > 30 || form.name.trim().length > 100) return setError("Cost Code ID max 30 characters; Cost Code Name max 100 characters.");
@@ -219,10 +268,18 @@ function CostCodeDrawer({ projectId, costCode, onClose, onSaved }: { projectId: 
     catch (requestError) { setError(costCodeErrorMessage(requestError)); }
     finally { setSaving(false); }
   }
+
   return <><button className="drawer-scrim" onClick={onClose}/><aside className="admin-drawer"><header><div><span>{costCode ? "Edit" : "New"}</span><h2>{costCode ? costCode.name : "Cost Code"}</h2></div><button onClick={onClose}>×</button></header><div className="drawer-body">{error && <div className="form-error">{error}</div>}
     <div className="form-grid"><label className="form-field"><span>Cost Code ID <b>*</b><small>{form.cost_code_id.length}/30</small></span><input maxLength={30} value={form.cost_code_id} onChange={(event) => setForm({ ...form, cost_code_id: event.target.value })}/></label><label className="form-field"><span>Cost Code Name <b>*</b><small>{form.name.length}/100</small></span><input maxLength={100} value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })}/></label></div>
     <label className="form-field" style={{ marginTop: 12 }}><span>Description <small>{(form.description ?? "").length}/255</small></span><textarea maxLength={255} value={form.description ?? ""} onChange={(event) => setForm({ ...form, description: event.target.value })}/></label>
-    <div className="form-grid" style={{ marginTop: 12 }}><label className="form-field"><span>EAC Method</span><select value={form.eac_method} onChange={(event) => setForm({ ...form, eac_method: event.target.value as EacMethod })}>{EAC_METHODS.map((value) => <option key={value}>{value}</option>)}</select></label><label className="form-field"><span>Manual EAC</span><input type="number" step="0.01" disabled={form.eac_method !== "Manual"} value={form.manual_eac ?? ""} onChange={(event) => setForm({ ...form, manual_eac: event.target.value === "" ? null : Number(event.target.value) })}/></label></div>
+    {attributeDefinitions.length > 0 && <div style={{ marginTop: 18 }}><div className="enterprise-settings-heading"><div><strong>Project Cost Code Attributes</strong><span>Only active values can be newly assigned. Existing inactive values remain visible for history.</span></div></div><div className="form-grid">{attributeDefinitions.map((definition) => {
+      const field = attributeField(definition.attribute_number);
+      const current = form[field] ?? "";
+      const currentValue = definition.attribute_values.find((value) => value.value_id.toLowerCase() === current.toLowerCase());
+      const activeValues = definition.attribute_values.filter((value) => value.is_active);
+      return <label className="form-field" key={definition.id}><span>{definition.name}<small>P{String(definition.attribute_number).padStart(2, "0")}</small></span><select value={current} onChange={(event) => setForm({ ...form, [field]: event.target.value || null })}><option value="">— None —</option>{currentValue && !currentValue.is_active && <option value={currentValue.value_id} disabled>{currentValue.value_name} (Inactive)</option>}{activeValues.map((value) => <option key={value.id} value={value.value_id}>{value.value_name}</option>)}</select></label>;
+    })}</div></div>}
+    <div className="form-grid" style={{ marginTop: 18 }}><label className="form-field"><span>EAC Method</span><select value={form.eac_method} onChange={(event) => setForm({ ...form, eac_method: event.target.value as EacMethod })}>{EAC_METHODS.map((value) => <option key={value}>{value}</option>)}</select></label><label className="form-field"><span>Manual EAC</span><input type="number" step="0.01" disabled={form.eac_method !== "Manual"} value={form.manual_eac ?? ""} onChange={(event) => setForm({ ...form, manual_eac: event.target.value === "" ? null : Number(event.target.value) })}/></label></div>
     <div className="form-grid" style={{ marginTop: 12 }}><label className="form-field"><span>Baseline Timephasing</span><select value={form.baseline_timephasing_method} onChange={(event) => setForm({ ...form, baseline_timephasing_method: event.target.value as TimephasingMethod })}>{BUDGET_TIMEPHASING_METHODS.map((value) => <option key={value}>{value}</option>)}</select></label><label className="form-field"><span>Current Budget Timephasing</span><select value={form.current_budget_timephasing_method} onChange={(event) => setForm({ ...form, current_budget_timephasing_method: event.target.value as TimephasingMethod })}>{BUDGET_TIMEPHASING_METHODS.map((value) => <option key={value}>{value}</option>)}</select></label></div>
     <label className="form-field" style={{ marginTop: 12 }}><span>Cost to Complete Timephasing</span><select value={form.ctc_timephasing_method} onChange={(event) => setForm({ ...form, ctc_timephasing_method: event.target.value as TimephasingMethod })}>{CTC_TIMEPHASING_METHODS.map((value) => <option key={value}>{value}</option>)}</select></label>
     <label className="toggle-field" style={{ marginTop: 16 }}><span><strong>Active</strong><small>Inactive cost codes remain available for historical reporting but should not receive new cost entries.</small></span><input type="checkbox" checked={form.is_active} onChange={(event) => setForm({ ...form, is_active: event.target.checked })}/><i/></label>
