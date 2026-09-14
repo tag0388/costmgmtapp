@@ -44,20 +44,15 @@ export function listCostReportingPeriods(projectId: string) {
 
 function normalizeSettingsInput(input: CostReportingSettingsInput): CostReportingSettingsInput {
   const numberOfPeriods = Number(input.number_of_periods);
-  if (!Number.isInteger(numberOfPeriods) || numberOfPeriods <= 0) {
-    throw new Error("Number of Periods must be a whole number greater than zero.");
-  }
+  if (!Number.isInteger(numberOfPeriods) || numberOfPeriods <= 0) throw new Error("Number of Periods must be a whole number greater than zero.");
 
   const match = String(input.start_date ?? "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!match) throw new Error("Start Date is invalid.");
-
   const year = Number(match[1]);
   const month = Number(match[2]);
   const day = Number(match[3]);
   const date = new Date(Date.UTC(year, month - 1, day));
-  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) {
-    throw new Error("Start Date is invalid.");
-  }
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) throw new Error("Start Date is invalid.");
 
   return {
     frequency: input.frequency,
@@ -96,7 +91,6 @@ export function buildReportingPeriods(projectId: string, input: CostReportingSet
   return Array.from({ length: normalized.number_of_periods }, (_, index) => {
     let start: Date;
     let nextStart: Date;
-
     if (normalized.frequency === "Weekly") {
       start = new Date(selectedStart.getTime() + index * 7 * 86400000);
       nextStart = new Date(selectedStart.getTime() + (index + 1) * 7 * 86400000);
@@ -104,22 +98,12 @@ export function buildReportingPeriods(projectId: string, input: CostReportingSet
       start = new Date(Date.UTC(monthlyFirstStart.getUTCFullYear(), monthlyFirstStart.getUTCMonth() + index, 1));
       nextStart = new Date(Date.UTC(monthlyFirstStart.getUTCFullYear(), monthlyFirstStart.getUTCMonth() + index + 1, 1));
     }
-
     const end = new Date(nextStart.getTime() - 86400000);
-    return {
-      project_id: projectId,
-      period_number: index + 1,
-      start_date: isoDate(start),
-      end_date: isoDate(end),
-      status: "Future" as CostPeriodStatus,
-    };
+    return { project_id: projectId, period_number: index + 1, start_date: isoDate(start), end_date: isoDate(end), status: "Future" as CostPeriodStatus };
   });
 }
 
-export async function generateCostReportingPeriods(projectId: string, input: CostReportingSettingsInput, onProgress?: (progress: number) => void) {
-  const existing = await listCostReportingPeriods(projectId);
-  if (existing.length) throw new Error("Reporting periods already exist for this project. Existing periods are protected from regeneration because cost history may reference them.");
-  const periods = buildReportingPeriods(projectId, input);
+async function insertPeriods(periods: Array<{ project_id: string; period_number: number; start_date: string; end_date: string; status: CostPeriodStatus }>, onProgress?: (progress: number) => void) {
   const batchSize = 50;
   for (let index = 0; index < periods.length; index += batchSize) {
     const batch = periods.slice(index, index + batchSize);
@@ -132,8 +116,31 @@ export async function generateCostReportingPeriods(projectId: string, input: Cos
   }
 }
 
+export async function generateCostReportingPeriods(projectId: string, input: CostReportingSettingsInput, onProgress?: (progress: number) => void) {
+  const existing = await listCostReportingPeriods(projectId);
+  if (existing.length) throw new Error("Reporting periods already exist for this project.");
+  await insertPeriods(buildReportingPeriods(projectId, input), onProgress);
+}
+
+export async function regenerateCostReportingPeriods(projectId: string, input: CostReportingSettingsInput, onProgress?: (progress: number) => void) {
+  const existing = await listCostReportingPeriods(projectId);
+  if (existing.some((period) => period.status === "Closed")) throw new Error("Reporting periods cannot be regenerated after a period has been closed.");
+  await supabaseRequest<unknown[]>(`cost_reporting_periods?project_id=eq.${encodeURIComponent(projectId)}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
+  await insertPeriods(buildReportingPeriods(projectId, input), onProgress);
+}
+
+export async function extendCostReportingPeriods(projectId: string, input: CostReportingSettingsInput, onProgress?: (progress: number) => void) {
+  const existing = await listCostReportingPeriods(projectId);
+  if (!existing.some((period) => period.status === "Closed")) throw new Error("Use Regenerate Periods before any period is closed.");
+  if (input.number_of_periods <= existing.length) throw new Error(`Number of Periods must be greater than the existing ${existing.length} periods.`);
+  const desired = buildReportingPeriods(projectId, input);
+  const additional = desired.slice(existing.length);
+  await insertPeriods(additional, onProgress);
+}
+
 export function costReportingErrorMessage(error: unknown) {
   if (error instanceof SupabaseRequestError) {
+    if (error.code === "23503") return "These reporting periods are already referenced by cost data and cannot be replaced. Close/roll the period or remove the dependent data first.";
     if (error.code === "23505") return "These reporting settings or periods conflict with existing project reporting data.";
     if (error.code === "23514") {
       const detail = [error.message, error.details, error.hint].filter(Boolean).join(" ");
