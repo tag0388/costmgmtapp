@@ -15,8 +15,6 @@ import {
   updateCostReportingSettings,
 } from "@/lib/cost-reporting";
 
-const PERIOD_COUNTS = [60, 100, 200] as const;
-
 type Form = CostReportingSettingsInput;
 const blankForm: Form = { frequency: "Monthly", start_date: "", number_of_periods: 60 };
 
@@ -57,7 +55,7 @@ export default function CostReportingPeriodsPage({ projectPublicId }: { projectP
 
   function validate() {
     if (!form.start_date) return "Start Date is required.";
-    if (!PERIOD_COUNTS.includes(form.number_of_periods)) return "Number of Periods must be 60, 100 or 200.";
+    if (!Number.isInteger(form.number_of_periods) || form.number_of_periods <= 0) return "Number of Periods must be a whole number greater than zero.";
     return "";
   }
 
@@ -79,7 +77,7 @@ export default function CostReportingPeriodsPage({ projectPublicId }: { projectP
     if (!project) return;
     const validation = validate(); if (validation) return setError(validation);
     if (periods.length) return setError("Reporting periods already exist and are protected from regeneration because cost history may reference them.");
-    if (!window.confirm(`Generate ${form.number_of_periods} ${form.frequency.toLowerCase()} reporting periods starting ${form.start_date}?`)) return;
+    if (!window.confirm(`Generate ${form.number_of_periods} ${form.frequency.toLowerCase()} reporting periods from ${form.start_date}?`)) return;
     setGenerating(true); setProgress(0); setError(""); setNotice("");
     try {
       const saved = settings
@@ -106,7 +104,10 @@ export default function CostReportingPeriodsPage({ projectPublicId }: { projectP
         <div className="form-grid">
           <label className="form-field"><span>Frequency <b>*</b></span><select value={form.frequency} onChange={(event) => setForm({ ...form, frequency: event.target.value as CostPeriodFrequency })}><option>Weekly</option><option>Monthly</option></select></label>
           <label className="form-field"><span>Start Date <b>*</b></span><input type="date" value={form.start_date} onChange={(event) => setForm({ ...form, start_date: event.target.value })}/></label>
-          <label className="form-field"><span>Number of Periods <b>*</b></span><select value={form.number_of_periods} onChange={(event) => setForm({ ...form, number_of_periods: Number(event.target.value) as 60 | 100 | 200 })}>{PERIOD_COUNTS.map((count) => <option key={count} value={count}>{count}</option>)}</select></label>
+          <label className="form-field"><span>Number of Periods <b>*</b></span><input type="number" min={1} step={1} inputMode="numeric" value={form.number_of_periods} onChange={(event) => setForm({ ...form, number_of_periods: event.target.value === "" ? 0 : Number(event.target.value) })}/></label>
+        </div>
+        <div className="data-message" style={{ minHeight: 64, marginTop: 14 }}>
+          <span>{form.frequency === "Monthly" ? "Monthly periods always use full calendar months. If the selected Start Date is mid-month, Period 1 starts on the first day of that month and ends on the last day." : "Weekly Period 1 starts on the selected Start Date and runs for 7 days. Each following period starts 7 days after the prior period start."}</span>
         </div>
         {periods.length > 0 && <div className="data-message" style={{ minHeight: 70, marginTop: 14 }}><strong>Reporting periods already generated</strong><span>Settings can be saved, but existing periods are not regenerated automatically because actual costs and month-end snapshots may reference them.</span></div>}
       </div>
