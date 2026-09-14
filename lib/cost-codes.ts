@@ -10,8 +10,18 @@ export const PROJECT_COST_CODE_ATTRIBUTE_FIELDS = [
   "p_attribute_16", "p_attribute_17", "p_attribute_18", "p_attribute_19", "p_attribute_20",
 ] as const;
 
+export const ENTERPRISE_COST_CODE_ATTRIBUTE_FIELDS = [
+  "e_attribute_01", "e_attribute_02", "e_attribute_03", "e_attribute_04", "e_attribute_05",
+  "e_attribute_06", "e_attribute_07", "e_attribute_08", "e_attribute_09", "e_attribute_10",
+  "e_attribute_11", "e_attribute_12", "e_attribute_13", "e_attribute_14", "e_attribute_15",
+  "e_attribute_16", "e_attribute_17", "e_attribute_18", "e_attribute_19", "e_attribute_20",
+] as const;
+
 export type ProjectCostCodeAttributeField = typeof PROJECT_COST_CODE_ATTRIBUTE_FIELDS[number];
+export type EnterpriseCostCodeAttributeField = typeof ENTERPRISE_COST_CODE_ATTRIBUTE_FIELDS[number];
 export type ProjectCostCodeAttributeValues = Partial<Record<ProjectCostCodeAttributeField, string | null>>;
+export type EnterpriseCostCodeAttributeValues = Partial<Record<EnterpriseCostCodeAttributeField, string | null>>;
+export type CostCodeAttributeValues = ProjectCostCodeAttributeValues & EnterpriseCostCodeAttributeValues;
 
 export type CostCode = {
   id: string;
@@ -27,7 +37,7 @@ export type CostCode = {
   is_active: boolean;
   created_at: string;
   updated_at: string;
-} & ProjectCostCodeAttributeValues;
+} & CostCodeAttributeValues;
 
 export type CostCodeInput = Omit<CostCode, "id" | "created_at" | "updated_at">;
 
@@ -35,6 +45,7 @@ const select = [
   "id", "project_id", "cost_code_id", "name", "description", "eac_method",
   "baseline_timephasing_method", "current_budget_timephasing_method", "ctc_timephasing_method",
   "manual_eac", "is_active", "created_at", "updated_at",
+  ...ENTERPRISE_COST_CODE_ATTRIBUTE_FIELDS,
   ...PROJECT_COST_CODE_ATTRIBUTE_FIELDS,
 ].join(",");
 

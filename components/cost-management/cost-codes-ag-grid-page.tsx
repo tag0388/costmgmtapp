@@ -1,0 +1,438 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AgGridProvider, AgGridReact } from "ag-grid-react";
+import type { ColDef, ColumnState, GridApi, GridReadyEvent, SelectionChangedEvent } from "ag-grid-community";
+import { themeQuartz } from "ag-grid-community";
+import { AllEnterpriseModule } from "ag-grid-enterprise";
+import ExcelImportDialog from "@/components/shared/excel-import-dialog";
+import { ExcelRow, exportExcel, readExcel } from "@/lib/excel";
+import { listEnterpriseAttributes, EnterpriseAttributeDefinition } from "@/lib/enterprise-attributes";
+import { deleteProjectGridView, gridViewErrorMessage, listProjectGridViews, ProjectGridView, saveProjectGridView } from "@/lib/grid-views";
+import { listProjectAttributes, ProjectAttributeDefinition } from "@/lib/project-scope-attributes";
+import { getProjectByPublicId, Project } from "@/lib/projects";
+import {
+  CostCode,
+  CostCodeInput,
+  costCodeErrorMessage,
+  createCostCode,
+  EacMethod,
+  EnterpriseCostCodeAttributeField,
+  importCostCodes,
+  listCostCodes,
+  ProjectCostCodeAttributeField,
+  setCostCodesActive,
+  TimephasingMethod,
+  updateCostCode,
+} from "@/lib/cost-codes";
+
+const EAC_METHODS: EacMethod[] = ["Manual", "Change Management", "Subcontract", "Cost Details"];
+const BUDGET_TIMEPHASING_METHODS: TimephasingMethod[] = ["Manual", "Dates"];
+const CTC_TIMEPHASING_METHODS: TimephasingMethod[] = ["Manual", "Dates", "Cost Details"];
+const GRID_KEY = "cost-codes";
+type StatusFilter = "all" | "active" | "inactive";
+type Form = Omit<CostCodeInput, "project_id">;
+
+const blankForm: Form = {
+  cost_code_id: "",
+  name: "",
+  description: null,
+  eac_method: "Cost Details",
+  baseline_timephasing_method: "Manual",
+  current_budget_timephasing_method: "Manual",
+  ctc_timephasing_method: "Cost Details",
+  manual_eac: null,
+  is_active: true,
+};
+
+function projectField(slot: number) {
+  return `p_attribute_${String(slot).padStart(2, "0")}` as ProjectCostCodeAttributeField;
+}
+function enterpriseField(slot: number) {
+  return `e_attribute_${String(slot).padStart(2, "0")}` as EnterpriseCostCodeAttributeField;
+}
+function projectColumn(definition: ProjectAttributeDefinition) {
+  return `P${String(definition.attribute_number).padStart(2, "0")} - ${definition.name}`;
+}
+function enterpriseColumn(definition: EnterpriseAttributeDefinition) {
+  return `E${String(definition.attribute_number).padStart(2, "0")} - ${definition.name}`;
+}
+function valueName(definition: ProjectAttributeDefinition | EnterpriseAttributeDefinition, valueId: string | null | undefined) {
+  if (!valueId) return "";
+  return definition.attribute_values.find((value) => value.value_id.toLowerCase() === valueId.toLowerCase())?.value_name ?? valueId;
+}
+function parseStatus(value: string) { return value === "Active" ? true : value === "Inactive" ? false : null; }
+function parseNumber(value: string) {
+  if (!value.trim()) return null;
+  const parsed = Number(value.replace(/,/g, ""));
+  return Number.isFinite(parsed) ? parsed : Number.NaN;
+}
+function money(value: number | null | undefined) {
+  return value == null ? "—" : new Intl.NumberFormat(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(value);
+}
+function exactColumns(rows: ExcelRow[], columns: string[]) {
+  if (!rows.length) return true;
+  const actual = Object.keys(rows[0]);
+  return actual.length === columns.length && columns.every((column, index) => actual[index] === column);
+}
+
+const gridTheme = themeQuartz.withParams({
+  spacing: 7,
+  rowHeight: 38,
+  headerHeight: 42,
+});
+
+export default function CostCodesAgGridPage({ projectPublicId }: { projectPublicId: string }) {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [gridApi, setGridApi] = useState<GridApi<CostCode> | null>(null);
+  const [project, setProject] = useState<Project | null>(null);
+  const [costCodes, setCostCodes] = useState<CostCode[]>([]);
+  const [enterpriseAttributes, setEnterpriseAttributes] = useState<EnterpriseAttributeDefinition[]>([]);
+  const [projectAttributes, setProjectAttributes] = useState<ProjectAttributeDefinition[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [search, setSearch] = useState("");
+  const [status, setStatus] = useState<StatusFilter>("all");
+  const [selected, setSelected] = useState<string[]>([]);
+  const [editing, setEditing] = useState<CostCode | "new" | null>(null);
+  const [importRows, setImportRows] = useState<ExcelRow[] | null>(null);
+  const [importErrors, setImportErrors] = useState<string[]>([]);
+  const [replace, setReplace] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [views, setViews] = useState<ProjectGridView[]>([]);
+  const [selectedView, setSelectedView] = useState("Default");
+  const [showSaveView, setShowSaveView] = useState(false);
+  const [viewName, setViewName] = useState("");
+
+  const activeEnterprise = useMemo(() => enterpriseAttributes.filter((definition) => definition.is_active).sort((a, b) => a.attribute_number - b.attribute_number), [enterpriseAttributes]);
+  const activeProject = useMemo(() => projectAttributes.filter((definition) => definition.is_active).sort((a, b) => a.attribute_number - b.attribute_number), [projectAttributes]);
+
+  const refresh = useCallback(async () => {
+    setLoading(true); setError("");
+    try {
+      const currentProject = await getProjectByPublicId(projectPublicId);
+      setProject(currentProject);
+      if (!currentProject) {
+        setCostCodes([]); setEnterpriseAttributes([]); setProjectAttributes([]); setViews([]);
+        setError("The selected project could not be found.");
+        return;
+      }
+      const [codes, enterpriseDefs, projectDefs, savedViews] = await Promise.all([
+        listCostCodes(currentProject.id),
+        listEnterpriseAttributes(currentProject.enterprise_id, "Cost Code"),
+        listProjectAttributes(currentProject.id, "Cost Code"),
+        listProjectGridViews(currentProject.id, GRID_KEY),
+      ]);
+      setCostCodes(codes);
+      setEnterpriseAttributes(enterpriseDefs);
+      setProjectAttributes(projectDefs);
+      setViews(savedViews);
+      setSelected((ids) => ids.filter((id) => codes.some((row) => row.id === id)));
+      setSelectedView((current) => current === "Default" || savedViews.some((view) => view.id === current) ? current : "Default");
+    } catch (requestError) { setError(costCodeErrorMessage(requestError)); }
+    finally { setLoading(false); }
+  }, [projectPublicId]);
+
+  useEffect(() => { void refresh(); }, [refresh]);
+
+  const rows = useMemo(() => costCodes.filter((row) => status === "all" || (status === "active" ? row.is_active : !row.is_active)), [costCodes, status]);
+
+  const columnDefs = useMemo<ColDef<CostCode>[]>(() => {
+    const enterpriseDefs: ColDef<CostCode>[] = activeEnterprise.map((definition) => {
+      const field = enterpriseField(definition.attribute_number);
+      return {
+        colId: field,
+        headerName: definition.name,
+        headerTooltip: `Enterprise Cost Code Attribute E${String(definition.attribute_number).padStart(2, "0")}`,
+        valueGetter: (params) => valueName(definition, params.data?.[field]),
+        minWidth: 150,
+        enableRowGroup: true,
+        filter: "agSetColumnFilter",
+      };
+    });
+    const projectDefs: ColDef<CostCode>[] = activeProject.map((definition) => {
+      const field = projectField(definition.attribute_number);
+      return {
+        colId: field,
+        headerName: definition.name,
+        headerTooltip: `Project Cost Code Attribute P${String(definition.attribute_number).padStart(2, "0")}`,
+        valueGetter: (params) => valueName(definition, params.data?.[field]),
+        minWidth: 150,
+        enableRowGroup: true,
+        filter: "agSetColumnFilter",
+      };
+    });
+    return [
+      { field: "cost_code_id", headerName: "Cost Code ID", pinned: "left", minWidth: 145, enableRowGroup: true, filter: true },
+      { field: "name", headerName: "Cost Code Name", pinned: "left", minWidth: 220, enableRowGroup: true, filter: true },
+      { field: "description", headerName: "Description", minWidth: 220, filter: true },
+      ...enterpriseDefs,
+      ...projectDefs,
+      { field: "eac_method", headerName: "EAC Method", minWidth: 155, enableRowGroup: true, filter: "agSetColumnFilter" },
+      { field: "manual_eac", headerName: "Manual EAC", minWidth: 135, type: "numericColumn", aggFunc: "sum", enableValue: true, valueFormatter: (params) => money(params.value as number | null) },
+      { field: "baseline_timephasing_method", headerName: "Baseline Timephasing", minWidth: 175, enableRowGroup: true, filter: "agSetColumnFilter" },
+      { field: "current_budget_timephasing_method", headerName: "Current Budget", minWidth: 160, enableRowGroup: true, filter: "agSetColumnFilter" },
+      { field: "ctc_timephasing_method", headerName: "CTC Timephasing", minWidth: 160, enableRowGroup: true, filter: "agSetColumnFilter" },
+      { field: "is_active", headerName: "Status", minWidth: 105, enableRowGroup: true, filter: "agSetColumnFilter", valueFormatter: (params) => params.value ? "Active" : "Inactive" },
+      {
+        colId: "actions", headerName: "Actions", pinned: "right", sortable: false, filter: false, suppressHeaderMenuButton: true, minWidth: 110, maxWidth: 110,
+        cellRenderer: (params: { data?: CostCode }) => params.data ? <button className="button secondary compact" onClick={() => setEditing(params.data!)}>✎ Edit</button> : null,
+      },
+    ];
+  }, [activeEnterprise, activeProject]);
+
+  const excelColumns = useMemo(() => [
+    "Cost Code ID", "Cost Code Name", "Description",
+    ...activeEnterprise.map(enterpriseColumn),
+    ...activeProject.map(projectColumn),
+    "EAC Method", "Manual EAC", "Baseline Timephasing", "Current Budget Timephasing", "CTC Timephasing", "Status",
+  ], [activeEnterprise, activeProject]);
+
+  function showNotice(message: string) { setNotice(message); window.setTimeout(() => setNotice(""), 3500); }
+  function onGridReady(event: GridReadyEvent<CostCode>) { setGridApi(event.api); }
+  function onSelectionChanged(event: SelectionChangedEvent<CostCode>) { setSelected(event.api.getSelectedRows().map((row) => row.id)); }
+
+  function exportRows() {
+    if (!project) return;
+    const data = costCodes.map((row) => ({
+      "Cost Code ID": row.cost_code_id,
+      "Cost Code Name": row.name,
+      Description: row.description ?? "",
+      ...Object.fromEntries(activeEnterprise.map((definition) => [enterpriseColumn(definition), row[enterpriseField(definition.attribute_number)] ?? ""])),
+      ...Object.fromEntries(activeProject.map((definition) => [projectColumn(definition), row[projectField(definition.attribute_number)] ?? ""])),
+      "EAC Method": row.eac_method,
+      "Manual EAC": row.manual_eac == null ? "" : String(row.manual_eac),
+      "Baseline Timephasing": row.baseline_timephasing_method,
+      "Current Budget Timephasing": row.current_budget_timephasing_method,
+      "CTC Timephasing": row.ctc_timephasing_method,
+      Status: row.is_active ? "Active" : "Inactive",
+    }));
+    exportExcel(`${project.project_code}-cost-codes`, "Cost Codes", data.length ? data : [Object.fromEntries(excelColumns.map((column) => [column, ""]))]);
+  }
+
+  async function chooseImport(file: File | undefined) {
+    if (!file) return;
+    try {
+      const incoming = await readExcel(file);
+      const errors: string[] = [];
+      if (!incoming.length) errors.push("The file does not contain any cost code rows.");
+      if (incoming.length && !exactColumns(incoming, excelColumns)) errors.push(`Columns must be exactly: ${excelColumns.join(", ")}.`);
+      const ids = new Set<string>();
+      incoming.forEach((row, index) => {
+        const line = index + 2;
+        const id = (row["Cost Code ID"] ?? "").trim();
+        const name = (row["Cost Code Name"] ?? "").trim();
+        const description = (row.Description ?? "").trim();
+        const eac = row["EAC Method"] ?? "";
+        const baseline = row["Baseline Timephasing"] ?? "";
+        const current = row["Current Budget Timephasing"] ?? "";
+        const ctc = row["CTC Timephasing"] ?? "";
+        const manual = parseNumber(row["Manual EAC"] ?? "");
+        if (!id) errors.push(`Row ${line}: Cost Code ID is required.`);
+        if (id.length > 30) errors.push(`Row ${line}: Cost Code ID is longer than 30 characters.`);
+        if (!name) errors.push(`Row ${line}: Cost Code Name is required.`);
+        if (name.length > 100) errors.push(`Row ${line}: Cost Code Name is longer than 100 characters.`);
+        if (description.length > 255) errors.push(`Row ${line}: Description is longer than 255 characters.`);
+        const key = id.toLowerCase(); if (key && ids.has(key)) errors.push(`Row ${line}: duplicate Cost Code ID “${id}”.`); if (key) ids.add(key);
+        if (!EAC_METHODS.includes(eac as EacMethod)) errors.push(`Row ${line}: EAC Method is invalid.`);
+        if (!BUDGET_TIMEPHASING_METHODS.includes(baseline as TimephasingMethod)) errors.push(`Row ${line}: Baseline Timephasing must be Manual or Dates.`);
+        if (!BUDGET_TIMEPHASING_METHODS.includes(current as TimephasingMethod)) errors.push(`Row ${line}: Current Budget Timephasing must be Manual or Dates.`);
+        if (!CTC_TIMEPHASING_METHODS.includes(ctc as TimephasingMethod)) errors.push(`Row ${line}: CTC Timephasing is invalid.`);
+        if (Number.isNaN(manual)) errors.push(`Row ${line}: Manual EAC must be a valid number.`);
+        if (parseStatus(row.Status ?? "") === null) errors.push(`Row ${line}: Status must be Active or Inactive.`);
+        activeEnterprise.forEach((definition) => {
+          const valueId = (row[enterpriseColumn(definition)] ?? "").trim();
+          if (valueId && !definition.attribute_values.some((value) => value.is_active && value.value_id.toLowerCase() === valueId.toLowerCase())) errors.push(`Row ${line}: ${enterpriseColumn(definition)} must contain an active Value ID.`);
+        });
+        activeProject.forEach((definition) => {
+          const valueId = (row[projectColumn(definition)] ?? "").trim();
+          if (valueId && !definition.attribute_values.some((value) => value.is_active && value.value_id.toLowerCase() === valueId.toLowerCase())) errors.push(`Row ${line}: ${projectColumn(definition)} must contain an active Value ID.`);
+        });
+      });
+      setImportRows(incoming); setImportErrors(errors); setReplace(false); setProgress(0);
+    } catch (requestError) { setError(requestError instanceof Error ? requestError.message : "Unable to read the file."); }
+    finally { if (fileRef.current) fileRef.current.value = ""; }
+  }
+
+  async function runImport() {
+    if (!project || !importRows || importErrors.length) return;
+    setImporting(true); setProgress(0);
+    try {
+      await importCostCodes(project.id, importRows.map((row) => ({
+        cost_code_id: row["Cost Code ID"].trim(),
+        name: row["Cost Code Name"].trim(),
+        description: row.Description?.trim() || null,
+        ...Object.fromEntries(activeEnterprise.map((definition) => [enterpriseField(definition.attribute_number), row[enterpriseColumn(definition)]?.trim() || null])),
+        ...Object.fromEntries(activeProject.map((definition) => [projectField(definition.attribute_number), row[projectColumn(definition)]?.trim() || null])),
+        eac_method: row["EAC Method"] as EacMethod,
+        manual_eac: parseNumber(row["Manual EAC"] ?? ""),
+        baseline_timephasing_method: row["Baseline Timephasing"] as TimephasingMethod,
+        current_budget_timephasing_method: row["Current Budget Timephasing"] as TimephasingMethod,
+        ctc_timephasing_method: row["CTC Timephasing"] as TimephasingMethod,
+        is_active: parseStatus(row.Status)!,
+      } as Omit<CostCodeInput, "project_id">)), replace, setProgress);
+      setImportRows(null); showNotice("Cost codes imported."); await refresh();
+    } catch (requestError) { setImportErrors([costCodeErrorMessage(requestError)]); }
+    finally { setImporting(false); }
+  }
+
+  async function deactivateSelected() {
+    if (!selected.length) return;
+    try { await setCostCodesActive(selected, false); setSelected([]); gridApi?.deselectAll(); showNotice("Cost code status updated."); await refresh(); }
+    catch (requestError) { setError(costCodeErrorMessage(requestError)); }
+  }
+
+  async function saveView() {
+    if (!gridApi || !project || !viewName.trim()) return;
+    setError("");
+    try {
+      const saved = await saveProjectGridView(project.id, GRID_KEY, viewName, {
+        columnState: gridApi.getColumnState(),
+        filterModel: gridApi.getFilterModel() as Record<string, unknown>,
+      });
+      const next = await listProjectGridViews(project.id, GRID_KEY);
+      setViews(next);
+      setSelectedView(saved.id);
+      setShowSaveView(false);
+      setViewName("");
+      showNotice("View saved.");
+    } catch (requestError) { setError(gridViewErrorMessage(requestError)); }
+  }
+
+  function applyView(id: string) {
+    setSelectedView(id);
+    if (!gridApi) return;
+    if (id === "Default") {
+      gridApi.resetColumnState(); gridApi.setFilterModel(null); gridApi.onFilterChanged();
+      return;
+    }
+    const view = views.find((entry) => entry.id === id); if (!view) return;
+    gridApi.applyColumnState({ state: view.grid_state.columnState as ColumnState[], applyOrder: true });
+    gridApi.setFilterModel(view.grid_state.filterModel ?? null);
+    gridApi.onFilterChanged();
+  }
+
+  async function deleteView() {
+    if (selectedView === "Default") return;
+    setError("");
+    try {
+      await deleteProjectGridView(selectedView);
+      if (project) setViews(await listProjectGridViews(project.id, GRID_KEY));
+      applyView("Default");
+      showNotice("View deleted.");
+    } catch (requestError) { setError(gridViewErrorMessage(requestError)); }
+  }
+
+  const selectedViewName = selectedView === "Default" ? "" : views.find((view) => view.id === selectedView)?.view_name ?? "";
+
+  return <div className="enterprise-admin-page">
+    <div className="enterprise-page-title"><div><h2>Cost Codes</h2><p>Maintain cost codes, attributes and forecasting methods. Group, subtotal, pin and save grid layouts for recurring cost reviews.</p></div><button className="button primary" disabled={!project} onClick={() => setEditing("new")}>+ Add Cost Code</button></div>
+    <section className="enterprise-grid-card">
+      <div className="enterprise-toolbar" style={{ flexWrap: "wrap" }}>
+        <label className="enterprise-search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search cost codes or attributes…" /></label>
+        <label className="status-filter"><span>Status</span><select value={status} onChange={(event) => setStatus(event.target.value as StatusFilter)}><option value="all">All</option><option value="active">Active</option><option value="inactive">Inactive</option></select></label>
+        <label className="status-filter"><span>View</span><select value={selectedView} onChange={(event) => applyView(event.target.value)}><option value="Default">Default</option>{views.map((view) => <option key={view.id} value={view.id}>{view.view_name}</option>)}</select></label>
+        <button className="button secondary" onClick={() => { setViewName(selectedViewName); setShowSaveView(true); }}>Save View</button>
+        <button className="button secondary" disabled={selectedView === "Default"} onClick={() => void deleteView()}>Delete View</button>
+        <button className="button secondary" onClick={() => gridApi?.openToolPanel("columns")}>Columns</button>
+        <button className="button secondary" onClick={() => gridApi?.openToolPanel("columns")}>Group By</button>
+        <button className="button secondary" onClick={() => gridApi?.expandAll()}>Expand All</button>
+        <button className="button secondary" onClick={() => gridApi?.collapseAll()}>Collapse All</button>
+        <button className="button secondary" onClick={exportRows}>⇩ Export</button>
+        <button className="button secondary" onClick={() => fileRef.current?.click()}>⇧ Import</button>
+        <input ref={fileRef} hidden type="file" accept=".xlsx,.xls" onChange={(event) => void chooseImport(event.target.files?.[0])}/>
+        <button className="button secondary" onClick={() => void refresh()} disabled={loading}>↻ Refresh</button>
+        <button className="button danger" disabled={!selected.length} onClick={() => void deactivateSelected()}>Deactivate{selected.length > 1 ? ` (${selected.length})` : ""}</button>
+      </div>
+      <div className="data-message" style={{ minHeight: 48 }}><span>Drag columns into the grouping bar for multiple group levels. Group subtotals and a grand total are shown automatically for numeric value columns. Column pinning is available from the column menu.</span></div>
+      {error && <div className="data-message error"><strong>Unable to load cost codes</strong><span>{error}</span></div>}
+      {!error && loading && <div className="data-message"><span className="spinner"/>Loading cost codes…</div>}
+      {!error && !loading && <AgGridProvider modules={[AllEnterpriseModule]} licenseKey={process.env.NEXT_PUBLIC_AG_GRID_LICENSE_KEY ?? ""}>
+        <div style={{ height: 640, width: "100%" }}>
+          <AgGridReact<CostCode>
+            theme={gridTheme}
+            rowData={rows}
+            columnDefs={columnDefs}
+            defaultColDef={{ sortable: true, resizable: true, filter: true, minWidth: 110, enableRowGroup: true }}
+            quickFilterText={search}
+            rowSelection={{ mode: "multiRow" }}
+            selectionColumnDef={{ pinned: "left", width: 46, maxWidth: 46, suppressHeaderMenuButton: true }}
+            getRowId={(params) => params.data.id}
+            onGridReady={onGridReady}
+            onSelectionChanged={onSelectionChanged}
+            sideBar={{ toolPanels: ["columns", "filters"], hiddenByDefault: true, position: "right" }}
+            rowGroupPanelShow="always"
+            groupDisplayType="multipleColumns"
+            groupTotalRow="bottom"
+            grandTotalRow="pinnedBottom"
+            groupSuppressBlankHeader
+            animateRows
+          />
+        </div>
+      </AgGridProvider>}
+      <div className="grid-footer"><span>{rows.length} of {costCodes.length} cost codes · {selected.length} selected</span><span>{activeEnterprise.length} enterprise + {activeProject.length} project cost code attributes</span></div>
+    </section>
+
+    {project && editing && <CostCodeDrawer projectId={project.id} costCode={editing === "new" ? null : editing} enterpriseAttributes={activeEnterprise} projectAttributes={activeProject} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); showNotice("Cost code saved."); await refresh(); }}/>} 
+    {importRows && <ExcelImportDialog title="Import Cost Codes" rows={importRows} columns={excelColumns} errors={importErrors} replace={replace} setReplace={setReplace} importing={importing} progress={progress} onCancel={() => !importing && setImportRows(null)} onImport={() => void runImport()}/>} 
+    {showSaveView && <CenteredModal title="Save Cost Code View" onClose={() => setShowSaveView(false)}><label className="form-field"><span>View Name</span><input autoFocus maxLength={80} value={viewName} onChange={(event) => setViewName(event.target.value)} placeholder="e.g. Commercial Review"/></label><p className="muted-value" style={{ marginTop: 10 }}>This saves column visibility, order, width, sorting, grouping, pinning and filters for the Cost Codes grid in Supabase.</p><div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 18 }}><button className="button secondary" onClick={() => setShowSaveView(false)}>Cancel</button><button className="button primary" disabled={!viewName.trim()} onClick={() => void saveView()}>Save View</button></div></CenteredModal>}
+    {notice && <div className="admin-toast">{notice}</div>}
+  </div>;
+}
+
+function CostCodeDrawer({ projectId, costCode, enterpriseAttributes, projectAttributes, onClose, onSaved }: { projectId: string; costCode: CostCode | null; enterpriseAttributes: EnterpriseAttributeDefinition[]; projectAttributes: ProjectAttributeDefinition[]; onClose: () => void; onSaved: () => void }) {
+  const [form, setForm] = useState<Form>(costCode ? {
+    cost_code_id: costCode.cost_code_id,
+    name: costCode.name,
+    description: costCode.description,
+    eac_method: costCode.eac_method,
+    baseline_timephasing_method: costCode.baseline_timephasing_method,
+    current_budget_timephasing_method: costCode.current_budget_timephasing_method,
+    ctc_timephasing_method: costCode.ctc_timephasing_method,
+    manual_eac: costCode.manual_eac,
+    is_active: costCode.is_active,
+    ...Object.fromEntries(enterpriseAttributes.map((definition) => [enterpriseField(definition.attribute_number), costCode[enterpriseField(definition.attribute_number)] ?? null])),
+    ...Object.fromEntries(projectAttributes.map((definition) => [projectField(definition.attribute_number), costCode[projectField(definition.attribute_number)] ?? null])),
+  } : blankForm);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  async function save() {
+    if (!form.cost_code_id.trim() || !form.name.trim()) return setError("Cost Code ID and Cost Code Name are required.");
+    if (form.cost_code_id.trim().length > 30 || form.name.trim().length > 100) return setError("Cost Code ID max 30 characters; Cost Code Name max 100 characters.");
+    if ((form.description ?? "").length > 255) return setError("Description cannot exceed 255 characters.");
+    if (form.eac_method === "Manual" && form.manual_eac == null) return setError("Manual EAC is required when EAC Method is Manual.");
+    setSaving(true); setError("");
+    const clean = { ...form, cost_code_id: form.cost_code_id.trim(), name: form.name.trim(), description: form.description?.trim() || null, manual_eac: form.eac_method === "Manual" ? form.manual_eac : null };
+    try { if (costCode) await updateCostCode(costCode.id, clean); else await createCostCode({ project_id: projectId, ...clean }); onSaved(); }
+    catch (requestError) { setError(costCodeErrorMessage(requestError)); }
+    finally { setSaving(false); }
+  }
+
+  return <><button className="drawer-scrim" onClick={onClose}/><aside className="admin-drawer"><header><div><span>{costCode ? "Edit" : "New"}</span><h2>{costCode ? costCode.name : "Cost Code"}</h2></div><button onClick={onClose}>×</button></header><div className="drawer-body">{error && <div className="form-error">{error}</div>}
+    <div className="form-grid"><label className="form-field"><span>Cost Code ID <b>*</b><small>{form.cost_code_id.length}/30</small></span><input maxLength={30} value={form.cost_code_id} onChange={(event) => setForm({ ...form, cost_code_id: event.target.value })}/></label><label className="form-field"><span>Cost Code Name <b>*</b><small>{form.name.length}/100</small></span><input maxLength={100} value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })}/></label></div>
+    <label className="form-field" style={{ marginTop: 12 }}><span>Description <small>{(form.description ?? "").length}/255</small></span><textarea maxLength={255} value={form.description ?? ""} onChange={(event) => setForm({ ...form, description: event.target.value })}/></label>
+    {enterpriseAttributes.length > 0 && <AttributeSection title="Enterprise Cost Code Attributes" prefix="E" definitions={enterpriseAttributes} form={form} setForm={setForm}/>} 
+    {projectAttributes.length > 0 && <AttributeSection title="Project Cost Code Attributes" prefix="P" definitions={projectAttributes} form={form} setForm={setForm}/>} 
+    <div className="form-grid" style={{ marginTop: 18 }}><label className="form-field"><span>EAC Method</span><select value={form.eac_method} onChange={(event) => setForm({ ...form, eac_method: event.target.value as EacMethod })}>{EAC_METHODS.map((value) => <option key={value}>{value}</option>)}</select></label><label className="form-field"><span>Manual EAC</span><input type="number" step="0.01" disabled={form.eac_method !== "Manual"} value={form.manual_eac ?? ""} onChange={(event) => setForm({ ...form, manual_eac: event.target.value === "" ? null : Number(event.target.value) })}/></label></div>
+    <div className="form-grid" style={{ marginTop: 12 }}><label className="form-field"><span>Baseline Timephasing</span><select value={form.baseline_timephasing_method} onChange={(event) => setForm({ ...form, baseline_timephasing_method: event.target.value as TimephasingMethod })}>{BUDGET_TIMEPHASING_METHODS.map((value) => <option key={value}>{value}</option>)}</select></label><label className="form-field"><span>Current Budget Timephasing</span><select value={form.current_budget_timephasing_method} onChange={(event) => setForm({ ...form, current_budget_timephasing_method: event.target.value as TimephasingMethod })}>{BUDGET_TIMEPHASING_METHODS.map((value) => <option key={value}>{value}</option>)}</select></label></div>
+    <label className="form-field" style={{ marginTop: 12 }}><span>Cost to Complete Timephasing</span><select value={form.ctc_timephasing_method} onChange={(event) => setForm({ ...form, ctc_timephasing_method: event.target.value as TimephasingMethod })}>{CTC_TIMEPHASING_METHODS.map((value) => <option key={value}>{value}</option>)}</select></label>
+    <label className="toggle-field" style={{ marginTop: 16 }}><span><strong>Active</strong><small>Inactive cost codes remain available for historical reporting.</small></span><input type="checkbox" checked={form.is_active} onChange={(event) => setForm({ ...form, is_active: event.target.checked })}/><i/></label>
+  </div><footer><button className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={saving} onClick={() => void save()}>{saving ? "Saving…" : "Save"}</button></footer></aside></>;
+}
+
+function AttributeSection({ title, prefix, definitions, form, setForm }: { title: string; prefix: "E" | "P"; definitions: Array<EnterpriseAttributeDefinition | ProjectAttributeDefinition>; form: Form; setForm: (value: Form) => void }) {
+  return <div style={{ marginTop: 18 }}><div className="enterprise-settings-heading"><div><strong>{title}</strong><span>Only active values can be newly assigned. Existing inactive values remain visible for history.</span></div></div><div className="form-grid">{definitions.map((definition) => {
+    const field = prefix === "E" ? enterpriseField(definition.attribute_number) : projectField(definition.attribute_number);
+    const current = form[field] ?? "";
+    const currentValue = definition.attribute_values.find((value) => value.value_id.toLowerCase() === current.toLowerCase());
+    const activeValues = definition.attribute_values.filter((value) => value.is_active);
+    return <label className="form-field" key={`${prefix}-${definition.id}`}><span>{definition.name}<small>{prefix}{String(definition.attribute_number).padStart(2, "0")}</small></span><select value={current} onChange={(event) => setForm({ ...form, [field]: event.target.value || null })}><option value="">— None —</option>{currentValue && !currentValue.is_active && <option value={currentValue.value_id} disabled>{currentValue.value_name} (Inactive)</option>}{activeValues.map((value) => <option key={value.id} value={value.value_id}>{value.value_name}</option>)}</select></label>;
+  })}</div></div>;
+}
+
+function CenteredModal({ title, children, onClose }: { title: string; children: React.ReactNode; onClose: () => void }) {
+  return <div style={{ position: "fixed", inset: 0, zIndex: 1000, display: "grid", placeItems: "center", background: "rgba(15,23,42,.32)", padding: 20 }} onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><div className="enterprise-grid-card" style={{ width: "min(460px, 100%)", padding: 20, boxShadow: "0 24px 70px rgba(15,23,42,.22)" }}><div className="enterprise-settings-heading" style={{ marginBottom: 16 }}><div><strong>{title}</strong></div><button className="button secondary compact" onClick={onClose}>×</button></div>{children}</div></div>;
+}
