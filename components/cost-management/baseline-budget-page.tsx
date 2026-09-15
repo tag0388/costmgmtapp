@@ -11,8 +11,6 @@ import { listEnterpriseAttributes, EnterpriseAttributeDefinition } from "@/lib/e
 import { listProjectAttributes, ProjectAttributeDefinition } from "@/lib/project-scope-attributes";
 import { CostCode, listCostCodes } from "@/lib/cost-codes";
 import {
-  BASELINE_ENTERPRISE_ATTRIBUTE_FIELDS,
-  BASELINE_PROJECT_ATTRIBUTE_FIELDS,
   BaselineAttributeField,
   BaselineDetail,
   baselineBudgetErrorMessage,
@@ -22,25 +20,20 @@ import {
 import { getProjectByPublicId, Project } from "@/lib/projects";
 
 const gridTheme = themeQuartz.withParams({ spacing: 7, rowHeight: 38, headerHeight: 42 });
-const SLOTS = Array.from({ length: 20 }, (_, index) => index + 1);
 
-type GridRow = BaselineDetail & {
-  cost_code_ref: string;
-  cost_code_name: string;
+type GridRow = BaselineDetail & { cost_code_ref: string };
+type ActiveAttribute = {
+  prefix: "E" | "P";
+  field: BaselineAttributeField;
+  definition: EnterpriseAttributeDefinition | ProjectAttributeDefinition;
+  columnName: string;
 };
 
 function eField(slot: number) { return `e_attribute_${String(slot).padStart(2, "0")}` as BaselineAttributeField; }
 function pField(slot: number) { return `p_attribute_${String(slot).padStart(2, "0")}` as BaselineAttributeField; }
-function slotLabel(prefix: "E" | "P", slot: number, definition?: EnterpriseAttributeDefinition | ProjectAttributeDefinition) {
-  const code = `${prefix}${String(slot).padStart(2, "0")}`;
-  return definition ? `${code} - ${definition.name}` : code;
-}
-function definitionBySlot<T extends EnterpriseAttributeDefinition | ProjectAttributeDefinition>(definitions: T[]) {
-  return new Map(definitions.map((definition) => [definition.attribute_number, definition]));
-}
-function valueName(definition: EnterpriseAttributeDefinition | ProjectAttributeDefinition | undefined, valueId: string | null | undefined) {
+function valueName(definition: EnterpriseAttributeDefinition | ProjectAttributeDefinition, valueId: string | null | undefined) {
   if (!valueId) return "";
-  return definition?.attribute_values.find((value) => value.value_id.toLowerCase() === valueId.toLowerCase())?.value_name ?? valueId;
+  return definition.attribute_values.find((value) => value.value_id.toLowerCase() === valueId.toLowerCase())?.value_name ?? valueId;
 }
 function parseNumber(value: string) {
   if (!value.trim()) return null;
@@ -54,6 +47,26 @@ function exactColumns(rows: ExcelRow[], columns: string[]) {
   if (!rows.length) return true;
   const actual = Object.keys(rows[0]);
   return actual.length === columns.length && columns.every((column, index) => actual[index] === column);
+}
+function buildActiveAttributes(
+  enterprise: EnterpriseAttributeDefinition[],
+  project: ProjectAttributeDefinition[],
+): ActiveAttribute[] {
+  const active = [
+    ...enterprise.filter((definition) => definition.is_active).map((definition) => ({ prefix: "E" as const, field: eField(definition.attribute_number), definition })),
+    ...project.filter((definition) => definition.is_active).map((definition) => ({ prefix: "P" as const, field: pField(definition.attribute_number), definition })),
+  ].sort((a, b) => a.prefix.localeCompare(b.prefix) || a.definition.attribute_number - b.definition.attribute_number);
+
+  const counts = new Map<string, number>();
+  active.forEach((attribute) => counts.set(attribute.definition.name.trim().toLowerCase(), (counts.get(attribute.definition.name.trim().toLowerCase()) ?? 0) + 1));
+  return active.map((attribute) => {
+    const name = attribute.definition.name.trim();
+    const duplicate = (counts.get(name.toLowerCase()) ?? 0) > 1;
+    return {
+      ...attribute,
+      columnName: duplicate ? `${name} (${attribute.prefix}${String(attribute.definition.attribute_number).padStart(2, "0")})` : name,
+    };
+  });
 }
 
 export default function BaselineBudgetPage({ projectPublicId }: { projectPublicId: string }) {
@@ -100,42 +113,37 @@ export default function BaselineBudgetPage({ projectPublicId }: { projectPublicI
 
   useEffect(() => { void refresh(); }, [refresh]);
 
-  const enterpriseBySlot = useMemo(() => definitionBySlot(enterpriseAttributes), [enterpriseAttributes]);
-  const projectBySlot = useMemo(() => definitionBySlot(projectAttributes), [projectAttributes]);
+  const activeAttributes = useMemo(() => buildActiveAttributes(enterpriseAttributes, projectAttributes), [enterpriseAttributes, projectAttributes]);
   const codeById = useMemo(() => new Map(costCodes.map((code) => [code.id, code])), [costCodes]);
   const codeByRef = useMemo(() => new Map(costCodes.map((code) => [code.cost_code_id.toLowerCase(), code])), [costCodes]);
 
   const rows = useMemo<GridRow[]>(() => details.map((detail) => {
     const code = codeById.get(detail.cost_code_id);
-    return { ...detail, cost_code_ref: code?.cost_code_id ?? "", cost_code_name: code?.name ?? "" };
+    return { ...detail, cost_code_ref: code?.cost_code_id ?? "" };
   }), [details, codeById]);
 
   const excelColumns = useMemo(() => [
-    "Cost Code ID", "Cost Code Name", "Item No", "Item Description", "Qty", "Unit", "Rate", "Total",
-    ...SLOTS.map((slot) => slotLabel("E", slot, enterpriseBySlot.get(slot))),
-    ...SLOTS.map((slot) => slotLabel("P", slot, projectBySlot.get(slot))),
-  ], [enterpriseBySlot, projectBySlot]);
+    "Cost Code ID", "Item No", "Item Description", "Qty", "Unit", "Rate", "Total",
+    ...activeAttributes.map((attribute) => attribute.columnName),
+  ], [activeAttributes]);
 
   const columnDefs = useMemo<ColDef<GridRow>[]>(() => [
     { field: "cost_code_ref", headerName: "Cost Code ID", pinned: "left", minWidth: 145, filter: true },
-    { field: "cost_code_name", headerName: "Cost Code Name", pinned: "left", minWidth: 220, filter: true },
     { field: "item_no", headerName: "Item No", minWidth: 120, filter: true },
     { field: "item_description", headerName: "Item Description", minWidth: 260, filter: true },
     { field: "qty", headerName: "Qty", minWidth: 110, type: "numericColumn", valueFormatter: (params) => params.value == null ? "" : String(params.value) },
     { field: "unit", headerName: "Unit", minWidth: 100, filter: true },
     { field: "rate", headerName: "Rate", minWidth: 120, type: "numericColumn", valueFormatter: (params) => money(params.value as number | null) },
     { field: "total", headerName: "Total", minWidth: 135, type: "numericColumn", aggFunc: "sum", enableValue: true, valueFormatter: (params) => money(params.value as number | null) },
-    ...SLOTS.map((slot): ColDef<GridRow> => {
-      const definition = enterpriseBySlot.get(slot);
-      const field = eField(slot);
-      return { colId: field, headerName: slotLabel("E", slot, definition), minWidth: 150, valueGetter: (params) => valueName(definition, params.data?.[field]), filter: "agSetColumnFilter" };
-    }),
-    ...SLOTS.map((slot): ColDef<GridRow> => {
-      const definition = projectBySlot.get(slot);
-      const field = pField(slot);
-      return { colId: field, headerName: slotLabel("P", slot, definition), minWidth: 150, valueGetter: (params) => valueName(definition, params.data?.[field]), filter: "agSetColumnFilter" };
-    }),
-  ], [enterpriseBySlot, projectBySlot]);
+    ...activeAttributes.map((attribute): ColDef<GridRow> => ({
+      colId: attribute.field,
+      headerName: attribute.columnName,
+      headerTooltip: `${attribute.prefix}${String(attribute.definition.attribute_number).padStart(2, "0")} · ${attribute.definition.name}`,
+      minWidth: 150,
+      valueGetter: (params) => valueName(attribute.definition, params.data?.[attribute.field]),
+      filter: "agSetColumnFilter",
+    })),
+  ], [activeAttributes]);
 
   const totalBaseline = useMemo(() => details.reduce((sum, row) => sum + Number(row.total ?? 0), 0), [details]);
 
@@ -148,15 +156,13 @@ export default function BaselineBudgetPage({ projectPublicId }: { projectPublicI
     if (!project) return;
     const data = rows.map((row) => ({
       "Cost Code ID": row.cost_code_ref,
-      "Cost Code Name": row.cost_code_name,
       "Item No": row.item_no,
       "Item Description": row.item_description,
       Qty: row.qty == null ? "" : String(row.qty),
       Unit: row.unit ?? "",
       Rate: row.rate == null ? "" : String(row.rate),
       Total: row.total == null ? "" : String(row.total),
-      ...Object.fromEntries(SLOTS.map((slot) => [slotLabel("E", slot, enterpriseBySlot.get(slot)), row[eField(slot)] ?? ""])),
-      ...Object.fromEntries(SLOTS.map((slot) => [slotLabel("P", slot, projectBySlot.get(slot)), row[pField(slot)] ?? ""])),
+      ...Object.fromEntries(activeAttributes.map((attribute) => [attribute.columnName, row[attribute.field] ?? ""])),
     }));
     exportExcel(`${project.project_code}-baseline-budget`, "Baseline Budget", data.length ? data : [Object.fromEntries(excelColumns.map((column) => [column, ""]))]);
   }
@@ -195,21 +201,11 @@ export default function BaselineBudgetPage({ projectPublicId }: { projectPublicI
           if (keys.has(key)) errors.push(`Row ${line}: duplicate Item No “${itemNo}” for Cost Code ${codeRef}.`);
           keys.add(key);
         }
-        SLOTS.forEach((slot) => {
-          const definition = enterpriseBySlot.get(slot);
-          const column = slotLabel("E", slot, definition);
-          const valueId = (row[column] ?? "").trim();
+        activeAttributes.forEach((attribute) => {
+          const valueId = (row[attribute.columnName] ?? "").trim();
           if (!valueId) return;
-          if (valueId.length > 50) errors.push(`Row ${line}: ${column} is longer than 50 characters.`);
-          if (!definition || !definition.is_active || !definition.attribute_values.some((value) => value.is_active && value.value_id.toLowerCase() === valueId.toLowerCase())) errors.push(`Row ${line}: ${column} must contain an active Value ID.`);
-        });
-        SLOTS.forEach((slot) => {
-          const definition = projectBySlot.get(slot);
-          const column = slotLabel("P", slot, definition);
-          const valueId = (row[column] ?? "").trim();
-          if (!valueId) return;
-          if (valueId.length > 50) errors.push(`Row ${line}: ${column} is longer than 50 characters.`);
-          if (!definition || !definition.is_active || !definition.attribute_values.some((value) => value.is_active && value.value_id.toLowerCase() === valueId.toLowerCase())) errors.push(`Row ${line}: ${column} must contain an active Value ID.`);
+          if (valueId.length > 50) errors.push(`Row ${line}: ${attribute.columnName} is longer than 50 characters.`);
+          if (!attribute.definition.attribute_values.some((value) => value.is_active && value.value_id.toLowerCase() === valueId.toLowerCase())) errors.push(`Row ${line}: ${attribute.columnName} must contain an active Value ID.`);
         });
       });
       setImportRows(incoming); setImportErrors(errors); setReplace(false); setProgress(0);
@@ -226,6 +222,7 @@ export default function BaselineBudgetPage({ projectPublicId }: { projectPublicI
         const code = codeByRef.get(row["Cost Code ID"].trim().toLowerCase())!;
         const qty = parseNumber(row.Qty ?? "");
         const rate = parseNumber(row.Rate ?? "");
+        const attributes = Object.fromEntries(activeAttributes.map((attribute) => [attribute.field, row[attribute.columnName]?.trim() || null]));
         return {
           cost_code_id: code.id,
           item_no: row["Item No"].trim(),
@@ -234,8 +231,7 @@ export default function BaselineBudgetPage({ projectPublicId }: { projectPublicI
           unit: row.Unit?.trim() || null,
           rate,
           total: Number(((qty ?? 0) * (rate ?? 0)).toFixed(2)),
-          ...Object.fromEntries(SLOTS.map((slot) => [BASELINE_ENTERPRISE_ATTRIBUTE_FIELDS[slot - 1], row[slotLabel("E", slot, enterpriseBySlot.get(slot))]?.trim() || null])),
-          ...Object.fromEntries(SLOTS.map((slot) => [BASELINE_PROJECT_ATTRIBUTE_FIELDS[slot - 1], row[slotLabel("P", slot, projectBySlot.get(slot))]?.trim() || null])),
+          ...attributes,
         };
       });
       await importBaselineDetails(project.id, mapped, replace, setProgress);
@@ -259,7 +255,7 @@ export default function BaselineBudgetPage({ projectPublicId }: { projectPublicI
         <button className="button secondary" disabled={loading || importing} onClick={() => void refresh()}>↻ Refresh</button>
       </div>
 
-      <div className="data-message" style={{ minHeight: 48 }}><span>Cost Code Name is looked up from Cost Code ID. Attribute columns use Value IDs in Import/Export; the grid displays Value Names where configured.</span></div>
+      <div className="data-message" style={{ minHeight: 48 }}><span>Only configured active Line Item attributes are shown. Excel uses the attribute names as column headers and Value IDs in the cells.</span></div>
       {error && <div className="data-message error"><strong>Unable to load Baseline Budget</strong><span>{error}</span></div>}
       {!error && loading && <div className="data-message"><span className="spinner"/>Loading Baseline Budget…</div>}
       {!error && !loading && <AgGridProvider modules={[AllEnterpriseModule]} licenseKey={process.env.NEXT_PUBLIC_AG_GRID_LICENSE_KEY ?? ""}>
@@ -276,7 +272,7 @@ export default function BaselineBudgetPage({ projectPublicId }: { projectPublicI
           />
         </div>
       </AgGridProvider>}
-      <div className="grid-footer"><span>{details.length} baseline detail rows · {costCodes.length} Cost Codes</span><span>Baseline Budget total: {money(totalBaseline)}</span></div>
+      <div className="grid-footer"><span>{details.length} baseline detail rows · {costCodes.length} Cost Codes · {activeAttributes.length} active Line Item attributes</span><span>Baseline Budget total: {money(totalBaseline)}</span></div>
     </section>
 
     {importRows && <ExcelImportDialog title="Import Baseline Budget" rows={importRows} columns={excelColumns} errors={importErrors} replace={replace} setReplace={setReplace} importing={importing} progress={progress} onCancel={() => !importing && setImportRows(null)} onImport={() => void runImport()}/>} 
