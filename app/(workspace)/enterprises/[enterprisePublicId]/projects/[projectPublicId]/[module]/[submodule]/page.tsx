@@ -4,7 +4,7 @@ import "@/app/enterprise-project-attributes.css";
 import ProjectGeneralInfoPage from "@/components/project-admin/project-general-info-page";
 import ProjectCalendarsPage from "@/components/project-admin/project-calendars-page";
 import ProjectLineItemAttributesPage from "@/components/project-admin/project-line-item-attributes-page";
-import CostCodesAgGridPage from "@/components/cost-management/cost-codes-ag-grid-page-v2";
+import CostCodesAgGridPage from "@/components/cost-management/cost-codes-ag-grid-page";
 import CostReportingPeriodsPage from "@/components/cost-management/cost-reporting-periods-page";
 import ProjectCostCodeAttributesPage from "@/components/cost-management/project-cost-code-attributes-page";
 import { notFound } from "next/navigation";
