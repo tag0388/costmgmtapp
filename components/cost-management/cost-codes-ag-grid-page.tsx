@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState, useEffect } from "react";
 import { AgGridProvider, AgGridReact } from "ag-grid-react";
 import type { ColDef, ColumnState, GridApi, GridReadyEvent, SelectionChangedEvent } from "ag-grid-community";
 import { themeQuartz } from "ag-grid-community";
@@ -12,7 +12,9 @@ import { deleteProjectGridView, gridViewErrorMessage, listProjectGridViews, Proj
 import { listProjectAttributes, ProjectAttributeDefinition } from "@/lib/project-scope-attributes";
 import { getProjectByPublicId, Project } from "@/lib/projects";
 import {
+  bulkUpdateCostCodeAttributes,
   CostCode,
+  CostCodeAttributePatch,
   CostCodeInput,
   costCodeErrorMessage,
   createCostCode,
@@ -30,8 +32,17 @@ const EAC_METHODS: EacMethod[] = ["Manual", "Change Management", "Subcontract", 
 const BUDGET_TIMEPHASING_METHODS: TimephasingMethod[] = ["Manual", "Dates"];
 const CTC_TIMEPHASING_METHODS: TimephasingMethod[] = ["Manual", "Dates", "Cost Details"];
 const GRID_KEY = "cost-codes";
+const KEEP = "__keep__";
+const CLEAR = "__clear__";
 type StatusFilter = "all" | "active" | "inactive";
 type Form = Omit<CostCodeInput, "project_id">;
+type AttributeDefinition = EnterpriseAttributeDefinition | ProjectAttributeDefinition;
+
+type BulkAttributeChoice = {
+  field: EnterpriseCostCodeAttributeField | ProjectCostCodeAttributeField;
+  prefix: "E" | "P";
+  definition: AttributeDefinition;
+};
 
 const blankForm: Form = {
   cost_code_id: "",
@@ -57,7 +68,7 @@ function projectColumn(definition: ProjectAttributeDefinition) {
 function enterpriseColumn(definition: EnterpriseAttributeDefinition) {
   return `E${String(definition.attribute_number).padStart(2, "0")} - ${definition.name}`;
 }
-function valueName(definition: ProjectAttributeDefinition | EnterpriseAttributeDefinition, valueId: string | null | undefined) {
+function valueName(definition: AttributeDefinition, valueId: string | null | undefined) {
   if (!valueId) return "";
   return definition.attribute_values.find((value) => value.value_id.toLowerCase() === valueId.toLowerCase())?.value_name ?? valueId;
 }
@@ -76,11 +87,7 @@ function exactColumns(rows: ExcelRow[], columns: string[]) {
   return actual.length === columns.length && columns.every((column, index) => actual[index] === column);
 }
 
-const gridTheme = themeQuartz.withParams({
-  spacing: 7,
-  rowHeight: 38,
-  headerHeight: 42,
-});
+const gridTheme = themeQuartz.withParams({ spacing: 7, rowHeight: 38, headerHeight: 42 });
 
 export default function CostCodesAgGridPage({ projectPublicId }: { projectPublicId: string }) {
   const fileRef = useRef<HTMLInputElement>(null);
@@ -96,6 +103,7 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
   const [status, setStatus] = useState<StatusFilter>("all");
   const [selected, setSelected] = useState<string[]>([]);
   const [editing, setEditing] = useState<CostCode | "new" | null>(null);
+  const [bulkOpen, setBulkOpen] = useState(false);
   const [importRows, setImportRows] = useState<ExcelRow[] | null>(null);
   const [importErrors, setImportErrors] = useState<string[]>([]);
   const [replace, setReplace] = useState(false);
@@ -105,9 +113,10 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
   const [selectedView, setSelectedView] = useState("Default");
   const [showSaveView, setShowSaveView] = useState(false);
   const [viewName, setViewName] = useState("");
+  const [hasGroups, setHasGroups] = useState(false);
 
-  const activeEnterprise = useMemo(() => enterpriseAttributes.filter((definition) => definition.is_active).sort((a, b) => a.attribute_number - b.attribute_number), [enterpriseAttributes]);
-  const activeProject = useMemo(() => projectAttributes.filter((definition) => definition.is_active).sort((a, b) => a.attribute_number - b.attribute_number), [projectAttributes]);
+  const activeEnterprise = useMemo(() => enterpriseAttributes.filter((d) => d.is_active).sort((a, b) => a.attribute_number - b.attribute_number), [enterpriseAttributes]);
+  const activeProject = useMemo(() => projectAttributes.filter((d) => d.is_active).sort((a, b) => a.attribute_number - b.attribute_number), [projectAttributes]);
 
   const refresh = useCallback(async () => {
     setLoading(true); setError("");
@@ -142,27 +151,11 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
   const columnDefs = useMemo<ColDef<CostCode>[]>(() => {
     const enterpriseDefs: ColDef<CostCode>[] = activeEnterprise.map((definition) => {
       const field = enterpriseField(definition.attribute_number);
-      return {
-        colId: field,
-        headerName: definition.name,
-        headerTooltip: `Enterprise Cost Code Attribute E${String(definition.attribute_number).padStart(2, "0")}`,
-        valueGetter: (params) => valueName(definition, params.data?.[field]),
-        minWidth: 150,
-        enableRowGroup: true,
-        filter: "agSetColumnFilter",
-      };
+      return { colId: field, headerName: definition.name, headerTooltip: `Enterprise Cost Code Attribute E${String(definition.attribute_number).padStart(2, "0")}`, valueGetter: (params) => valueName(definition, params.data?.[field]), minWidth: 150, enableRowGroup: true, filter: "agSetColumnFilter" };
     });
     const projectDefs: ColDef<CostCode>[] = activeProject.map((definition) => {
       const field = projectField(definition.attribute_number);
-      return {
-        colId: field,
-        headerName: definition.name,
-        headerTooltip: `Project Cost Code Attribute P${String(definition.attribute_number).padStart(2, "0")}`,
-        valueGetter: (params) => valueName(definition, params.data?.[field]),
-        minWidth: 150,
-        enableRowGroup: true,
-        filter: "agSetColumnFilter",
-      };
+      return { colId: field, headerName: definition.name, headerTooltip: `Project Cost Code Attribute P${String(definition.attribute_number).padStart(2, "0")}`, valueGetter: (params) => valueName(definition, params.data?.[field]), minWidth: 150, enableRowGroup: true, filter: "agSetColumnFilter" };
     });
     return [
       { field: "cost_code_id", headerName: "Cost Code ID", pinned: "left", minWidth: 145, enableRowGroup: true, filter: true },
@@ -176,10 +169,7 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
       { field: "current_budget_timephasing_method", headerName: "Current Budget", minWidth: 160, enableRowGroup: true, filter: "agSetColumnFilter" },
       { field: "ctc_timephasing_method", headerName: "CTC Timephasing", minWidth: 160, enableRowGroup: true, filter: "agSetColumnFilter" },
       { field: "is_active", headerName: "Status", minWidth: 105, enableRowGroup: true, filter: "agSetColumnFilter", valueFormatter: (params) => params.value ? "Active" : "Inactive" },
-      {
-        colId: "actions", headerName: "Actions", pinned: "right", sortable: false, filter: false, suppressHeaderMenuButton: true, minWidth: 110, maxWidth: 110,
-        cellRenderer: (params: { data?: CostCode }) => params.data ? <button className="button secondary compact" onClick={() => setEditing(params.data!)}>✎ Edit</button> : null,
-      },
+      { colId: "actions", headerName: "Actions", pinned: "right", sortable: false, filter: false, suppressHeaderMenuButton: true, minWidth: 110, maxWidth: 110, cellRenderer: (params: { data?: CostCode }) => params.data ? <button className="button secondary compact" onClick={() => setEditing(params.data!)}>✎ Edit</button> : null },
     ];
   }, [activeEnterprise, activeProject]);
 
@@ -191,8 +181,10 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
   ], [activeEnterprise, activeProject]);
 
   function showNotice(message: string) { setNotice(message); window.setTimeout(() => setNotice(""), 3500); }
-  function onGridReady(event: GridReadyEvent<CostCode>) { setGridApi(event.api); }
+  function syncGroupState(api: GridApi<CostCode> | null = gridApi) { setHasGroups((api?.getRowGroupColumns().length ?? 0) > 0); }
+  function onGridReady(event: GridReadyEvent<CostCode>) { setGridApi(event.api); syncGroupState(event.api); }
   function onSelectionChanged(event: SelectionChangedEvent<CostCode>) { setSelected(event.api.getSelectedRows().map((row) => row.id)); }
+  function openToolPanel(id: "columns" | "grouping") { gridApi?.openToolPanel(id); }
 
   function exportRows() {
     if (!project) return;
@@ -235,7 +227,9 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
         if (!name) errors.push(`Row ${line}: Cost Code Name is required.`);
         if (name.length > 100) errors.push(`Row ${line}: Cost Code Name is longer than 100 characters.`);
         if (description.length > 255) errors.push(`Row ${line}: Description is longer than 255 characters.`);
-        const key = id.toLowerCase(); if (key && ids.has(key)) errors.push(`Row ${line}: duplicate Cost Code ID “${id}”.`); if (key) ids.add(key);
+        const key = id.toLowerCase();
+        if (key && ids.has(key)) errors.push(`Row ${line}: duplicate Cost Code ID “${id}”.`);
+        if (key) ids.add(key);
         if (!EAC_METHODS.includes(eac as EacMethod)) errors.push(`Row ${line}: EAC Method is invalid.`);
         if (!BUDGET_TIMEPHASING_METHODS.includes(baseline as TimephasingMethod)) errors.push(`Row ${line}: Baseline Timephasing must be Manual or Dates.`);
         if (!BUDGET_TIMEPHASING_METHODS.includes(current as TimephasingMethod)) errors.push(`Row ${line}: Current Budget Timephasing must be Manual or Dates.`);
@@ -288,16 +282,9 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
     if (!gridApi || !project || !viewName.trim()) return;
     setError("");
     try {
-      const saved = await saveProjectGridView(project.id, GRID_KEY, viewName, {
-        columnState: gridApi.getColumnState(),
-        filterModel: gridApi.getFilterModel() as Record<string, unknown>,
-      });
-      const next = await listProjectGridViews(project.id, GRID_KEY);
-      setViews(next);
-      setSelectedView(saved.id);
-      setShowSaveView(false);
-      setViewName("");
-      showNotice("View saved.");
+      const saved = await saveProjectGridView(project.id, GRID_KEY, viewName, { columnState: gridApi.getColumnState(), filterModel: gridApi.getFilterModel() as Record<string, unknown> });
+      setViews(await listProjectGridViews(project.id, GRID_KEY));
+      setSelectedView(saved.id); setShowSaveView(false); setViewName(""); showNotice("View saved.");
     } catch (requestError) { setError(gridViewErrorMessage(requestError)); }
   }
 
@@ -305,13 +292,11 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
     setSelectedView(id);
     if (!gridApi) return;
     if (id === "Default") {
-      gridApi.resetColumnState(); gridApi.setFilterModel(null); gridApi.onFilterChanged();
-      return;
+      gridApi.resetColumnState(); gridApi.setFilterModel(null); gridApi.onFilterChanged(); syncGroupState(gridApi); return;
     }
     const view = views.find((entry) => entry.id === id); if (!view) return;
     gridApi.applyColumnState({ state: view.grid_state.columnState as ColumnState[], applyOrder: true });
-    gridApi.setFilterModel(view.grid_state.filterModel ?? null);
-    gridApi.onFilterChanged();
+    gridApi.setFilterModel(view.grid_state.filterModel ?? null); gridApi.onFilterChanged(); syncGroupState(gridApi);
   }
 
   async function deleteView() {
@@ -320,8 +305,7 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
     try {
       await deleteProjectGridView(selectedView);
       if (project) setViews(await listProjectGridViews(project.id, GRID_KEY));
-      applyView("Default");
-      showNotice("View deleted.");
+      applyView("Default"); showNotice("View deleted.");
     } catch (requestError) { setError(gridViewErrorMessage(requestError)); }
   }
 
@@ -336,17 +320,18 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
         <label className="status-filter"><span>View</span><select value={selectedView} onChange={(event) => applyView(event.target.value)}><option value="Default">Default</option>{views.map((view) => <option key={view.id} value={view.id}>{view.view_name}</option>)}</select></label>
         <button className="button secondary" onClick={() => { setViewName(selectedViewName); setShowSaveView(true); }}>Save View</button>
         <button className="button secondary" disabled={selectedView === "Default"} onClick={() => void deleteView()}>Delete View</button>
-        <button className="button secondary" onClick={() => gridApi?.openToolPanel("columns")}>Columns</button>
-        <button className="button secondary" onClick={() => gridApi?.openToolPanel("columns")}>Group By</button>
-        <button className="button secondary" onClick={() => gridApi?.expandAll()}>Expand All</button>
-        <button className="button secondary" onClick={() => gridApi?.collapseAll()}>Collapse All</button>
+        <button className="button secondary" disabled={!selected.length} onClick={() => setBulkOpen(true)}>Bulk Edit{selected.length ? ` (${selected.length})` : ""}</button>
+        <button className="button secondary" onClick={() => openToolPanel("columns")}>Columns</button>
+        <button className="button secondary" onClick={() => openToolPanel("grouping")}>Group By</button>
+        <button className="button secondary" disabled={!hasGroups} title={hasGroups ? "Expand all grouped rows" : "Add a Group By field first"} onClick={() => gridApi?.expandAll()}>Expand All</button>
+        <button className="button secondary" disabled={!hasGroups} title={hasGroups ? "Collapse all grouped rows" : "Add a Group By field first"} onClick={() => gridApi?.collapseAll()}>Collapse All</button>
         <button className="button secondary" onClick={exportRows}>⇩ Export</button>
         <button className="button secondary" onClick={() => fileRef.current?.click()}>⇧ Import</button>
         <input ref={fileRef} hidden type="file" accept=".xlsx,.xls" onChange={(event) => void chooseImport(event.target.files?.[0])}/>
         <button className="button secondary" onClick={() => void refresh()} disabled={loading}>↻ Refresh</button>
         <button className="button danger" disabled={!selected.length} onClick={() => void deactivateSelected()}>Deactivate{selected.length > 1 ? ` (${selected.length})` : ""}</button>
       </div>
-      <div className="data-message" style={{ minHeight: 48 }}><span>Drag columns into the grouping bar for multiple group levels. Group subtotals and a grand total are shown automatically for numeric value columns. Column pinning is available from the column menu.</span></div>
+      <div className="data-message" style={{ minHeight: 48 }}><span>Use Columns to show, hide, reorder or pin fields. Use Group By to build multiple grouping levels. Expand/Collapse becomes available after at least one group is added.</span></div>
       {error && <div className="data-message error"><strong>Unable to load cost codes</strong><span>{error}</span></div>}
       {!error && loading && <div className="data-message"><span className="spinner"/>Loading cost codes…</div>}
       {!error && !loading && <AgGridProvider modules={[AllEnterpriseModule]} licenseKey={process.env.NEXT_PUBLIC_AG_GRID_LICENSE_KEY ?? ""}>
@@ -362,7 +347,16 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
             getRowId={(params) => params.data.id}
             onGridReady={onGridReady}
             onSelectionChanged={onSelectionChanged}
-            sideBar={{ toolPanels: ["columns", "filters"], hiddenByDefault: true, position: "right" }}
+            onColumnRowGroupChanged={(event) => syncGroupState(event.api)}
+            sideBar={{
+              toolPanels: [
+                { id: "columns", labelDefault: "Columns", labelKey: "columns", iconKey: "columns", toolPanel: "agColumnsToolPanel", toolPanelParams: { suppressRowGroups: true, suppressValues: true, suppressPivots: true, suppressPivotMode: true } },
+                { id: "grouping", labelDefault: "Group By", labelKey: "grouping", iconKey: "columns", toolPanel: "agColumnsToolPanel", toolPanelParams: { suppressValues: true, suppressPivots: true, suppressPivotMode: true } },
+                "filters",
+              ],
+              hiddenByDefault: true,
+              position: "right",
+            }}
             rowGroupPanelShow="always"
             groupDisplayType="multipleColumns"
             groupTotalRow="bottom"
@@ -376,10 +370,53 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
     </section>
 
     {project && editing && <CostCodeDrawer projectId={project.id} costCode={editing === "new" ? null : editing} enterpriseAttributes={activeEnterprise} projectAttributes={activeProject} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); showNotice("Cost code saved."); await refresh(); }}/>} 
+    {bulkOpen && <BulkAttributeModal selectedIds={selected} enterpriseAttributes={activeEnterprise} projectAttributes={activeProject} onClose={() => setBulkOpen(false)} onSaved={async () => { setBulkOpen(false); setSelected([]); gridApi?.deselectAll(); showNotice("Selected cost code attributes updated."); await refresh(); }}/>} 
     {importRows && <ExcelImportDialog title="Import Cost Codes" rows={importRows} columns={excelColumns} errors={importErrors} replace={replace} setReplace={setReplace} importing={importing} progress={progress} onCancel={() => !importing && setImportRows(null)} onImport={() => void runImport()}/>} 
     {showSaveView && <CenteredModal title="Save Cost Code View" onClose={() => setShowSaveView(false)}><label className="form-field"><span>View Name</span><input autoFocus maxLength={80} value={viewName} onChange={(event) => setViewName(event.target.value)} placeholder="e.g. Commercial Review"/></label><p className="muted-value" style={{ marginTop: 10 }}>This saves column visibility, order, width, sorting, grouping, pinning and filters for the Cost Codes grid in Supabase.</p><div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 18 }}><button className="button secondary" onClick={() => setShowSaveView(false)}>Cancel</button><button className="button primary" disabled={!viewName.trim()} onClick={() => void saveView()}>Save View</button></div></CenteredModal>}
     {notice && <div className="admin-toast">{notice}</div>}
   </div>;
+}
+
+function BulkAttributeModal({ selectedIds, enterpriseAttributes, projectAttributes, onClose, onSaved }: { selectedIds: string[]; enterpriseAttributes: EnterpriseAttributeDefinition[]; projectAttributes: ProjectAttributeDefinition[]; onClose: () => void; onSaved: () => void }) {
+  const choices = useMemo<BulkAttributeChoice[]>(() => [
+    ...enterpriseAttributes.map((definition) => ({ field: enterpriseField(definition.attribute_number), prefix: "E" as const, definition })),
+    ...projectAttributes.map((definition) => ({ field: projectField(definition.attribute_number), prefix: "P" as const, definition })),
+  ], [enterpriseAttributes, projectAttributes]);
+  const [values, setValues] = useState<Record<string, string>>(() => Object.fromEntries(choices.map((choice) => [choice.field, KEEP])));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const changedCount = choices.filter((choice) => (values[choice.field] ?? KEEP) !== KEEP).length;
+
+  async function apply() {
+    const patch: CostCodeAttributePatch = {};
+    choices.forEach((choice) => {
+      const value = values[choice.field] ?? KEEP;
+      if (value === KEEP) return;
+      patch[choice.field] = value === CLEAR ? null : value;
+    });
+    if (!Object.keys(patch).length) return setError("Choose at least one attribute to change.");
+    setSaving(true); setError("");
+    try { await bulkUpdateCostCodeAttributes(selectedIds, patch); onSaved(); }
+    catch (requestError) { setError(costCodeErrorMessage(requestError)); }
+    finally { setSaving(false); }
+  }
+
+  return <CenteredModal title={`Bulk Edit Attributes · ${selectedIds.length} Cost Codes`} onClose={onClose} wide>
+    <p className="muted-value" style={{ marginTop: 0 }}>Only attributes you change below will be updated. All fields left as “Leave unchanged” keep their current values.</p>
+    {error && <div className="form-error" style={{ marginTop: 12 }}>{error}</div>}
+    <div style={{ maxHeight: "58vh", overflow: "auto", marginTop: 16, paddingRight: 4 }}>
+      {choices.length === 0 && <div className="data-message">No active Cost Code attributes are configured.</div>}
+      {choices.map(({ field, prefix, definition }) => <label className="form-field" key={field} style={{ marginBottom: 10 }}>
+        <span>{definition.name}<small>{prefix}{String(definition.attribute_number).padStart(2, "0")}</small></span>
+        <select value={values[field] ?? KEEP} onChange={(event) => setValues((current) => ({ ...current, [field]: event.target.value }))}>
+          <option value={KEEP}>— Leave unchanged —</option>
+          <option value={CLEAR}>— Clear value —</option>
+          {definition.attribute_values.filter((value) => value.is_active).map((value) => <option key={value.id} value={value.value_id}>{value.value_name}</option>)}
+        </select>
+      </label>)}
+    </div>
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginTop: 18 }}><span className="muted-value">{changedCount} attribute{changedCount === 1 ? "" : "s"} will change</span><div style={{ display: "flex", gap: 8 }}><button className="button secondary" disabled={saving} onClick={onClose}>Cancel</button><button className="button primary" disabled={saving || !changedCount} onClick={() => void apply()}>{saving ? "Applying…" : `Apply to ${selectedIds.length}`}</button></div></div>
+  </CenteredModal>;
 }
 
 function CostCodeDrawer({ projectId, costCode, enterpriseAttributes, projectAttributes, onClose, onSaved }: { projectId: string; costCode: CostCode | null; enterpriseAttributes: EnterpriseAttributeDefinition[]; projectAttributes: ProjectAttributeDefinition[]; onClose: () => void; onSaved: () => void }) {
@@ -423,7 +460,7 @@ function CostCodeDrawer({ projectId, costCode, enterpriseAttributes, projectAttr
   </div><footer><button className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={saving} onClick={() => void save()}>{saving ? "Saving…" : "Save"}</button></footer></aside></>;
 }
 
-function AttributeSection({ title, prefix, definitions, form, setForm }: { title: string; prefix: "E" | "P"; definitions: Array<EnterpriseAttributeDefinition | ProjectAttributeDefinition>; form: Form; setForm: (value: Form) => void }) {
+function AttributeSection({ title, prefix, definitions, form, setForm }: { title: string; prefix: "E" | "P"; definitions: AttributeDefinition[]; form: Form; setForm: (value: Form) => void }) {
   return <div style={{ marginTop: 18 }}><div className="enterprise-settings-heading"><div><strong>{title}</strong><span>Only active values can be newly assigned. Existing inactive values remain visible for history.</span></div></div><div className="form-grid">{definitions.map((definition) => {
     const field = prefix === "E" ? enterpriseField(definition.attribute_number) : projectField(definition.attribute_number);
     const current = form[field] ?? "";
@@ -433,6 +470,6 @@ function AttributeSection({ title, prefix, definitions, form, setForm }: { title
   })}</div></div>;
 }
 
-function CenteredModal({ title, children, onClose }: { title: string; children: React.ReactNode; onClose: () => void }) {
-  return <div style={{ position: "fixed", inset: 0, zIndex: 1000, display: "grid", placeItems: "center", background: "rgba(15,23,42,.32)", padding: 20 }} onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><div className="enterprise-grid-card" style={{ width: "min(460px, 100%)", padding: 20, boxShadow: "0 24px 70px rgba(15,23,42,.22)" }}><div className="enterprise-settings-heading" style={{ marginBottom: 16 }}><div><strong>{title}</strong></div><button className="button secondary compact" onClick={onClose}>×</button></div>{children}</div></div>;
+function CenteredModal({ title, children, onClose, wide = false }: { title: string; children: React.ReactNode; onClose: () => void; wide?: boolean }) {
+  return <div style={{ position: "fixed", inset: 0, zIndex: 1000, display: "grid", placeItems: "center", background: "rgba(15,23,42,.32)", padding: 20 }} onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><div className="enterprise-grid-card" style={{ width: wide ? "min(720px, 100%)" : "min(460px, 100%)", padding: 20, boxShadow: "0 24px 70px rgba(15,23,42,.22)" }}><div className="enterprise-settings-heading" style={{ marginBottom: 16 }}><div><strong>{title}</strong></div><button className="button secondary compact" onClick={onClose}>×</button></div>{children}</div></div>;
 }
