@@ -225,7 +225,6 @@ export default function BaselineBudgetPage({ projectPublicId }: { projectPublicI
           qty,
           unit: row.Unit?.trim() || null,
           rate,
-          total: Number(((qty ?? 0) * (rate ?? 0)).toFixed(2)),
           ...attributes,
         };
       });
