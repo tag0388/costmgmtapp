@@ -7,6 +7,7 @@ import ProjectLineItemAttributesPage from "@/components/project-admin/project-li
 import CostCodesAgGridPage from "@/components/cost-management/cost-codes-ag-grid-page";
 import CostReportingPeriodsPage from "@/components/cost-management/cost-reporting-periods-page";
 import ProjectCostCodeAttributesPage from "@/components/cost-management/project-cost-code-attributes-page";
+import BaselineBudgetPage from "@/components/cost-management/baseline-budget-page";
 import { notFound } from "next/navigation";
 import { isModuleSlug, isSubmoduleSlug } from "@/lib/navigation";
 
@@ -21,5 +22,6 @@ export default async function ProjectContextPage({ params }: { params: Promise<{
   if (module === "cost-management" && submodule === "cost-codes") return <CostCodesAgGridPage projectPublicId={projectPublicId}/>;
   if (module === "cost-management" && submodule === "reporting-periods") return <CostReportingPeriodsPage projectPublicId={projectPublicId}/>;
   if (module === "cost-management" && submodule === "cost-code-attributes") return <ProjectCostCodeAttributesPage projectPublicId={projectPublicId}/>;
+  if (module === "cost-management" && submodule === "bulk-baseline-budget") return <BaselineBudgetPage projectPublicId={projectPublicId}/>;
   return null;
 }
