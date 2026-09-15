@@ -184,7 +184,6 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
   function syncGroupState(api: GridApi<CostCode> | null = gridApi) { setHasGroups((api?.getRowGroupColumns().length ?? 0) > 0); }
   function onGridReady(event: GridReadyEvent<CostCode>) { setGridApi(event.api); syncGroupState(event.api); }
   function onSelectionChanged(event: SelectionChangedEvent<CostCode>) { setSelected(event.api.getSelectedRows().map((row) => row.id)); }
-  function openToolPanel(id: "columns" | "grouping") { gridApi?.openToolPanel(id); }
 
   function exportRows() {
     if (!project) return;
@@ -321,17 +320,15 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
         <button className="button secondary" onClick={() => { setViewName(selectedViewName); setShowSaveView(true); }}>Save View</button>
         <button className="button secondary" disabled={selectedView === "Default"} onClick={() => void deleteView()}>Delete View</button>
         <button className="button secondary" disabled={!selected.length} onClick={() => setBulkOpen(true)}>Bulk Edit{selected.length ? ` (${selected.length})` : ""}</button>
-        <button className="button secondary" onClick={() => openToolPanel("columns")}>Columns</button>
-        <button className="button secondary" onClick={() => openToolPanel("grouping")}>Group By</button>
-        <button className="button secondary" disabled={!hasGroups} title={hasGroups ? "Expand all grouped rows" : "Add a Group By field first"} onClick={() => gridApi?.expandAll()}>Expand All</button>
-        <button className="button secondary" disabled={!hasGroups} title={hasGroups ? "Collapse all grouped rows" : "Add a Group By field first"} onClick={() => gridApi?.collapseAll()}>Collapse All</button>
+        <button className="button secondary" disabled={!hasGroups} title={hasGroups ? "Expand all grouped rows" : "Drag a column into the grouping bar first"} onClick={() => gridApi?.expandAll()}>Expand All</button>
+        <button className="button secondary" disabled={!hasGroups} title={hasGroups ? "Collapse all grouped rows" : "Drag a column into the grouping bar first"} onClick={() => gridApi?.collapseAll()}>Collapse All</button>
         <button className="button secondary" onClick={exportRows}>⇩ Export</button>
         <button className="button secondary" onClick={() => fileRef.current?.click()}>⇧ Import</button>
         <input ref={fileRef} hidden type="file" accept=".xlsx,.xls" onChange={(event) => void chooseImport(event.target.files?.[0])}/>
         <button className="button secondary" onClick={() => void refresh()} disabled={loading}>↻ Refresh</button>
         <button className="button danger" disabled={!selected.length} onClick={() => void deactivateSelected()}>Deactivate{selected.length > 1 ? ` (${selected.length})` : ""}</button>
       </div>
-      <div className="data-message" style={{ minHeight: 48 }}><span>Use Columns to show, hide, reorder or pin fields. Use Group By to build multiple grouping levels. Expand/Collapse becomes available after at least one group is added.</span></div>
+      <div className="data-message" style={{ minHeight: 48 }}><span>Right-click a column header to show, hide or pin columns. Drag columns into the grouping bar above the table to create multiple group levels. Expand/Collapse becomes available when grouping is active.</span></div>
       {error && <div className="data-message error"><strong>Unable to load cost codes</strong><span>{error}</span></div>}
       {!error && loading && <div className="data-message"><span className="spinner"/>Loading cost codes…</div>}
       {!error && !loading && <AgGridProvider modules={[AllEnterpriseModule]} licenseKey={process.env.NEXT_PUBLIC_AG_GRID_LICENSE_KEY ?? ""}>
@@ -348,15 +345,7 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
             onGridReady={onGridReady}
             onSelectionChanged={onSelectionChanged}
             onColumnRowGroupChanged={(event) => syncGroupState(event.api)}
-            sideBar={{
-              toolPanels: [
-                { id: "columns", labelDefault: "Columns", labelKey: "columns", iconKey: "columns", toolPanel: "agColumnsToolPanel", toolPanelParams: { suppressRowGroups: true, suppressValues: true, suppressPivots: true, suppressPivotMode: true } },
-                { id: "grouping", labelDefault: "Group By", labelKey: "grouping", iconKey: "columns", toolPanel: "agColumnsToolPanel", toolPanelParams: { suppressValues: true, suppressPivots: true, suppressPivotMode: true } },
-                "filters",
-              ],
-              hiddenByDefault: true,
-              position: "right",
-            }}
+            sideBar={{ toolPanels: ["filters"], hiddenByDefault: true, position: "right" }}
             rowGroupPanelShow="always"
             groupDisplayType="multipleColumns"
             groupTotalRow="bottom"
