@@ -22,6 +22,7 @@ export type EnterpriseCostCodeAttributeField = typeof ENTERPRISE_COST_CODE_ATTRI
 export type ProjectCostCodeAttributeValues = Partial<Record<ProjectCostCodeAttributeField, string | null>>;
 export type EnterpriseCostCodeAttributeValues = Partial<Record<EnterpriseCostCodeAttributeField, string | null>>;
 export type CostCodeAttributeValues = ProjectCostCodeAttributeValues & EnterpriseCostCodeAttributeValues;
+export type CostCodeAttributePatch = Partial<Record<ProjectCostCodeAttributeField | EnterpriseCostCodeAttributeField, string | null>>;
 
 export type CostCode = {
   id: string;
@@ -71,6 +72,15 @@ export function setCostCodesActive(ids: string[], isActive: boolean) {
   return supabaseRequest<CostCode[]>(`cost_codes?id=in.(${ids.join(",")})&select=${encodeURIComponent(select)}`, {
     method: "PATCH", headers: { Prefer: "return=representation" },
     body: JSON.stringify({ is_active: isActive, updated_at: new Date().toISOString() }),
+  });
+}
+
+export function bulkUpdateCostCodeAttributes(ids: string[], patch: CostCodeAttributePatch) {
+  if (!ids.length || !Object.keys(patch).length) return Promise.resolve([] as CostCode[]);
+  return supabaseRequest<CostCode[]>(`cost_codes?id=in.(${ids.map(encodeURIComponent).join(",")})&select=${encodeURIComponent(select)}`, {
+    method: "PATCH",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify({ ...patch, updated_at: new Date().toISOString() }),
   });
 }
 
