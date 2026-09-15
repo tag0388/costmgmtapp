@@ -255,7 +255,7 @@ export default function BaselineBudgetPage({ projectPublicId }: { projectPublicI
         <button className="button secondary" disabled={loading || importing} onClick={() => void refresh()}>↻ Refresh</button>
       </div>
 
-      <div className="data-message" style={{ minHeight: 48 }}><span>Only configured active Line Item attributes are shown. Excel uses the attribute names as column headers and Value IDs in the cells.</span></div>
+      <div className="data-message" style={{ minHeight: 48 }}><span>Only active, configured Line Item attributes are shown. Grid and Excel headers use the user-entered attribute names; Excel cells use Value IDs.</span></div>
       {error && <div className="data-message error"><strong>Unable to load Baseline Budget</strong><span>{error}</span></div>}
       {!error && loading && <div className="data-message"><span className="spinner"/>Loading Baseline Budget…</div>}
       {!error && !loading && <AgGridProvider modules={[AllEnterpriseModule]} licenseKey={process.env.NEXT_PUBLIC_AG_GRID_LICENSE_KEY ?? ""}>
