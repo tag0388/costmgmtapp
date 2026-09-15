@@ -163,6 +163,7 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
       { field: "description", headerName: "Description", minWidth: 220, filter: true },
       ...enterpriseDefs,
       ...projectDefs,
+      { field: "baseline_budget", headerName: "Baseline Budget", minWidth: 145, type: "numericColumn", aggFunc: "sum", enableValue: true, valueFormatter: (params) => money(params.value as number | null) },
       { field: "eac_method", headerName: "EAC Method", minWidth: 155, enableRowGroup: true, filter: "agSetColumnFilter" },
       { field: "manual_eac", headerName: "Manual EAC", minWidth: 135, type: "numericColumn", aggFunc: "sum", enableValue: true, valueFormatter: (params) => money(params.value as number | null) },
       { field: "baseline_timephasing_method", headerName: "Baseline Timephasing", minWidth: 175, enableRowGroup: true, filter: "agSetColumnFilter" },
