@@ -123,7 +123,7 @@ export default function BaselineBudgetPage({ projectPublicId }: { projectPublicI
   }), [details, codeById]);
 
   const excelColumns = useMemo(() => [
-    "Cost Code ID", "Item No", "Item Description", "Qty", "Unit", "Rate", "Total",
+    "Cost Code ID", "Item No", "Item Description", "Qty", "Unit", "Rate",
     ...activeAttributes.map((attribute) => attribute.columnName),
   ], [activeAttributes]);
 
@@ -161,7 +161,6 @@ export default function BaselineBudgetPage({ projectPublicId }: { projectPublicI
       Qty: row.qty == null ? "" : String(row.qty),
       Unit: row.unit ?? "",
       Rate: row.rate == null ? "" : String(row.rate),
-      Total: row.total == null ? "" : String(row.total),
       ...Object.fromEntries(activeAttributes.map((attribute) => [attribute.columnName, row[attribute.field] ?? ""])),
     }));
     exportExcel(`${project.project_code}-baseline-budget`, "Baseline Budget", data.length ? data : [Object.fromEntries(excelColumns.map((column) => [column, ""]))]);
@@ -183,7 +182,6 @@ export default function BaselineBudgetPage({ projectPublicId }: { projectPublicI
         const unit = (row.Unit ?? "").trim();
         const qty = parseNumber(row.Qty ?? "");
         const rate = parseNumber(row.Rate ?? "");
-        const suppliedTotal = parseNumber(row.Total ?? "");
         const code = codeByRef.get(codeRef.toLowerCase());
         if (!codeRef || !code) errors.push(`Row ${line}: Cost Code ID “${codeRef || "(blank)"}” is not valid for this project.`);
         if (!itemNo) errors.push(`Row ${line}: Item No is required.`);
@@ -193,9 +191,6 @@ export default function BaselineBudgetPage({ projectPublicId }: { projectPublicI
         if (unit.length > 30) errors.push(`Row ${line}: Unit is longer than 30 characters.`);
         if (Number.isNaN(qty) || (qty != null && qty < 0)) errors.push(`Row ${line}: Qty must be zero or greater.`);
         if (Number.isNaN(rate) || (rate != null && rate < 0)) errors.push(`Row ${line}: Rate must be zero or greater.`);
-        if (Number.isNaN(suppliedTotal) || (suppliedTotal != null && suppliedTotal < 0)) errors.push(`Row ${line}: Total must be zero or greater.`);
-        const calculated = Number(((qty ?? 0) * (rate ?? 0)).toFixed(2));
-        if (suppliedTotal != null && Math.abs(suppliedTotal - calculated) > 0.01) errors.push(`Row ${line}: Total must equal Qty × Rate (${calculated.toFixed(2)}).`);
         if (code && itemNo) {
           const key = `${code.id}:${itemNo.toLowerCase()}`;
           if (keys.has(key)) errors.push(`Row ${line}: duplicate Item No “${itemNo}” for Cost Code ${codeRef}.`);
@@ -255,7 +250,7 @@ export default function BaselineBudgetPage({ projectPublicId }: { projectPublicI
         <button className="button secondary" disabled={loading || importing} onClick={() => void refresh()}>↻ Refresh</button>
       </div>
 
-      <div className="data-message" style={{ minHeight: 48 }}><span>Only active, configured Line Item attributes are shown. Grid and Excel headers use the user-entered attribute names; Excel cells use Value IDs.</span></div>
+      <div className="data-message" style={{ minHeight: 48 }}><span>Only active, configured Line Item attributes are shown. Grid and Excel headers use the user-entered attribute names; Excel cells use Value IDs. Total is calculated automatically from Qty × Rate and is not imported or exported.</span></div>
       {error && <div className="data-message error"><strong>Unable to load Baseline Budget</strong><span>{error}</span></div>}
       {!error && loading && <div className="data-message"><span className="spinner"/>Loading Baseline Budget…</div>}
       {!error && !loading && <AgGridProvider modules={[AllEnterpriseModule]} licenseKey={process.env.NEXT_PUBLIC_AG_GRID_LICENSE_KEY ?? ""}>
@@ -272,7 +267,7 @@ export default function BaselineBudgetPage({ projectPublicId }: { projectPublicI
           />
         </div>
       </AgGridProvider>}
-      <div className="grid-footer"><span>{details.length} baseline detail rows · {costCodes.length} Cost Codes · {activeAttributes.length} active Line Item attributes</span><span>Baseline Budget total: {money(totalBaseline)}</span></div>
+      <div className="grid-footer"><span>{details.length} baseline detail rows · {costCodes.length} Cost Codes</span><span>Baseline Budget total: {money(totalBaseline)}</span></div>
     </section>
 
     {importRows && <ExcelImportDialog title="Import Baseline Budget" rows={importRows} columns={excelColumns} errors={importErrors} replace={replace} setReplace={setReplace} importing={importing} progress={progress} onCancel={() => !importing && setImportRows(null)} onImport={() => void runImport()}/>} 
