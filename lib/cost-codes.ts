@@ -36,12 +36,13 @@ export type CostCode = {
   ctc_timephasing_method: TimephasingMethod;
   manual_eac: number | null;
   baseline_budget?: number;
+  actual_cost?: number;
   is_active: boolean;
   created_at: string;
   updated_at: string;
 } & CostCodeAttributeValues;
 
-export type CostCodeInput = Omit<CostCode, "id" | "created_at" | "updated_at" | "baseline_budget">;
+export type CostCodeInput = Omit<CostCode, "id" | "created_at" | "updated_at" | "baseline_budget" | "actual_cost">;
 
 const select = [
   "id", "project_id", "cost_code_id", "name", "description", "eac_method",
@@ -52,13 +53,20 @@ const select = [
 ].join(",");
 
 export async function listCostCodes(projectId: string) {
-  const [codes, details] = await Promise.all([
+  const [codes, details, actuals] = await Promise.all([
     supabaseRequest<CostCode[]>(`cost_codes?project_id=eq.${encodeURIComponent(projectId)}&select=${encodeURIComponent(select)}&order=cost_code_id.asc`),
     supabaseRequest<Array<{ cost_code_id: string; total: number | null }>>(`baseline_details?project_id=eq.${encodeURIComponent(projectId)}&select=cost_code_id,total`),
+    supabaseRequest<Array<{ cost_code_id: string; amount: number }>>(`actual_cost_transactions?project_id=eq.${encodeURIComponent(projectId)}&select=cost_code_id,amount`),
   ]);
-  const totals = new Map<string, number>();
-  details.forEach((detail) => totals.set(detail.cost_code_id, (totals.get(detail.cost_code_id) ?? 0) + Number(detail.total ?? 0)));
-  return codes.map((code) => ({ ...code, baseline_budget: Number(totals.get(code.id) ?? 0) }));
+  const baselineTotals = new Map<string, number>();
+  details.forEach((detail) => baselineTotals.set(detail.cost_code_id, (baselineTotals.get(detail.cost_code_id) ?? 0) + Number(detail.total ?? 0)));
+  const actualTotals = new Map<string, number>();
+  actuals.forEach((actual) => actualTotals.set(actual.cost_code_id, (actualTotals.get(actual.cost_code_id) ?? 0) + Number(actual.amount ?? 0)));
+  return codes.map((code) => ({
+    ...code,
+    baseline_budget: Number(baselineTotals.get(code.id) ?? 0),
+    actual_cost: Number(actualTotals.get(code.id) ?? 0),
+  }));
 }
 
 export function createCostCode(input: CostCodeInput) {
