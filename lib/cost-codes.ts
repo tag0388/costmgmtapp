@@ -35,12 +35,13 @@ export type CostCode = {
   current_budget_timephasing_method: TimephasingMethod;
   ctc_timephasing_method: TimephasingMethod;
   manual_eac: number | null;
+  baseline_budget?: number;
   is_active: boolean;
   created_at: string;
   updated_at: string;
 } & CostCodeAttributeValues;
 
-export type CostCodeInput = Omit<CostCode, "id" | "created_at" | "updated_at">;
+export type CostCodeInput = Omit<CostCode, "id" | "created_at" | "updated_at" | "baseline_budget">;
 
 const select = [
   "id", "project_id", "cost_code_id", "name", "description", "eac_method",
@@ -50,8 +51,14 @@ const select = [
   ...PROJECT_COST_CODE_ATTRIBUTE_FIELDS,
 ].join(",");
 
-export function listCostCodes(projectId: string) {
-  return supabaseRequest<CostCode[]>(`cost_codes?project_id=eq.${encodeURIComponent(projectId)}&select=${encodeURIComponent(select)}&order=cost_code_id.asc`);
+export async function listCostCodes(projectId: string) {
+  const [codes, details] = await Promise.all([
+    supabaseRequest<CostCode[]>(`cost_codes?project_id=eq.${encodeURIComponent(projectId)}&select=${encodeURIComponent(select)}&order=cost_code_id.asc`),
+    supabaseRequest<Array<{ cost_code_id: string; total: number | null }>>(`baseline_details?project_id=eq.${encodeURIComponent(projectId)}&select=cost_code_id,total`),
+  ]);
+  const totals = new Map<string, number>();
+  details.forEach((detail) => totals.set(detail.cost_code_id, (totals.get(detail.cost_code_id) ?? 0) + Number(detail.total ?? 0)));
+  return codes.map((code) => ({ ...code, baseline_budget: Number(totals.get(code.id) ?? 0) }));
 }
 
 export function createCostCode(input: CostCodeInput) {
