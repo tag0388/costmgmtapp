@@ -12,8 +12,8 @@ export type BaselineDetail = {
   id: string;
   project_id: string;
   cost_code_id: string;
-  item_no: string;
-  item_description: string;
+  item_no: string | null;
+  item_description: string | null;
   unit: string | null;
   qty: number | null;
   rate: number | null;
@@ -32,43 +32,31 @@ const select = [
 
 export function listBaselineDetails(projectId: string) {
   return supabaseRequest<BaselineDetail[]>(
-    `baseline_details?project_id=eq.${encodeURIComponent(projectId)}&select=${encodeURIComponent(select)}&order=cost_code_id.asc,item_no.asc`,
+    `baseline_details?project_id=eq.${encodeURIComponent(projectId)}&select=${encodeURIComponent(select)}&order=cost_code_id.asc,created_at.asc`,
   );
 }
 
 export async function importBaselineDetails(projectId: string, rows: Omit<BaselineDetailInput, "project_id">[], replace: boolean, onProgress?: (progress: number) => void) {
-  const existing = await listBaselineDetails(projectId);
-  if (replace && existing.length) {
+  if (replace) {
     await supabaseRequest(`baseline_details?project_id=eq.${encodeURIComponent(projectId)}`, {
       method: "DELETE",
       headers: { Prefer: "return=minimal" },
     });
   }
 
-  const current = replace ? [] : existing;
-  const byKey = new Map(current.map((row) => [`${row.cost_code_id}:${row.item_no.toLowerCase()}`, row]));
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index];
     const clean = {
       ...row,
-      item_no: row.item_no.trim(),
-      item_description: row.item_description.trim(),
+      item_no: row.item_no?.trim() || null,
+      item_description: row.item_description?.trim() || null,
       unit: row.unit?.trim() || null,
     };
-    const match = byKey.get(`${row.cost_code_id}:${clean.item_no.toLowerCase()}`);
-    if (match) {
-      await supabaseRequest(`baseline_details?id=eq.${encodeURIComponent(match.id)}`, {
-        method: "PATCH",
-        headers: { Prefer: "return=minimal" },
-        body: JSON.stringify(clean),
-      });
-    } else {
-      await supabaseRequest("baseline_details", {
-        method: "POST",
-        headers: { Prefer: "return=minimal" },
-        body: JSON.stringify({ project_id: projectId, ...clean }),
-      });
-    }
+    await supabaseRequest("baseline_details", {
+      method: "POST",
+      headers: { Prefer: "return=minimal" },
+      body: JSON.stringify({ project_id: projectId, ...clean }),
+    });
     onProgress?.(((index + 1) / Math.max(rows.length, 1)) * 100);
   }
 }
