@@ -31,22 +31,34 @@ export type ActualCostImportRow = {
   transaction_id: string | null;
   description: string;
   amount: number;
-  transaction_type: Exclude<TransactionType, "REV">;
+  transaction_type: TransactionType;
 } & ActualAttributeValues;
 
+const ATTRIBUTE_FIELDS = [...ACTUAL_ENTERPRISE_ATTRIBUTE_FIELDS, ...ACTUAL_PROJECT_ATTRIBUTE_FIELDS];
 const select = [
   "id", "project_id", "cost_period_id", "cost_code_id", "transaction_date", "transaction_id", "description", "amount", "transaction_type", "reversal_of_transaction_id", "created_at", "updated_at",
-  ...ACTUAL_ENTERPRISE_ATTRIBUTE_FIELDS,
-  ...ACTUAL_PROJECT_ATTRIBUTE_FIELDS,
+  ...ATTRIBUTE_FIELDS,
 ].join(",");
 
 export function listActualCostTransactions(projectId: string) {
   return supabaseRequest<ActualCostTransaction[]>(
-    `actual_cost_transactions?project_id=eq.${encodeURIComponent(projectId)}&select=${encodeURIComponent(select)}&order=cost_period_id.asc,cost_code_id.asc,created_at.asc`,
+    `actual_cost_transactions?project_id=eq.${encodeURIComponent(projectId)}&select=${encodeURIComponent(select)}&order=transaction_date.asc,created_at.asc`,
   );
 }
 
-async function insertRow(projectId: string, row: ActualCostImportRow) {
+function normalizedItem(value: string | null | undefined) {
+  return (value ?? "").trim().toLowerCase();
+}
+function sameAttributes(source: ActualCostTransaction, reversal: ActualCostImportRow) {
+  return ATTRIBUTE_FIELDS.every((field) => (source[field] ?? null) === (reversal[field] ?? null));
+}
+function sourceDescription(reversalDescription: string) {
+  const prefix = "Reversal of Accrual:";
+  const clean = reversalDescription.trim();
+  return clean.toLowerCase().startsWith(prefix.toLowerCase()) ? clean.slice(prefix.length).trim() : null;
+}
+
+async function insertRow(projectId: string, row: ActualCostImportRow, reversalId: string | null = null) {
   const body = {
     project_id: projectId,
     cost_period_id: row.cost_period_id,
@@ -56,32 +68,67 @@ async function insertRow(projectId: string, row: ActualCostImportRow) {
     description: row.description.trim(),
     amount: row.amount,
     transaction_type: row.transaction_type,
-    reversal_of_transaction_id: null,
-    ...Object.fromEntries([...ACTUAL_ENTERPRISE_ATTRIBUTE_FIELDS, ...ACTUAL_PROJECT_ATTRIBUTE_FIELDS].map((field) => [field, row[field] ?? null])),
+    reversal_of_transaction_id: reversalId,
+    ...Object.fromEntries(ATTRIBUTE_FIELDS.map((field) => [field, row[field] ?? null])),
   };
   await supabaseRequest("actual_cost_transactions", {
     method: "POST", headers: { Prefer: "return=minimal" }, body: JSON.stringify(body),
   });
 }
 
+function findAccrualSource(reversal: ActualCostImportRow, candidates: ActualCostTransaction[], used: Set<string>) {
+  const expectedDescription = sourceDescription(reversal.description);
+  const base = candidates.filter((candidate) =>
+    !used.has(candidate.id) &&
+    candidate.transaction_type === "ACC" &&
+    candidate.cost_code_id === reversal.cost_code_id &&
+    Number(candidate.amount) === -Number(reversal.amount) &&
+    candidate.transaction_date < reversal.transaction_date,
+  );
+  const withItemAndAttrs = base.filter((candidate) => normalizedItem(candidate.transaction_id) === normalizedItem(reversal.transaction_id) && sameAttributes(candidate, reversal));
+  const withAttrs = base.filter((candidate) => sameAttributes(candidate, reversal));
+  const withItem = base.filter((candidate) => normalizedItem(candidate.transaction_id) === normalizedItem(reversal.transaction_id));
+  let pool = withItemAndAttrs.length ? withItemAndAttrs : withAttrs.length ? withAttrs : withItem.length ? withItem : base;
+  if (expectedDescription !== null) {
+    const byDescription = pool.filter((candidate) => candidate.description.trim() === expectedDescription);
+    if (byDescription.length) pool = byDescription;
+  }
+  return pool.sort((a, b) => b.transaction_date.localeCompare(a.transaction_date) || a.created_at.localeCompare(b.created_at))[0] ?? null;
+}
+
 export async function importActualCostTransactions(projectId: string, rows: ActualCostImportRow[], replace: boolean, onProgress?: (progress: number) => void) {
   if (replace) {
-    await supabaseRequest(`actual_cost_transactions?project_id=eq.${encodeURIComponent(projectId)}&transaction_type=neq.REV`, {
+    await supabaseRequest(`actual_cost_transactions?project_id=eq.${encodeURIComponent(projectId)}`, {
       method: "DELETE", headers: { Prefer: "return=minimal" },
     });
   }
 
-  for (let index = 0; index < rows.length; index += 1) {
-    await insertRow(projectId, rows[index]);
-    onProgress?.(((index + 1) / Math.max(rows.length, 1)) * 100);
+  const normalRows = rows.filter((row) => row.transaction_type !== "REV");
+  const reversalRows = rows.filter((row) => row.transaction_type === "REV");
+  let completed = 0;
+  for (const row of normalRows) {
+    await insertRow(projectId, row);
+    completed += 1;
+    onProgress?.((completed / Math.max(rows.length, 1)) * 100);
+  }
+
+  const available = await listActualCostTransactions(projectId);
+  const usedSources = new Set(available.filter((row) => row.transaction_type === "REV" && row.reversal_of_transaction_id).map((row) => row.reversal_of_transaction_id!));
+  for (const row of reversalRows) {
+    const source = findAccrualSource(row, available, usedSources);
+    if (!source) throw new Error(`REV transaction for Cost Code ${row.cost_code_id} and Amount ${row.amount} could not be matched to a prior ACC transaction.`);
+    usedSources.add(source.id);
+    await insertRow(projectId, row, source.id);
+    completed += 1;
+    onProgress?.((completed / Math.max(rows.length, 1)) * 100);
   }
 }
 
 export function actualCostErrorMessage(error: unknown) {
   if (error instanceof SupabaseRequestError) {
-    if (error.code === "23503") return "Check that the Cost Code and Cost Reporting Period still exist in this project.";
-    if (error.code === "23514") return "The Actual Cost row was rejected by a database rule.";
-    if (error.code === "22P02") return "Transaction Type must be FIN, MAN or ACC for imported rows.";
+    if (error.code === "23503") return "Check that the Cost Code, Cost Reporting Period and reversal source still exist in this project.";
+    if (error.code === "23514") return "The Actual Cost row was rejected by a database rule. REV rows must link to an original transaction.";
+    if (error.code === "22P02") return "Transaction Type must be FIN, MAN, ACC or REV.";
     if (error.code === "22001") return "One or more text values are longer than the database limit.";
     return [error.message, error.details, error.hint].filter(Boolean).join(" ");
   }
