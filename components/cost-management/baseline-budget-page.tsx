@@ -156,8 +156,8 @@ export default function BaselineBudgetPage({ projectPublicId }: { projectPublicI
     if (!project) return;
     const data = rows.map((row) => ({
       "Cost Code ID": row.cost_code_ref,
-      "Item No": row.item_no,
-      "Item Description": row.item_description,
+      "Item No": row.item_no ?? "",
+      "Item Description": row.item_description ?? "",
       Qty: row.qty == null ? "" : String(row.qty),
       Unit: row.unit ?? "",
       Rate: row.rate == null ? "" : String(row.rate),
@@ -173,7 +173,6 @@ export default function BaselineBudgetPage({ projectPublicId }: { projectPublicI
       const errors: string[] = [];
       if (!incoming.length) errors.push("The file does not contain any Baseline Budget rows.");
       if (incoming.length && !exactColumns(incoming, excelColumns)) errors.push(`Columns must be exactly: ${excelColumns.join(", ")}.`);
-      const keys = new Set<string>();
       incoming.forEach((row, index) => {
         const line = index + 2;
         const codeRef = (row["Cost Code ID"] ?? "").trim();
@@ -184,18 +183,11 @@ export default function BaselineBudgetPage({ projectPublicId }: { projectPublicI
         const rate = parseNumber(row.Rate ?? "");
         const code = codeByRef.get(codeRef.toLowerCase());
         if (!codeRef || !code) errors.push(`Row ${line}: Cost Code ID “${codeRef || "(blank)"}” is not valid for this project.`);
-        if (!itemNo) errors.push(`Row ${line}: Item No is required.`);
         if (itemNo.length > 50) errors.push(`Row ${line}: Item No is longer than 50 characters.`);
-        if (!description) errors.push(`Row ${line}: Item Description is required.`);
         if (description.length > 255) errors.push(`Row ${line}: Item Description is longer than 255 characters.`);
         if (unit.length > 30) errors.push(`Row ${line}: Unit is longer than 30 characters.`);
         if (Number.isNaN(qty) || (qty != null && qty < 0)) errors.push(`Row ${line}: Qty must be zero or greater.`);
         if (Number.isNaN(rate) || (rate != null && rate < 0)) errors.push(`Row ${line}: Rate must be zero or greater.`);
-        if (code && itemNo) {
-          const key = `${code.id}:${itemNo.toLowerCase()}`;
-          if (keys.has(key)) errors.push(`Row ${line}: duplicate Item No “${itemNo}” for Cost Code ${codeRef}.`);
-          keys.add(key);
-        }
         activeAttributes.forEach((attribute) => {
           const valueId = (row[attribute.columnName] ?? "").trim();
           if (!valueId) return;
@@ -220,8 +212,8 @@ export default function BaselineBudgetPage({ projectPublicId }: { projectPublicI
         const attributes = Object.fromEntries(activeAttributes.map((attribute) => [attribute.field, row[attribute.columnName]?.trim() || null]));
         return {
           cost_code_id: code.id,
-          item_no: row["Item No"].trim(),
-          item_description: row["Item Description"].trim(),
+          item_no: row["Item No"]?.trim() || null,
+          item_description: row["Item Description"]?.trim() || null,
           qty,
           unit: row.Unit?.trim() || null,
           rate,
@@ -249,7 +241,7 @@ export default function BaselineBudgetPage({ projectPublicId }: { projectPublicI
         <button className="button secondary" disabled={loading || importing} onClick={() => void refresh()}>↻ Refresh</button>
       </div>
 
-      <div className="data-message" style={{ minHeight: 48 }}><span>Only active, configured Line Item attributes are shown. Grid and Excel headers use the user-entered attribute names; Excel cells use Value IDs. Total is calculated automatically from Qty × Rate and is not imported or exported.</span></div>
+      <div className="data-message" style={{ minHeight: 48 }}><span>Item No and Item Description may be blank or duplicated. Merge appends rows; Delete Existing Data replaces the full Baseline detail ledger. Only active, configured Line Item attributes are shown. Total is calculated automatically from Qty × Rate and is not imported or exported.</span></div>
       {error && <div className="data-message error"><strong>Unable to load Baseline Budget</strong><span>{error}</span></div>}
       {!error && loading && <div className="data-message"><span className="spinner"/>Loading Baseline Budget…</div>}
       {!error && !loading && <AgGridProvider modules={[AllEnterpriseModule]} licenseKey={process.env.NEXT_PUBLIC_AG_GRID_LICENSE_KEY ?? ""}>
