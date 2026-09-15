@@ -17,12 +17,12 @@ import {
   actualCostErrorMessage,
   importActualCostTransactions,
   listActualCostTransactions,
-  TransactionType,
 } from "@/lib/cost-actuals";
 import { getProjectByPublicId, Project } from "@/lib/projects";
 
 const gridTheme = themeQuartz.withParams({ spacing: 7, rowHeight: 38, headerHeight: 42 });
-const TYPES: TransactionType[] = ["FIN", "MAN", "ACC", "REV"];
+const IMPORT_TYPES = ["FIN", "MAN", "ACC"] as const;
+type ImportTransactionType = typeof IMPORT_TYPES[number];
 
 type GridRow = ActualCostTransaction & { cost_code_ref: string; period_label: string };
 type ActiveAttribute = {
@@ -156,7 +156,8 @@ export default function ActualCostPage({ projectPublicId }: { projectPublicId: s
 
   function exportRows() {
     if (!project) return;
-    const data = rows.map((row) => ({
+    const sourceRows = rows.filter((row) => row.transaction_type !== "REV");
+    const data = sourceRows.map((row) => ({
       "Cost Code ID": row.cost_code_ref,
       Item: row.transaction_id ?? "",
       Description: row.description,
@@ -175,46 +176,27 @@ export default function ActualCostPage({ projectPublicId }: { projectPublicId: s
       const errors: string[] = [];
       if (!incoming.length) errors.push("The file does not contain any Actual Cost rows.");
       if (incoming.length && !exactColumns(incoming, excelColumns)) errors.push(`Columns must be exactly: ${excelColumns.join(", ")}.`);
-      const keys = new Set<string>();
       incoming.forEach((row, index) => {
         const line = index + 2;
         const codeRef = (row["Cost Code ID"] ?? "").trim();
         const item = (row.Item ?? "").trim();
         const description = (row.Description ?? "").trim();
-        const type = (row["Transaction Type"] ?? "").trim().toUpperCase() as TransactionType;
+        const type = (row["Transaction Type"] ?? "").trim().toUpperCase();
         const amount = parseNumber(row.Amount ?? "");
         const period = parsePeriod(row["Cost Reporting Period"] ?? "", periods);
         const code = codeByRef.get(codeRef.toLowerCase());
         if (!codeRef || !code) errors.push(`Row ${line}: Cost Code ID “${codeRef || "(blank)"}” is not valid for this project.`);
-        if (!item) errors.push(`Row ${line}: Item is required.`);
         if (item.length > 100) errors.push(`Row ${line}: Item is longer than 100 characters.`);
-        if (!description) errors.push(`Row ${line}: Description is required.`);
         if (description.length > 255) errors.push(`Row ${line}: Description is longer than 255 characters.`);
-        if (!TYPES.includes(type)) errors.push(`Row ${line}: Transaction Type must be FIN, MAN, ACC or REV.`);
+        if (!IMPORT_TYPES.includes(type as ImportTransactionType)) errors.push(`Row ${line}: Transaction Type must be FIN, MAN or ACC. REV is generated automatically during period rollover.`);
         if (Number.isNaN(amount)) errors.push(`Row ${line}: Amount must be a valid number.`);
         if (!period) errors.push(`Row ${line}: Cost Reporting Period must match an existing project period such as P1.`);
-        if (code && item && period && TYPES.includes(type)) {
-          const key = `${period.id}:${code.id}:${type}:${item.toLowerCase()}`;
-          if (keys.has(key)) errors.push(`Row ${line}: duplicate ${type} Item “${item}” for Cost Code ${codeRef} and ${periodExcelValue(period)}.`);
-          keys.add(key);
-        }
         activeAttributes.forEach((attribute) => {
           const valueId = (row[attribute.columnName] ?? "").trim();
           if (!valueId) return;
           if (valueId.length > 50) errors.push(`Row ${line}: ${attribute.columnName} is longer than 50 characters.`);
           if (!attribute.definition.attribute_values.some((value) => value.is_active && value.value_id.toLowerCase() === valueId.toLowerCase())) errors.push(`Row ${line}: ${attribute.columnName} must contain an active Value ID.`);
         });
-      });
-      const sourceItems = new Map<string, number>();
-      [...transactions.filter((row) => row.transaction_type !== "REV"), ...incoming.filter((row) => (row["Transaction Type"] ?? "").trim().toUpperCase() !== "REV").map((row) => ({ transaction_id: row.Item }))]
-        .forEach((row) => {
-          const item = (row.transaction_id ?? "").trim().toLowerCase();
-          if (item) sourceItems.set(item, (sourceItems.get(item) ?? 0) + 1);
-        });
-      incoming.forEach((row, index) => {
-        if ((row["Transaction Type"] ?? "").trim().toUpperCase() !== "REV") return;
-        const item = (row.Item ?? "").trim().toLowerCase();
-        if ((sourceItems.get(item) ?? 0) !== 1) errors.push(`Row ${index + 2}: REV Item “${row.Item ?? ""}” must match exactly one non-REV transaction Item.`);
       });
       setImportRows(incoming); setImportErrors(errors); setReplace(false); setProgress(0);
     } catch (requestError) { setError(requestError instanceof Error ? requestError.message : "Unable to read the file."); }
@@ -232,9 +214,9 @@ export default function ActualCostPage({ projectPublicId }: { projectPublicId: s
           cost_code_id: code.id,
           cost_period_id: period.id,
           transaction_date: period.end_date,
-          transaction_id: row.Item.trim(),
-          description: row.Description.trim(),
-          transaction_type: row["Transaction Type"].trim().toUpperCase() as TransactionType,
+          transaction_id: row.Item?.trim() || null,
+          description: row.Description?.trim() || "",
+          transaction_type: row["Transaction Type"].trim().toUpperCase() as ImportTransactionType,
           amount: parseNumber(row.Amount),
           ...Object.fromEntries(activeAttributes.map((attribute) => [attribute.field, row[attribute.columnName]?.trim() || null])),
         };
@@ -255,7 +237,7 @@ export default function ActualCostPage({ projectPublicId }: { projectPublicId: s
         <input ref={fileRef} hidden type="file" accept=".xlsx,.xls" onChange={(event) => void chooseImport(event.target.files?.[0])}/>
         <button className="button secondary" disabled={loading || importing} onClick={() => void refresh()}>↻ Refresh</button>
       </div>
-      <div className="data-message" style={{ minHeight: 48 }}><span>Only active, configured Line Item attributes are shown. Attribute cells use Value IDs in Excel. Cost Reporting Period accepts values such as P1. Transaction Date is set automatically to the reporting period end date. REV rows use Item to identify the original non-REV transaction.</span></div>
+      <div className="data-message" style={{ minHeight: 48 }}><span>Item and Description may be blank or duplicated. Import accepts FIN, MAN and ACC; REV is created automatically by period rollover. Only active, configured Line Item attributes are shown. Attribute cells use Value IDs in Excel. Cost Reporting Period accepts values such as P1.</span></div>
       {error && <div className="data-message error"><strong>Unable to load Actual Cost</strong><span>{error}</span></div>}
       {!error && loading && <div className="data-message"><span className="spinner"/>Loading Actual Cost…</div>}
       {!error && !loading && periods.length === 0 && <div className="data-message"><strong>No Cost Reporting Periods</strong><span>Set up Cost Management → Reporting Periods before importing Actual Cost.</span></div>}
