@@ -82,7 +82,7 @@ function findAccrualSource(reversal: ActualCostImportRow, candidates: ActualCost
     !used.has(candidate.id) &&
     candidate.transaction_type === "ACC" &&
     candidate.cost_code_id === reversal.cost_code_id &&
-    Number(candidate.amount) === -Number(reversal.amount) &&
+    Math.abs(Number(candidate.amount) + Number(reversal.amount)) < 0.005 &&
     candidate.transaction_date < reversal.transaction_date,
   );
   const withItemAndAttrs = base.filter((candidate) => normalizedItem(candidate.transaction_id) === normalizedItem(reversal.transaction_id) && sameAttributes(candidate, reversal));
@@ -116,7 +116,7 @@ export async function importActualCostTransactions(projectId: string, rows: Actu
   const usedSources = new Set(available.filter((row) => row.transaction_type === "REV" && row.reversal_of_transaction_id).map((row) => row.reversal_of_transaction_id!));
   for (const row of reversalRows) {
     const source = findAccrualSource(row, available, usedSources);
-    if (!source) throw new Error(`REV transaction for Cost Code ${row.cost_code_id} and Amount ${row.amount} could not be matched to a prior ACC transaction.`);
+    if (!source) throw new Error(`REV transaction for Amount ${row.amount} could not be matched to a prior ACC transaction. Check Cost Code, Amount, Reporting Period and the copied Item/attributes.`);
     usedSources.add(source.id);
     await insertRow(projectId, row, source.id);
     completed += 1;
