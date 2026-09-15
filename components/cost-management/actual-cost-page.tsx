@@ -17,12 +17,12 @@ import {
   actualCostErrorMessage,
   importActualCostTransactions,
   listActualCostTransactions,
+  TransactionType,
 } from "@/lib/cost-actuals";
 import { getProjectByPublicId, Project } from "@/lib/projects";
 
 const gridTheme = themeQuartz.withParams({ spacing: 7, rowHeight: 38, headerHeight: 42 });
-const IMPORT_TYPES = ["FIN", "MAN", "ACC"] as const;
-type ImportTransactionType = typeof IMPORT_TYPES[number];
+const TYPES: TransactionType[] = ["FIN", "MAN", "ACC", "REV"];
 
 type GridRow = ActualCostTransaction & { cost_code_ref: string; period_label: string };
 type ActiveAttribute = {
@@ -156,8 +156,7 @@ export default function ActualCostPage({ projectPublicId }: { projectPublicId: s
 
   function exportRows() {
     if (!project) return;
-    const sourceRows = rows.filter((row) => row.transaction_type !== "REV");
-    const data = sourceRows.map((row) => ({
+    const data = rows.map((row) => ({
       "Cost Code ID": row.cost_code_ref,
       Item: row.transaction_id ?? "",
       Description: row.description,
@@ -181,14 +180,14 @@ export default function ActualCostPage({ projectPublicId }: { projectPublicId: s
         const codeRef = (row["Cost Code ID"] ?? "").trim();
         const item = (row.Item ?? "").trim();
         const description = (row.Description ?? "").trim();
-        const type = (row["Transaction Type"] ?? "").trim().toUpperCase();
+        const type = (row["Transaction Type"] ?? "").trim().toUpperCase() as TransactionType;
         const amount = parseNumber(row.Amount ?? "");
         const period = parsePeriod(row["Cost Reporting Period"] ?? "", periods);
         const code = codeByRef.get(codeRef.toLowerCase());
         if (!codeRef || !code) errors.push(`Row ${line}: Cost Code ID “${codeRef || "(blank)"}” is not valid for this project.`);
         if (item.length > 100) errors.push(`Row ${line}: Item is longer than 100 characters.`);
         if (description.length > 255) errors.push(`Row ${line}: Description is longer than 255 characters.`);
-        if (!IMPORT_TYPES.includes(type as ImportTransactionType)) errors.push(`Row ${line}: Transaction Type must be FIN, MAN or ACC. REV is generated automatically during period rollover.`);
+        if (!TYPES.includes(type)) errors.push(`Row ${line}: Transaction Type must be FIN, MAN, ACC or REV.`);
         if (Number.isNaN(amount)) errors.push(`Row ${line}: Amount must be a valid number.`);
         if (!period) errors.push(`Row ${line}: Cost Reporting Period must match an existing project period such as P1.`);
         activeAttributes.forEach((attribute) => {
@@ -216,7 +215,7 @@ export default function ActualCostPage({ projectPublicId }: { projectPublicId: s
           transaction_date: period.end_date,
           transaction_id: row.Item?.trim() || null,
           description: row.Description?.trim() || "",
-          transaction_type: row["Transaction Type"].trim().toUpperCase() as ImportTransactionType,
+          transaction_type: row["Transaction Type"].trim().toUpperCase() as TransactionType,
           amount: parseNumber(row.Amount),
           ...Object.fromEntries(activeAttributes.map((attribute) => [attribute.field, row[attribute.columnName]?.trim() || null])),
         };
@@ -237,7 +236,7 @@ export default function ActualCostPage({ projectPublicId }: { projectPublicId: s
         <input ref={fileRef} hidden type="file" accept=".xlsx,.xls" onChange={(event) => void chooseImport(event.target.files?.[0])}/>
         <button className="button secondary" disabled={loading || importing} onClick={() => void refresh()}>↻ Refresh</button>
       </div>
-      <div className="data-message" style={{ minHeight: 48 }}><span>Item and Description may be blank or duplicated. Import accepts FIN, MAN and ACC; REV is created automatically by period rollover. Only active, configured Line Item attributes are shown. Attribute cells use Value IDs in Excel. Cost Reporting Period accepts values such as P1.</span></div>
+      <div className="data-message" style={{ minHeight: 48 }}><span>Item and Description may be blank or duplicated. Import/export supports FIN, MAN, ACC and REV. REV is normally generated automatically during period rollover, but can also be re-imported for full data restoration. Only active, configured Line Item attributes are shown. Cost Reporting Period accepts values such as P1.</span></div>
       {error && <div className="data-message error"><strong>Unable to load Actual Cost</strong><span>{error}</span></div>}
       {!error && loading && <div className="data-message"><span className="spinner"/>Loading Actual Cost…</div>}
       {!error && !loading && periods.length === 0 && <div className="data-message"><strong>No Cost Reporting Periods</strong><span>Set up Cost Management → Reporting Periods before importing Actual Cost.</span></div>}
