@@ -236,7 +236,7 @@ export default function ActualCostPage({ projectPublicId }: { projectPublicId: s
         <input ref={fileRef} hidden type="file" accept=".xlsx,.xls" onChange={(event) => void chooseImport(event.target.files?.[0])}/>
         <button className="button secondary" disabled={loading || importing} onClick={() => void refresh()}>↻ Refresh</button>
       </div>
-      <div className="data-message" style={{ minHeight: 48 }}><span>Item and Description may be blank or duplicated. Import/export supports FIN, MAN, ACC and REV. REV is normally generated automatically during period rollover, but can also be re-imported for full data restoration. Only active, configured Line Item attributes are shown. Cost Reporting Period accepts values such as P1.</span></div>
+      <div className="data-message" style={{ minHeight: 48 }}><span>Item and Description may be blank or duplicated. Import/export supports FIN, MAN, ACC and REV. REV can be imported directly or generated automatically during period rollover. Only active, configured Line Item attributes are shown. Cost Reporting Period accepts values such as P1.</span></div>
       {error && <div className="data-message error"><strong>Unable to load Actual Cost</strong><span>{error}</span></div>}
       {!error && loading && <div className="data-message"><span className="spinner"/>Loading Actual Cost…</div>}
       {!error && !loading && periods.length === 0 && <div className="data-message"><strong>No Cost Reporting Periods</strong><span>Set up Cost Management → Reporting Periods before importing Actual Cost.</span></div>}
