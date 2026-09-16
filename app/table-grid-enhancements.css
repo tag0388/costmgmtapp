@@ -1,12 +1,21 @@
-/* Global table/grid readability standard: make column boundaries visible everywhere. */
+/* Global table/grid readability and density standard. */
 :root {
   --costwise-column-border: #e5e7eb;
 }
 
 /* Standard HTML tables used across admin and cost-management pages. */
+table {
+  table-layout: auto;
+  font-size: 12px;
+}
+
 table th,
 table td {
+  height: 30px;
+  padding: 4px 8px !important;
   border-right: 1px solid var(--costwise-column-border);
+  vertical-align: middle;
+  line-height: 18px;
 }
 
 table th:last-child,
@@ -15,6 +24,11 @@ table td:last-child {
 }
 
 /* AG Grid cells and headers. Works with the modern Theming API used by the app. */
+.ag-root-wrapper {
+  font-size: 12px !important;
+  --ag-font-size: 12px;
+}
+
 .ag-root-wrapper .ag-header-cell,
 .ag-root-wrapper .ag-header-group-cell,
 .ag-root-wrapper .ag-cell {
@@ -25,4 +39,10 @@ table td:last-child {
 .ag-root-wrapper .ag-header-row .ag-header-group-cell:last-child,
 .ag-root-wrapper .ag-row .ag-cell:last-child {
   border-right-color: transparent !important;
+}
+
+/* Keep the grid surface consistent across the app. Filters remain available
+ * from each column header, so the one-off pinned Filters tool panel is hidden. */
+.ag-root-wrapper .ag-side-bar {
+  display: none !important;
 }
