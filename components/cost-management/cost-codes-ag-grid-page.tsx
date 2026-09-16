@@ -6,6 +6,7 @@ import type { ColDef, ColumnState, GridApi, GridReadyEvent, SelectionChangedEven
 import { themeQuartz } from "ag-grid-community";
 import { AllEnterpriseModule } from "ag-grid-enterprise";
 import ExcelImportDialog from "@/components/shared/excel-import-dialog";
+import { CostCodeActionsCell } from "@/components/cost-management/cost-code-related-records";
 import { ExcelRow, exportExcel, readExcel } from "@/lib/excel";
 import { listEnterpriseAttributes, EnterpriseAttributeDefinition } from "@/lib/enterprise-attributes";
 import { deleteProjectGridView, gridViewErrorMessage, listProjectGridViews, ProjectGridView, saveProjectGridView } from "@/lib/grid-views";
@@ -87,7 +88,7 @@ function exactColumns(rows: ExcelRow[], columns: string[]) {
   return actual.length === columns.length && columns.every((column, index) => actual[index] === column);
 }
 
-const gridTheme = themeQuartz.withParams({ spacing: 7, rowHeight: 38, headerHeight: 42 });
+const gridTheme = themeQuartz.withParams({ spacing: 4, rowHeight: 30, headerHeight: 34, fontSize: 12 });
 
 export default function CostCodesAgGridPage({ projectPublicId }: { projectPublicId: string }) {
   const fileRef = useRef<HTMLInputElement>(null);
@@ -170,9 +171,9 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
       { field: "current_budget_timephasing_method", headerName: "Current Budget", minWidth: 160, enableRowGroup: true, filter: "agSetColumnFilter" },
       { field: "ctc_timephasing_method", headerName: "CTC Timephasing", minWidth: 160, enableRowGroup: true, filter: "agSetColumnFilter" },
       { field: "is_active", headerName: "Status", minWidth: 105, enableRowGroup: true, filter: "agSetColumnFilter", valueFormatter: (params) => params.value ? "Active" : "Inactive" },
-      { colId: "actions", headerName: "Actions", pinned: "right", sortable: false, filter: false, suppressHeaderMenuButton: true, minWidth: 110, maxWidth: 110, cellRenderer: (params: { data?: CostCode }) => params.data ? <button className="button secondary compact" onClick={() => setEditing(params.data!)}>✎ Edit</button> : null },
+      { colId: "actions", headerName: "Actions", pinned: "right", sortable: false, filter: false, suppressHeaderMenuButton: true, minWidth: 150, maxWidth: 150, cellRenderer: (params: { data?: CostCode }) => params.data ? <CostCodeActionsCell costCode={params.data} project={project} onEdit={() => setEditing(params.data!)} /> : null },
     ];
-  }, [activeEnterprise, activeProject]);
+  }, [activeEnterprise, activeProject, project]);
 
   const excelColumns = useMemo(() => [
     "Cost Code ID", "Cost Code Name", "Description",
@@ -329,7 +330,7 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
         <button className="button secondary" onClick={() => void refresh()} disabled={loading}>↻ Refresh</button>
         <button className="button danger" disabled={!selected.length} onClick={() => void deactivateSelected()}>Deactivate{selected.length > 1 ? ` (${selected.length})` : ""}</button>
       </div>
-      <div className="data-message" style={{ minHeight: 48 }}><span>Right-click a column header to show, hide or pin columns. Drag columns into the grouping bar above the table to create multiple group levels. Expand/Collapse becomes available when grouping is active.</span></div>
+      <div className="data-message" style={{ minHeight: 48 }}><span>Right-click a column header to show, hide or pin columns. Drag columns into the grouping bar above the table to create multiple group levels. Expand/Collapse becomes available when grouping is active. Use the ⋯ icon in Actions to open related Actual Cost or Cost to Complete records for a Cost Code.</span></div>
       {error && <div className="data-message error"><strong>Unable to load cost codes</strong><span>{error}</span></div>}
       {!error && loading && <div className="data-message"><span className="spinner"/>Loading cost codes…</div>}
       {!error && !loading && <AgGridProvider modules={[AllEnterpriseModule]} licenseKey={process.env.NEXT_PUBLIC_AG_GRID_LICENSE_KEY ?? ""}>
@@ -346,7 +347,6 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
             onGridReady={onGridReady}
             onSelectionChanged={onSelectionChanged}
             onColumnRowGroupChanged={(event) => syncGroupState(event.api)}
-            sideBar={{ toolPanels: ["filters"], hiddenByDefault: true, position: "right" }}
             rowGroupPanelShow="always"
             groupDisplayType="multipleColumns"
             groupTotalRow="bottom"
