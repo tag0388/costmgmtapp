@@ -5,6 +5,7 @@ export type CtcProjectAttributeField = `p_attribute_${"01"|"02"|"03"|"04"|"05"|"
 export type CtcEnterpriseAttributeField = `e_attribute_${"01"|"02"|"03"|"04"|"05"|"06"|"07"|"08"|"09"|"10"|"11"|"12"|"13"|"14"|"15"|"16"|"17"|"18"|"19"|"20"}`;
 export type CtcAttributeField = CtcProjectAttributeField | CtcEnterpriseAttributeField;
 export type CtcAttributeValues = Partial<Record<CtcAttributeField, string | null>>;
+export type CtcResourceSource = "ERes" | "PRes" | null;
 
 export const CTC_PROJECT_ATTRIBUTE_FIELDS = Array.from({ length: 20 }, (_, index) => `p_attribute_${String(index + 1).padStart(2, "0")}`) as CtcProjectAttributeField[];
 export const CTC_ENTERPRISE_ATTRIBUTE_FIELDS = Array.from({ length: 20 }, (_, index) => `e_attribute_${String(index + 1).padStart(2, "0")}`) as CtcEnterpriseAttributeField[];
@@ -17,7 +18,8 @@ export type CostToCompleteDetail = {
   description: string | null;
   unit: string | null;
   rate: number;
-  category: ResourceCategory;
+  category: ResourceCategory | null;
+  resource_source: CtcResourceSource;
   created_at: string;
   updated_at: string;
 } & CtcAttributeValues;
@@ -38,7 +40,7 @@ export type CostToCompleteImportRow = Omit<CostToCompleteDetail, "id" | "project
 };
 
 const detailSelect = [
-  "id", "project_id", "cost_code_id", "item", "description", "unit", "rate", "category", "created_at", "updated_at",
+  "id", "project_id", "cost_code_id", "item", "description", "unit", "rate", "category", "resource_source", "created_at", "updated_at",
   ...CTC_ENTERPRISE_ATTRIBUTE_FIELDS,
   ...CTC_PROJECT_ATTRIBUTE_FIELDS,
 ].join(",");
@@ -66,37 +68,6 @@ export async function listCostToCompleteLedger(projectId: string): Promise<CostT
     byDetail.set(row.cost_to_complete_detail_id, values);
   });
   return details.map((row) => ({ ...row, rate: Number(row.rate), period_qty: byDetail.get(row.id) ?? {} }));
-}
-
-export function updateCostToCompleteDetail(id: string, patch: Partial<Omit<CostToCompleteDetail, "id" | "project_id" | "created_at" | "updated_at">>) {
-  return supabaseRequest<CostToCompleteDetail[]>(`cost_to_complete_details?id=eq.${encodeURIComponent(id)}&select=${encodeURIComponent(detailSelect)}`, {
-    method: "PATCH",
-    headers: { Prefer: "return=representation" },
-    body: JSON.stringify({ ...patch, updated_at: new Date().toISOString() }),
-  }).then((rows) => rows[0]);
-}
-
-export async function setCostToCompletePeriodQty(detailId: string, periodId: string, qty: number) {
-  if (qty === 0) {
-    await supabaseRequest(`cost_to_complete_detail_periods?cost_to_complete_detail_id=eq.${encodeURIComponent(detailId)}&cost_period_id=eq.${encodeURIComponent(periodId)}`, {
-      method: "DELETE",
-      headers: { Prefer: "return=minimal" },
-    });
-    return;
-  }
-  await supabaseRequest("cost_to_complete_detail_periods?on_conflict=cost_to_complete_detail_id,cost_period_id", {
-    method: "POST",
-    headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
-    body: JSON.stringify({ cost_to_complete_detail_id: detailId, cost_period_id: periodId, qty, updated_at: new Date().toISOString() }),
-  });
-}
-
-export async function deleteCostToCompleteDetails(ids: string[]) {
-  if (!ids.length) return;
-  await supabaseRequest(`cost_to_complete_details?id=in.(${ids.join(",")})`, {
-    method: "DELETE",
-    headers: { Prefer: "return=minimal" },
-  });
 }
 
 export async function importCostToCompleteLedger(projectId: string, rows: CostToCompleteImportRow[], replace: boolean, onProgress?: (progress: number) => void) {
@@ -137,7 +108,7 @@ export async function importCostToCompleteLedger(projectId: string, rows: CostTo
 export function costToCompleteErrorMessage(error: unknown) {
   if (error instanceof SupabaseRequestError) {
     if (error.code === "23503") return "A Cost Code or Cost Reporting Period in this data no longer exists in the selected project.";
-    if (error.code === "23514") return "Quantity and Rate must be zero or greater, and Category must be Labour, Staff, Plant or Material.";
+    if (error.code === "23514") return "Check Rate, period quantities, Category and Resource Source values.";
     if (error.code === "22001") return "One or more text values are longer than the database limit.";
     return [error.message, error.details, error.hint].filter(Boolean).join(" ");
   }
