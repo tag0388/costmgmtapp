@@ -39,15 +39,20 @@ export type CostToCompleteImportRow = Omit<CostToCompleteDetail, "id" | "project
   period_qty: Record<string, number>;
 };
 
+export type CostToCompleteEditablePatch = Partial<Pick<CostToCompleteDetail,
+  "item" | "description" | "unit" | "rate" | "category" | "resource_source"
+>> & CtcAttributeValues;
+
 const detailSelect = [
   "id", "project_id", "cost_code_id", "item", "description", "unit", "rate", "category", "resource_source", "created_at", "updated_at",
   ...CTC_ENTERPRISE_ATTRIBUTE_FIELDS,
   ...CTC_PROJECT_ATTRIBUTE_FIELDS,
 ].join(",");
 
-export async function listCostToCompleteLedger(projectId: string): Promise<CostToCompleteLedgerRow[]> {
+async function listLedger(projectId: string, costCodeId?: string): Promise<CostToCompleteLedgerRow[]> {
+  const costCodeFilter = costCodeId ? `&cost_code_id=eq.${encodeURIComponent(costCodeId)}` : "";
   const details = await supabaseRequest<CostToCompleteDetail[]>(
-    `cost_to_complete_details?project_id=eq.${encodeURIComponent(projectId)}&select=${encodeURIComponent(detailSelect)}&order=created_at.asc`,
+    `cost_to_complete_details?project_id=eq.${encodeURIComponent(projectId)}${costCodeFilter}&select=${encodeURIComponent(detailSelect)}&order=created_at.asc`,
   );
   if (!details.length) return [];
 
@@ -68,6 +73,58 @@ export async function listCostToCompleteLedger(projectId: string): Promise<CostT
     byDetail.set(row.cost_to_complete_detail_id, values);
   });
   return details.map((row) => ({ ...row, rate: Number(row.rate), period_qty: byDetail.get(row.id) ?? {} }));
+}
+
+export function listCostToCompleteLedger(projectId: string) {
+  return listLedger(projectId);
+}
+
+export function listCostToCompleteLedgerForCostCode(projectId: string, costCodeId: string) {
+  return listLedger(projectId, costCodeId);
+}
+
+export async function createCostToCompleteDetail(projectId: string, row: Omit<CostToCompleteImportRow, "period_qty">) {
+  const body = { project_id: projectId, ...row };
+  const rows = await supabaseRequest<CostToCompleteDetail[]>(`cost_to_complete_details?select=${encodeURIComponent(detailSelect)}`, {
+    method: "POST",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify(body),
+  });
+  return { ...rows[0], rate: Number(rows[0].rate), period_qty: {} } as CostToCompleteLedgerRow;
+}
+
+export async function updateCostToCompleteDetail(id: string, patch: CostToCompleteEditablePatch) {
+  const rows = await supabaseRequest<CostToCompleteDetail[]>(`cost_to_complete_details?id=eq.${encodeURIComponent(id)}&select=${encodeURIComponent(detailSelect)}`, {
+    method: "PATCH",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify(patch),
+  });
+  return rows[0];
+}
+
+export async function deleteCostToCompleteDetails(ids: string[]) {
+  if (!ids.length) return;
+  await supabaseRequest(`cost_to_complete_details?id=in.(${ids.map(encodeURIComponent).join(",")})`, {
+    method: "DELETE",
+    headers: { Prefer: "return=minimal" },
+  });
+}
+
+export async function setCostToCompletePeriodQty(detailId: string, costPeriodId: string, qty: number) {
+  const detail = encodeURIComponent(detailId);
+  const period = encodeURIComponent(costPeriodId);
+  if (Number(qty) === 0) {
+    await supabaseRequest(`cost_to_complete_detail_periods?cost_to_complete_detail_id=eq.${detail}&cost_period_id=eq.${period}`, {
+      method: "DELETE",
+      headers: { Prefer: "return=minimal" },
+    });
+    return;
+  }
+  await supabaseRequest("cost_to_complete_detail_periods?on_conflict=cost_to_complete_detail_id,cost_period_id", {
+    method: "POST",
+    headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+    body: JSON.stringify({ cost_to_complete_detail_id: detailId, cost_period_id: costPeriodId, qty: Number(qty) }),
+  });
 }
 
 export async function importCostToCompleteLedger(projectId: string, rows: CostToCompleteImportRow[], replace: boolean, onProgress?: (progress: number) => void) {
