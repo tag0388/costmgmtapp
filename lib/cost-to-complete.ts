@@ -36,7 +36,8 @@ export type CostToCompleteLedgerRow = CostToCompleteDetail & {
   period_qty: Record<string, number>;
 };
 
-export type CostToCompleteImportRow = Omit<CostToCompleteDetail, "id" | "project_id" | "created_at" | "updated_at"> & {
+export type CostToCompleteImportRow = Omit<CostToCompleteDetail, "id" | "project_id" | "created_at" | "updated_at" | "sort_order"> & {
+  sort_order?: number | null;
   period_qty: Record<string, number>;
 };
 
@@ -56,7 +57,6 @@ async function listLedger(projectId: string, costCodeId?: string): Promise<CostT
     `cost_to_complete_details?project_id=eq.${encodeURIComponent(projectId)}${costCodeFilter}&select=${encodeURIComponent(detailSelect)}&order=sort_order.asc.nullslast,created_at.asc`,
   );
   if (!details.length) return [];
-
   const periodRows: CostToCompletePeriodQty[] = [];
   const batchSize = 100;
   for (let index = 0; index < details.length; index += batchSize) {
@@ -66,7 +66,6 @@ async function listLedger(projectId: string, costCodeId?: string): Promise<CostT
     );
     periodRows.push(...rows);
   }
-
   const byDetail = new Map<string, Record<string, number>>();
   periodRows.forEach((row) => {
     const values = byDetail.get(row.cost_to_complete_detail_id) ?? {};
@@ -76,89 +75,52 @@ async function listLedger(projectId: string, costCodeId?: string): Promise<CostT
   return details.map((row) => ({ ...row, rate: Number(row.rate), sort_order: row.sort_order == null ? null : Number(row.sort_order), period_qty: byDetail.get(row.id) ?? {} }));
 }
 
-export function listCostToCompleteLedger(projectId: string) {
-  return listLedger(projectId);
-}
-
-export function listCostToCompleteLedgerForCostCode(projectId: string, costCodeId: string) {
-  return listLedger(projectId, costCodeId);
-}
+export function listCostToCompleteLedger(projectId: string) { return listLedger(projectId); }
+export function listCostToCompleteLedgerForCostCode(projectId: string, costCodeId: string) { return listLedger(projectId, costCodeId); }
 
 export async function createCostToCompleteDetail(projectId: string, row: Omit<CostToCompleteImportRow, "period_qty">) {
-  const body = { project_id: projectId, ...row };
+  const body = { project_id: projectId, ...row, sort_order: row.sort_order ?? null };
   const rows = await supabaseRequest<CostToCompleteDetail[]>(`cost_to_complete_details?select=${encodeURIComponent(detailSelect)}`, {
-    method: "POST",
-    headers: { Prefer: "return=representation" },
-    body: JSON.stringify(body),
+    method: "POST", headers: { Prefer: "return=representation" }, body: JSON.stringify(body),
   });
   return { ...rows[0], rate: Number(rows[0].rate), sort_order: rows[0].sort_order == null ? null : Number(rows[0].sort_order), period_qty: {} } as CostToCompleteLedgerRow;
 }
 
 export async function updateCostToCompleteDetail(id: string, patch: CostToCompleteEditablePatch) {
   const rows = await supabaseRequest<CostToCompleteDetail[]>(`cost_to_complete_details?id=eq.${encodeURIComponent(id)}&select=${encodeURIComponent(detailSelect)}`, {
-    method: "PATCH",
-    headers: { Prefer: "return=representation" },
-    body: JSON.stringify(patch),
+    method: "PATCH", headers: { Prefer: "return=representation" }, body: JSON.stringify(patch),
   });
   return rows[0];
 }
 
 export async function deleteCostToCompleteDetails(ids: string[]) {
   if (!ids.length) return;
-  await supabaseRequest(`cost_to_complete_details?id=in.(${ids.map(encodeURIComponent).join(",")})`, {
-    method: "DELETE",
-    headers: { Prefer: "return=minimal" },
-  });
+  await supabaseRequest(`cost_to_complete_details?id=in.(${ids.map(encodeURIComponent).join(",")})`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
 }
 
 export async function setCostToCompletePeriodQty(detailId: string, costPeriodId: string, qty: number) {
-  const detail = encodeURIComponent(detailId);
-  const period = encodeURIComponent(costPeriodId);
+  const detail = encodeURIComponent(detailId); const period = encodeURIComponent(costPeriodId);
   if (Number(qty) === 0) {
-    await supabaseRequest(`cost_to_complete_detail_periods?cost_to_complete_detail_id=eq.${detail}&cost_period_id=eq.${period}`, {
-      method: "DELETE",
-      headers: { Prefer: "return=minimal" },
-    });
+    await supabaseRequest(`cost_to_complete_detail_periods?cost_to_complete_detail_id=eq.${detail}&cost_period_id=eq.${period}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
     return;
   }
   await supabaseRequest("cost_to_complete_detail_periods?on_conflict=cost_to_complete_detail_id,cost_period_id", {
-    method: "POST",
-    headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
-    body: JSON.stringify({ cost_to_complete_detail_id: detailId, cost_period_id: costPeriodId, qty: Number(qty) }),
+    method: "POST", headers: { Prefer: "resolution=merge-duplicates,return=minimal" }, body: JSON.stringify({ cost_to_complete_detail_id: detailId, cost_period_id: costPeriodId, qty: Number(qty) }),
   });
 }
 
 export async function importCostToCompleteLedger(projectId: string, rows: CostToCompleteImportRow[], replace: boolean, onProgress?: (progress: number) => void) {
-  if (replace) {
-    await supabaseRequest(`cost_to_complete_details?project_id=eq.${encodeURIComponent(projectId)}`, {
-      method: "DELETE",
-      headers: { Prefer: "return=minimal" },
-    });
-  }
-
+  if (replace) await supabaseRequest(`cost_to_complete_details?project_id=eq.${encodeURIComponent(projectId)}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
   const batchSize = 100;
   for (let index = 0; index < rows.length; index += batchSize) {
     const batch = rows.slice(index, index + batchSize);
     const parents = batch.map((row) => {
-      const id = crypto.randomUUID();
-      const { period_qty, ...detail } = row;
-      return { id, project_id: projectId, ...detail, _period_qty: period_qty };
+      const id = crypto.randomUUID(); const { period_qty, ...detail } = row;
+      return { id, project_id: projectId, ...detail, sort_order: detail.sort_order ?? null, _period_qty: period_qty };
     });
-    await supabaseRequest("cost_to_complete_details", {
-      method: "POST",
-      headers: { Prefer: "return=minimal" },
-      body: JSON.stringify(parents.map(({ _period_qty, ...parent }) => parent)),
-    });
-    const periods = parents.flatMap((parent) => Object.entries(parent._period_qty)
-      .filter(([, qty]) => Number(qty) !== 0)
-      .map(([cost_period_id, qty]) => ({ cost_to_complete_detail_id: parent.id, cost_period_id, qty: Number(qty) })));
-    if (periods.length) {
-      await supabaseRequest("cost_to_complete_detail_periods", {
-        method: "POST",
-        headers: { Prefer: "return=minimal" },
-        body: JSON.stringify(periods),
-      });
-    }
+    await supabaseRequest("cost_to_complete_details", { method: "POST", headers: { Prefer: "return=minimal" }, body: JSON.stringify(parents.map(({ _period_qty, ...parent }) => parent)) });
+    const periodValues = parents.flatMap((parent) => Object.entries(parent._period_qty).filter(([, qty]) => Number(qty) !== 0).map(([cost_period_id, qty]) => ({ cost_to_complete_detail_id: parent.id, cost_period_id, qty: Number(qty) })));
+    if (periodValues.length) await supabaseRequest("cost_to_complete_detail_periods", { method: "POST", headers: { Prefer: "return=minimal" }, body: JSON.stringify(periodValues) });
     onProgress?.((Math.min(index + batch.length, rows.length) / Math.max(rows.length, 1)) * 100);
   }
 }
