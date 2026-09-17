@@ -93,6 +93,17 @@ export async function createCostToCompleteDetail(projectId: string, row: Omit<Co
   return { ...rows[0], rate: Number(rows[0].rate), period_qty: {} } as CostToCompleteLedgerRow;
 }
 
+export async function createCostToCompleteDetails(projectId: string, inputRows: Omit<CostToCompleteImportRow, "period_qty">[]) {
+  if (!inputRows.length) return [];
+  const body = inputRows.map((row) => ({ project_id: projectId, ...row }));
+  const rows = await supabaseRequest<CostToCompleteDetail[]>(`cost_to_complete_details?select=${encodeURIComponent(detailSelect)}`, {
+    method: "POST",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify(body),
+  });
+  return rows.map((row) => ({ ...row, rate: Number(row.rate), period_qty: {} })) as CostToCompleteLedgerRow[];
+}
+
 export async function updateCostToCompleteDetail(id: string, patch: CostToCompleteEditablePatch) {
   const rows = await supabaseRequest<CostToCompleteDetail[]>(`cost_to_complete_details?id=eq.${encodeURIComponent(id)}&select=${encodeURIComponent(detailSelect)}`, {
     method: "PATCH",
