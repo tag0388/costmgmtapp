@@ -20,6 +20,7 @@ export type CostToCompleteDetail = {
   rate: number;
   category: ResourceCategory | null;
   resource_source: CtcResourceSource;
+  row_order: number | null;
   created_at: string;
   updated_at: string;
 } & CtcAttributeValues;
@@ -35,7 +36,7 @@ export type CostToCompleteLedgerRow = CostToCompleteDetail & {
   period_qty: Record<string, number>;
 };
 
-export type CostToCompleteImportRow = Omit<CostToCompleteDetail, "id" | "project_id" | "created_at" | "updated_at"> & {
+export type CostToCompleteImportRow = Omit<CostToCompleteDetail, "id" | "project_id" | "row_order" | "created_at" | "updated_at"> & {
   period_qty: Record<string, number>;
 };
 
@@ -44,7 +45,7 @@ export type CostToCompleteEditablePatch = Partial<Pick<CostToCompleteDetail,
 >> & CtcAttributeValues;
 
 const detailSelect = [
-  "id", "project_id", "cost_code_id", "item", "description", "unit", "rate", "category", "resource_source", "created_at", "updated_at",
+  "id", "project_id", "cost_code_id", "item", "description", "unit", "rate", "category", "resource_source", "row_order", "created_at", "updated_at",
   ...CTC_ENTERPRISE_ATTRIBUTE_FIELDS,
   ...CTC_PROJECT_ATTRIBUTE_FIELDS,
 ].join(",");
@@ -72,7 +73,7 @@ async function listLedger(projectId: string, costCodeId?: string): Promise<CostT
     values[row.cost_period_id] = Number(row.qty);
     byDetail.set(row.cost_to_complete_detail_id, values);
   });
-  return details.map((row) => ({ ...row, rate: Number(row.rate), period_qty: byDetail.get(row.id) ?? {} }));
+  return details.map((row) => ({ ...row, rate: Number(row.rate), row_order: row.row_order == null ? null : Number(row.row_order), period_qty: byDetail.get(row.id) ?? {} }));
 }
 
 export function listCostToCompleteLedger(projectId: string) {
@@ -83,8 +84,8 @@ export function listCostToCompleteLedgerForCostCode(projectId: string, costCodeI
   return listLedger(projectId, costCodeId);
 }
 
-export async function createCostToCompleteDetail(projectId: string, row: Omit<CostToCompleteImportRow, "period_qty">) {
-  const body = { project_id: projectId, ...row };
+export async function createCostToCompleteDetail(projectId: string, row: Omit<CostToCompleteImportRow, "period_qty"> & { row_order?: number | null }) {
+  const body = { project_id: projectId, ...row, row_order: row.row_order ?? null };
   const rows = await supabaseRequest<CostToCompleteDetail[]>(`cost_to_complete_details?select=${encodeURIComponent(detailSelect)}`, {
     method: "POST",
     headers: { Prefer: "return=representation" },
