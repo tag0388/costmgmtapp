@@ -70,6 +70,12 @@ function formatCompactPeriodDate(value: string) {
 }
 function periodColumnLabel(period: CostReportingPeriod) { return `P${period.period_number}\n${formatCompactPeriodDate(period.end_date)}`; }
 function periodExcel(period: CostReportingPeriod) { return `P${period.period_number} | ${formatCompactPeriodDate(period.end_date)}`; }
+
+function orderedRows<T extends { id: string; row_order: number | null; created_at: string }>(input: T[]) {
+  const byCreated = [...input].sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at) || a.id.localeCompare(b.id));
+  const fallback = new Map(byCreated.map((row, index) => [row.id, (index + 1) * 1000]));
+  return [...input].sort((a, b) => (a.row_order ?? fallback.get(a.id) ?? 0) - (b.row_order ?? fallback.get(b.id) ?? 0) || a.id.localeCompare(b.id));
+}
 function numberFormat(value: unknown, decimals = 2) {
   const number = Number(value ?? 0);
   return Number.isFinite(number) ? new Intl.NumberFormat(undefined, { minimumFractionDigits: 0, maximumFractionDigits: decimals }).format(number) : "";
@@ -197,7 +203,7 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
   const [viewName, setViewName] = useState("");
   const [showSaveView, setShowSaveView] = useState(false);
   const [addCount, setAddCount] = useState(1);
-  const [focusedRowId, setFocusedRowId] = useState<string | null>(null);
+  const [insertAfterId, setInsertAfterId] = useState<string | null>(null);
   const [resourcePaneOpen, setResourcePaneOpen] = useState(false);
   const [resourceLibrary, setResourceLibrary] = useState<"enterprise" | "project">("enterprise");
   const [resourceSearch, setResourceSearch] = useState("");
@@ -249,13 +255,34 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
 
   useEffect(() => { void refresh(); }, [refresh]);
 
-  const actualGridRows = useMemo<ActualGridRow[]>(() => actualRows.map((row) => ({ ...row, period_label: periodById.get(row.cost_period_id) ? periodLabel(periodById.get(row.cost_period_id)!) : "" })), [actualRows, periodById]);
-  const ctcGridRows = useMemo<CtcGridRow[]>(() => ctcRows.map((row) => ({ ...row, resource_source_label: row.resource_source ?? "User" })), [ctcRows]);
+  const actualGridRows = useMemo<ActualGridRow[]>(() => orderedRows(actualRows.map((row) => ({ ...row, period_label: periodById.get(row.cost_period_id) ? periodLabel(periodById.get(row.cost_period_id)!) : "" }))), [actualRows, periodById]);
+  const ctcGridRows = useMemo<CtcGridRow[]>(() => orderedRows(ctcRows.map((row) => ({ ...row, resource_source_label: row.resource_source ?? "User" }))), [ctcRows]);
   const rows: RelatedGridRow[] = mode === "actual" ? actualGridRows : ctcGridRows;
 
+  function rowOrderAt(index: number) {
+    if (index < 0 || index >= rows.length) return 0;
+    return rows[index].row_order ?? (index + 1) * 1000;
+  }
+  function insertionOrders(count: number) {
+    const safeCount = Math.max(1, Math.min(100, Math.trunc(count || 1)));
+    const anchorIndex = insertAfterId ? rows.findIndex((row) => row.id === insertAfterId) : -1;
+    const index = anchorIndex >= 0 ? anchorIndex : rows.length - 1;
+    const current = index >= 0 ? rowOrderAt(index) : 0;
+    const hasNext = index + 1 < rows.length;
+    const next = hasNext ? rowOrderAt(index + 1) : current + (safeCount + 1) * 1000;
+    if (next > current) return Array.from({ length: safeCount }, (_, i) => current + ((next - current) * (i + 1)) / (safeCount + 1));
+    return Array.from({ length: safeCount }, (_, i) => current + (i + 1) * 1000);
+  }
   function showNotice(message: string) { setNotice(message); window.setTimeout(() => setNotice(""), 3000); }
   function syncGroupState(api: GridApi<RelatedGridRow> | null = gridApi) { setHasGroups((api?.getRowGroupColumns().length ?? 0) > 0); }
-  function selectionChanged(event: SelectionChangedEvent<RelatedGridRow>) { setSelectedCount(event.api.getSelectedRows().length); }
+  function selectionChanged(event: SelectionChangedEvent<RelatedGridRow>) {
+    const nodes = event.api.getSelectedNodes().filter((node) => node.data);
+    setSelectedCount(nodes.length);
+    if (nodes.length) {
+      const last = [...nodes].sort((a, b) => (a.rowIndex ?? -1) - (b.rowIndex ?? -1)).at(-1);
+      if (last?.data) setInsertAfterId(last.data.id);
+    }
+  }
   const attributeEditor = useCallback((definition: AttributeDefinition) => ({ cellEditor: "agSelectCellEditor", cellEditorParams: { values: ["", ...definition.attribute_values.filter((value) => value.is_active).map((value) => value.value_id)] }, valueFormatter: (params: { value: string | null }) => valueName(definition, params.value) }), []);
 
   const actualColumnDefs = useMemo<ColDef<ActualGridRow>[]>(() => [
@@ -330,42 +357,26 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
     finally { setSaving(false); }
   }
 
-  function insertionIndex<T extends { id: string }>(current: T[]) {
-    const selectedIds = new Set((gridApi?.getSelectedRows() ?? []).map((row) => row.id));
-    if (selectedIds.size) {
-      let last = -1;
-      current.forEach((row, index) => { if (selectedIds.has(row.id)) last = index; });
-      if (last >= 0) return last + 1;
-    }
-    if (focusedRowId) {
-      const focusedIndex = current.findIndex((row) => row.id === focusedRowId);
-      if (focusedIndex >= 0) return focusedIndex + 1;
-    }
-    return current.length;
-  }
-
-  function insertRows<T extends { id: string }>(current: T[], added: T[]) {
-    const index = insertionIndex(current);
-    return [...current.slice(0, index), ...added, ...current.slice(index)];
-  }
-
   async function addRows() {
     const count = Math.max(1, Math.min(100, Math.trunc(addCount) || 1));
+    const orders = insertionOrders(count);
     setAddCount(count);
     setSaving(true); setError("");
     try {
       if (mode === "actual") {
         const period = periods.find((p) => p.status === "Current") ?? periods.find((p) => p.status !== "Closed") ?? periods[0];
         if (!period) throw new Error("Create a Cost Reporting Period before adding Actual Cost.");
-        const input = Array.from({ length: count }, () => ({ cost_period_id: period.id, cost_code_id: costCode.id, transaction_date: period.end_date, transaction_id: null, description: "", amount: 0, transaction_type: "MAN" as TransactionType, ...Object.fromEntries(actualAttributes.map((a) => [a.field, null])) }));
+        const input = orders.map((rowOrder) => ({ cost_period_id: period.id, cost_code_id: costCode.id, transaction_date: period.end_date, transaction_id: null, description: "", amount: 0, transaction_type: "MAN" as TransactionType, row_order: rowOrder, ...Object.fromEntries(actualAttributes.map((a) => [a.field, null])) }));
         const created = await createActualCostTransactions(project.id, input);
-        setActualRows((current) => insertRows(current, created));
+        setActualRows((current) => [...current, ...created]);
+        if (created.length) setInsertAfterId(created.at(-1)!.id);
       } else {
-        const input = Array.from({ length: count }, () => ({ cost_code_id: costCode.id, item: null, description: null, unit: null, rate: 0, category: null, resource_source: null, ...Object.fromEntries(ctcAttributes.map((a) => [a.field, null])) }));
+        const input = orders.map((rowOrder) => ({ cost_code_id: costCode.id, item: null, description: null, unit: null, rate: 0, category: null, resource_source: null, row_order: rowOrder, ...Object.fromEntries(ctcAttributes.map((a) => [a.field, null])) }));
         const created = await createCostToCompleteDetails(project.id, input);
-        setCtcRows((current) => insertRows(current, created));
+        setCtcRows((current) => [...current, ...created]);
+        if (created.length) setInsertAfterId(created.at(-1)!.id);
       }
-      showNotice(`${count} row${count === 1 ? "" : "s"} added${focusedRowId || selectedCount ? " below the selection" : ""}.`);
+      showNotice(`${count} row${count === 1 ? "" : "s"} added${insertAfterId || selectedCount ? " below the selection" : ""}.`);
     } catch (requestError) { setError(mode === "actual" ? actualCostErrorMessage(requestError) : costToCompleteErrorMessage(requestError)); }
     finally { setSaving(false); }
   }
@@ -378,7 +389,8 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
     if (!selectedResources.length) return;
     setSaving(true); setError("");
     try {
-      const created = await createCostToCompleteDetails(project.id, selectedResources.map((resource) => ({
+      const orders = insertionOrders(selectedResources.length);
+      const created = await createCostToCompleteDetails(project.id, selectedResources.map((resource, index) => ({
         cost_code_id: costCode.id,
         resource_source: resourceLibrary === "enterprise" ? "ERes" as CtcResourceSource : "PRes" as CtcResourceSource,
         item: resource.resource_id,
@@ -386,9 +398,11 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
         unit: resource.unit,
         rate: Number(resource.rate),
         category: resource.category,
+        row_order: orders[index],
         ...Object.fromEntries(ctcAttributes.map((a) => [a.field, null])),
       })));
-      setCtcRows((current) => insertRows(current, created));
+      setCtcRows((current) => [...current, ...created]);
+      if (created.length) setInsertAfterId(created.at(-1)!.id);
       setSelectedResourceIds([]);
       setResourcePaneOpen(false);
       showNotice(`${created.length} resource${created.length === 1 ? "" : "s"} added below the selection.`);
@@ -601,7 +615,7 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
             getRowId={(params) => params.data.id}
             onGridReady={(event) => { setGridApi(event.api); syncGroupState(event.api); }}
             onSelectionChanged={selectionChanged}
-            onCellFocused={(event) => { const node = event.rowIndex == null ? null : event.api.getDisplayedRowAtIndex(event.rowIndex); setFocusedRowId(node?.data?.id ?? null); }}
+            onCellFocused={(event) => { const node = event.rowIndex == null ? null : event.api.getDisplayedRowAtIndex(event.rowIndex); if (node?.data) setInsertAfterId(node.data.id); }}
             onColumnRowGroupChanged={(event) => syncGroupState(event.api)}
             onCellValueChanged={(event) => mode === "actual" ? void actualChanged(event as CellValueChangedEvent<ActualGridRow>) : void ctcChanged(event as CellValueChangedEvent<CtcGridRow>)}
             rowGroupPanelShow="always"
