@@ -95,6 +95,27 @@ export async function createActualCostTransaction(projectId: string, row: Actual
   return rows[0];
 }
 
+export async function createActualCostTransactions(projectId: string, inputRows: ActualCostImportRow[]) {
+  if (!inputRows.length) return [];
+  const body = inputRows.map((row) => ({
+    project_id: projectId,
+    cost_period_id: row.cost_period_id,
+    cost_code_id: row.cost_code_id,
+    transaction_date: row.transaction_date,
+    transaction_id: row.transaction_id?.trim() || null,
+    description: row.description.trim(),
+    amount: row.amount,
+    transaction_type: row.transaction_type,
+    reversal_of_transaction_id: null,
+    ...Object.fromEntries(ATTRIBUTE_FIELDS.map((field) => [field, row[field] ?? null])),
+  }));
+  return supabaseRequest<ActualCostTransaction[]>(`actual_cost_transactions?select=${encodeURIComponent(select)}`, {
+    method: "POST",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify(body),
+  });
+}
+
 export async function updateActualCostTransaction(id: string, patch: ActualCostEditablePatch) {
   const body = {
     ...patch,
