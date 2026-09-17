@@ -34,6 +34,10 @@ export type ActualCostImportRow = {
   transaction_type: TransactionType;
 } & ActualAttributeValues;
 
+export type ActualCostEditablePatch = Partial<Pick<ActualCostImportRow,
+  "cost_period_id" | "transaction_date" | "transaction_id" | "description" | "amount" | "transaction_type"
+>> & ActualAttributeValues;
+
 const ATTRIBUTE_FIELDS = [...ACTUAL_ENTERPRISE_ATTRIBUTE_FIELDS, ...ACTUAL_PROJECT_ATTRIBUTE_FIELDS];
 const select = [
   "id", "project_id", "cost_period_id", "cost_code_id", "transaction_date", "transaction_id", "description", "amount", "transaction_type", "reversal_of_transaction_id", "created_at", "updated_at",
@@ -43,6 +47,12 @@ const select = [
 export function listActualCostTransactions(projectId: string) {
   return supabaseRequest<ActualCostTransaction[]>(
     `actual_cost_transactions?project_id=eq.${encodeURIComponent(projectId)}&select=${encodeURIComponent(select)}&order=transaction_date.asc,created_at.asc`,
+  );
+}
+
+export function listActualCostTransactionsForCostCode(projectId: string, costCodeId: string) {
+  return supabaseRequest<ActualCostTransaction[]>(
+    `actual_cost_transactions?project_id=eq.${encodeURIComponent(projectId)}&cost_code_id=eq.${encodeURIComponent(costCodeId)}&select=${encodeURIComponent(select)}&order=transaction_date.asc,created_at.asc`,
   );
 }
 
@@ -61,6 +71,49 @@ async function insertRow(projectId: string, row: ActualCostImportRow) {
   };
   await supabaseRequest("actual_cost_transactions", {
     method: "POST", headers: { Prefer: "return=minimal" }, body: JSON.stringify(body),
+  });
+}
+
+export async function createActualCostTransaction(projectId: string, row: ActualCostImportRow) {
+  const body = {
+    project_id: projectId,
+    cost_period_id: row.cost_period_id,
+    cost_code_id: row.cost_code_id,
+    transaction_date: row.transaction_date,
+    transaction_id: row.transaction_id?.trim() || null,
+    description: row.description.trim(),
+    amount: row.amount,
+    transaction_type: row.transaction_type,
+    reversal_of_transaction_id: null,
+    ...Object.fromEntries(ATTRIBUTE_FIELDS.map((field) => [field, row[field] ?? null])),
+  };
+  const rows = await supabaseRequest<ActualCostTransaction[]>(`actual_cost_transactions?select=${encodeURIComponent(select)}`, {
+    method: "POST",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify(body),
+  });
+  return rows[0];
+}
+
+export async function updateActualCostTransaction(id: string, patch: ActualCostEditablePatch) {
+  const body = {
+    ...patch,
+    ...(patch.transaction_id !== undefined ? { transaction_id: patch.transaction_id?.trim() || null } : {}),
+    ...(patch.description !== undefined ? { description: patch.description.trim() } : {}),
+  };
+  const rows = await supabaseRequest<ActualCostTransaction[]>(`actual_cost_transactions?id=eq.${encodeURIComponent(id)}&select=${encodeURIComponent(select)}`, {
+    method: "PATCH",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify(body),
+  });
+  return rows[0];
+}
+
+export async function deleteActualCostTransactions(ids: string[]) {
+  if (!ids.length) return;
+  await supabaseRequest(`actual_cost_transactions?id=in.(${ids.map(encodeURIComponent).join(",")})`, {
+    method: "DELETE",
+    headers: { Prefer: "return=minimal" },
   });
 }
 

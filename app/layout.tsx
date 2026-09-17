@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import AgGridGlobalConfig from "@/components/ag-grid-global-config";
+import CostCodeActionPointerBridge from "@/components/cost-code-action-pointer-bridge";
 import "./globals.css";
 import "./table-grid-enhancements.css";
 
@@ -13,6 +14,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     <html lang="en">
       <body>
         <AgGridGlobalConfig />
+        <CostCodeActionPointerBridge />
         {children}
       </body>
     </html>
