@@ -330,7 +330,7 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
         <button className="button secondary" onClick={() => void refresh()} disabled={loading}>↻ Refresh</button>
         <button className="button danger" disabled={!selected.length} onClick={() => void deactivateSelected()}>Deactivate{selected.length > 1 ? ` (${selected.length})` : ""}</button>
       </div>
-      <div className="data-message" style={{ minHeight: 48 }}><span>Right-click a column header to show, hide or pin columns. Drag columns into the grouping bar above the table to create multiple group levels. Expand/Collapse becomes available when grouping is active. Use the ⋯ icon in Actions to open related Actual Cost or Cost to Complete records for a Cost Code.</span></div>
+      <div className="data-message" style={{ minHeight: 48 }}><span>Right-click a column header to show, hide or pin columns. Drag columns into the grouping bar above the table to create multiple group levels. Expand/Collapse becomes available when grouping is active. Use the related-records icon in Actions to open a full-screen Actual Cost or Cost to Complete workspace for that Cost Code.</span></div>
       {error && <div className="data-message error"><strong>Unable to load cost codes</strong><span>{error}</span></div>}
       {!error && loading && <div className="data-message"><span className="spinner"/>Loading cost codes…</div>}
       {!error && !loading && <AgGridProvider modules={[AllEnterpriseModule]} licenseKey={process.env.NEXT_PUBLIC_AG_GRID_LICENSE_KEY ?? ""}>
@@ -359,107 +359,29 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
       <div className="grid-footer"><span>{rows.length} of {costCodes.length} cost codes · {selected.length} selected</span><span>{activeEnterprise.length} enterprise + {activeProject.length} project cost code attributes</span></div>
     </section>
 
-    {project && editing && <CostCodeDrawer projectId={project.id} costCode={editing === "new" ? null : editing} enterpriseAttributes={activeEnterprise} projectAttributes={activeProject} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); showNotice("Cost code saved."); await refresh(); }}/>} 
-    {bulkOpen && <BulkAttributeModal selectedIds={selected} enterpriseAttributes={activeEnterprise} projectAttributes={activeProject} onClose={() => setBulkOpen(false)} onSaved={async () => { setBulkOpen(false); setSelected([]); gridApi?.deselectAll(); showNotice("Selected cost code attributes updated."); await refresh(); }}/>} 
+    {editing && <CostCodeForm projectId={project!.id} value={editing === "new" ? null : editing} enterpriseAttributes={activeEnterprise} projectAttributes={activeProject} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); showNotice("Cost code saved."); void refresh(); }}/>} 
+    {bulkOpen && project && <BulkAttributeDialog selected={selected} enterpriseAttributes={activeEnterprise} projectAttributes={activeProject} onClose={() => setBulkOpen(false)} onSaved={() => { setBulkOpen(false); showNotice("Selected cost codes updated."); void refresh(); }}/>} 
     {importRows && <ExcelImportDialog title="Import Cost Codes" rows={importRows} columns={excelColumns} errors={importErrors} replace={replace} setReplace={setReplace} importing={importing} progress={progress} onCancel={() => !importing && setImportRows(null)} onImport={() => void runImport()}/>} 
-    {showSaveView && <CenteredModal title="Save Cost Code View" onClose={() => setShowSaveView(false)}><label className="form-field"><span>View Name</span><input autoFocus maxLength={80} value={viewName} onChange={(event) => setViewName(event.target.value)} placeholder="e.g. Commercial Review"/></label><p className="muted-value" style={{ marginTop: 10 }}>This saves column visibility, order, width, sorting, grouping, pinning and filters for the Cost Codes grid in Supabase.</p><div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 18 }}><button className="button secondary" onClick={() => setShowSaveView(false)}>Cancel</button><button className="button primary" disabled={!viewName.trim()} onClick={() => void saveView()}>Save View</button></div></CenteredModal>}
+    {showSaveView && <SaveViewDialog initialName={viewName} onClose={() => setShowSaveView(false)} onSave={(name) => { setViewName(name); window.setTimeout(() => void saveView(), 0); }}/>} 
     {notice && <div className="admin-toast">{notice}</div>}
   </div>;
 }
 
-function BulkAttributeModal({ selectedIds, enterpriseAttributes, projectAttributes, onClose, onSaved }: { selectedIds: string[]; enterpriseAttributes: EnterpriseAttributeDefinition[]; projectAttributes: ProjectAttributeDefinition[]; onClose: () => void; onSaved: () => void }) {
-  const choices = useMemo<BulkAttributeChoice[]>(() => [
-    ...enterpriseAttributes.map((definition) => ({ field: enterpriseField(definition.attribute_number), prefix: "E" as const, definition })),
-    ...projectAttributes.map((definition) => ({ field: projectField(definition.attribute_number), prefix: "P" as const, definition })),
-  ], [enterpriseAttributes, projectAttributes]);
-  const [values, setValues] = useState<Record<string, string>>(() => Object.fromEntries(choices.map((choice) => [choice.field, KEEP])));
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-  const changedCount = choices.filter((choice) => (values[choice.field] ?? KEEP) !== KEEP).length;
-
-  async function apply() {
-    const patch: CostCodeAttributePatch = {};
-    choices.forEach((choice) => {
-      const value = values[choice.field] ?? KEEP;
-      if (value === KEEP) return;
-      patch[choice.field] = value === CLEAR ? null : value;
-    });
-    if (!Object.keys(patch).length) return setError("Choose at least one attribute to change.");
-    setSaving(true); setError("");
-    try { await bulkUpdateCostCodeAttributes(selectedIds, patch); onSaved(); }
-    catch (requestError) { setError(costCodeErrorMessage(requestError)); }
-    finally { setSaving(false); }
-  }
-
-  return <CenteredModal title={`Bulk Edit Attributes · ${selectedIds.length} Cost Codes`} onClose={onClose} wide>
-    <p className="muted-value" style={{ marginTop: 0 }}>Only attributes you change below will be updated. All fields left as “Leave unchanged” keep their current values.</p>
-    {error && <div className="form-error" style={{ marginTop: 12 }}>{error}</div>}
-    <div style={{ maxHeight: "58vh", overflow: "auto", marginTop: 16, paddingRight: 4 }}>
-      {choices.length === 0 && <div className="data-message">No active Cost Code attributes are configured.</div>}
-      {choices.map(({ field, prefix, definition }) => <label className="form-field" key={field} style={{ marginBottom: 10 }}>
-        <span>{definition.name}<small>{prefix}{String(definition.attribute_number).padStart(2, "0")}</small></span>
-        <select value={values[field] ?? KEEP} onChange={(event) => setValues((current) => ({ ...current, [field]: event.target.value }))}>
-          <option value={KEEP}>— Leave unchanged —</option>
-          <option value={CLEAR}>— Clear value —</option>
-          {definition.attribute_values.filter((value) => value.is_active).map((value) => <option key={value.id} value={value.value_id}>{value.value_name}</option>)}
-        </select>
-      </label>)}
-    </div>
-    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginTop: 18 }}><span className="muted-value">{changedCount} attribute{changedCount === 1 ? "" : "s"} will change</span><div style={{ display: "flex", gap: 8 }}><button className="button secondary" disabled={saving} onClick={onClose}>Cancel</button><button className="button primary" disabled={saving || !changedCount} onClick={() => void apply()}>{saving ? "Applying…" : `Apply to ${selectedIds.length}`}</button></div></div>
-  </CenteredModal>;
+function CostCodeForm({ projectId, value, enterpriseAttributes, projectAttributes, onClose, onSaved }: { projectId: string; value: CostCode | null; enterpriseAttributes: EnterpriseAttributeDefinition[]; projectAttributes: ProjectAttributeDefinition[]; onClose: () => void; onSaved: () => void }) {
+  const [form, setForm] = useState<Form>(() => value ? { cost_code_id: value.cost_code_id, name: value.name, description: value.description, eac_method: value.eac_method, baseline_timephasing_method: value.baseline_timephasing_method, current_budget_timephasing_method: value.current_budget_timephasing_method, ctc_timephasing_method: value.ctc_timephasing_method, manual_eac: value.manual_eac, is_active: value.is_active, ...Object.fromEntries(enterpriseAttributes.map((definition) => [enterpriseField(definition.attribute_number), value[enterpriseField(definition.attribute_number)] ?? null])), ...Object.fromEntries(projectAttributes.map((definition) => [projectField(definition.attribute_number), value[projectField(definition.attribute_number)] ?? null])) } as Form : blankForm);
+  const [error, setError] = useState(""); const [saving, setSaving] = useState(false);
+  async function save(event: React.FormEvent) { event.preventDefault(); setSaving(true); setError(""); try { if (value) await updateCostCode(value.id, form); else await createCostCode({ project_id: projectId, ...form }); onSaved(); } catch (requestError) { setError(costCodeErrorMessage(requestError)); } finally { setSaving(false); } }
+  return <div className="confirm-layer"><button className="confirm-scrim" onClick={onClose} aria-label="Close"/><form className="confirm-dialog" onSubmit={save} style={{ width: "min(700px, 94vw)", maxHeight: "90vh", overflow: "auto" }}><h2>{value ? "Edit Cost Code" : "Add Cost Code"}</h2>{error && <div className="data-message error"><span>{error}</span></div>}<div className="form-grid"><label><span>Cost Code ID</span><input value={form.cost_code_id} maxLength={30} required onChange={(e) => setForm({ ...form, cost_code_id: e.target.value })}/></label><label><span>Cost Code Name</span><input value={form.name} maxLength={100} required onChange={(e) => setForm({ ...form, name: e.target.value })}/></label><label className="form-span-2"><span>Description</span><input value={form.description ?? ""} maxLength={255} onChange={(e) => setForm({ ...form, description: e.target.value || null })}/></label><label><span>EAC Method</span><select value={form.eac_method} onChange={(e) => setForm({ ...form, eac_method: e.target.value as EacMethod })}>{EAC_METHODS.map((item) => <option key={item}>{item}</option>)}</select></label><label><span>Manual EAC</span><input type="number" step="any" value={form.manual_eac ?? ""} onChange={(e) => setForm({ ...form, manual_eac: e.target.value === "" ? null : Number(e.target.value) })}/></label><label><span>Baseline Timephasing</span><select value={form.baseline_timephasing_method} onChange={(e) => setForm({ ...form, baseline_timephasing_method: e.target.value as TimephasingMethod })}>{BUDGET_TIMEPHASING_METHODS.map((item) => <option key={item}>{item}</option>)}</select></label><label><span>Current Budget Timephasing</span><select value={form.current_budget_timephasing_method} onChange={(e) => setForm({ ...form, current_budget_timephasing_method: e.target.value as TimephasingMethod })}>{BUDGET_TIMEPHASING_METHODS.map((item) => <option key={item}>{item}</option>)}</select></label><label><span>CTC Timephasing</span><select value={form.ctc_timephasing_method} onChange={(e) => setForm({ ...form, ctc_timephasing_method: e.target.value as TimephasingMethod })}>{CTC_TIMEPHASING_METHODS.map((item) => <option key={item}>{item}</option>)}</select></label><label><span>Status</span><select value={form.is_active ? "Active" : "Inactive"} onChange={(e) => setForm({ ...form, is_active: e.target.value === "Active" })}><option>Active</option><option>Inactive</option></select></label>{enterpriseAttributes.map((definition) => { const field = enterpriseField(definition.attribute_number); return <label key={field}><span>{definition.name}</span><select value={String(form[field] ?? "")} onChange={(e) => setForm({ ...form, [field]: e.target.value || null })}><option value="">—</option>{definition.attribute_values.filter((v) => v.is_active || v.value_id === form[field]).map((v) => <option key={v.value_id} value={v.value_id}>{v.value_name}</option>)}</select></label>; })}{projectAttributes.map((definition) => { const field = projectField(definition.attribute_number); return <label key={field}><span>{definition.name}</span><select value={String(form[field] ?? "")} onChange={(e) => setForm({ ...form, [field]: e.target.value || null })}><option value="">—</option>{definition.attribute_values.filter((v) => v.is_active || v.value_id === form[field]).map((v) => <option key={v.value_id} value={v.value_id}>{v.value_name}</option>)}</select></label>; })}</div><div className="confirm-actions"><button type="button" className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={saving}>{saving ? "Saving…" : "Save"}</button></div></form></div>;
 }
 
-function CostCodeDrawer({ projectId, costCode, enterpriseAttributes, projectAttributes, onClose, onSaved }: { projectId: string; costCode: CostCode | null; enterpriseAttributes: EnterpriseAttributeDefinition[]; projectAttributes: ProjectAttributeDefinition[]; onClose: () => void; onSaved: () => void }) {
-  const [form, setForm] = useState<Form>(costCode ? {
-    cost_code_id: costCode.cost_code_id,
-    name: costCode.name,
-    description: costCode.description,
-    eac_method: costCode.eac_method,
-    baseline_timephasing_method: costCode.baseline_timephasing_method,
-    current_budget_timephasing_method: costCode.current_budget_timephasing_method,
-    ctc_timephasing_method: costCode.ctc_timephasing_method,
-    manual_eac: costCode.manual_eac,
-    is_active: costCode.is_active,
-    ...Object.fromEntries(enterpriseAttributes.map((definition) => [enterpriseField(definition.attribute_number), costCode[enterpriseField(definition.attribute_number)] ?? null])),
-    ...Object.fromEntries(projectAttributes.map((definition) => [projectField(definition.attribute_number), costCode[projectField(definition.attribute_number)] ?? null])),
-  } : blankForm);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-
-  async function save() {
-    if (!form.cost_code_id.trim() || !form.name.trim()) return setError("Cost Code ID and Cost Code Name are required.");
-    if (form.cost_code_id.trim().length > 30 || form.name.trim().length > 100) return setError("Cost Code ID max 30 characters; Cost Code Name max 100 characters.");
-    if ((form.description ?? "").length > 255) return setError("Description cannot exceed 255 characters.");
-    if (form.eac_method === "Manual" && form.manual_eac == null) return setError("Manual EAC is required when EAC Method is Manual.");
-    setSaving(true); setError("");
-    const clean = { ...form, cost_code_id: form.cost_code_id.trim(), name: form.name.trim(), description: form.description?.trim() || null, manual_eac: form.eac_method === "Manual" ? form.manual_eac : null };
-    try { if (costCode) await updateCostCode(costCode.id, clean); else await createCostCode({ project_id: projectId, ...clean }); onSaved(); }
-    catch (requestError) { setError(costCodeErrorMessage(requestError)); }
-    finally { setSaving(false); }
-  }
-
-  return <><button className="drawer-scrim" onClick={onClose}/><aside className="admin-drawer"><header><div><span>{costCode ? "Edit" : "New"}</span><h2>{costCode ? costCode.name : "Cost Code"}</h2></div><button onClick={onClose}>×</button></header><div className="drawer-body">{error && <div className="form-error">{error}</div>}
-    <div className="form-grid"><label className="form-field"><span>Cost Code ID <b>*</b><small>{form.cost_code_id.length}/30</small></span><input maxLength={30} value={form.cost_code_id} onChange={(event) => setForm({ ...form, cost_code_id: event.target.value })}/></label><label className="form-field"><span>Cost Code Name <b>*</b><small>{form.name.length}/100</small></span><input maxLength={100} value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })}/></label></div>
-    <label className="form-field" style={{ marginTop: 12 }}><span>Description <small>{(form.description ?? "").length}/255</small></span><textarea maxLength={255} value={form.description ?? ""} onChange={(event) => setForm({ ...form, description: event.target.value })}/></label>
-    {enterpriseAttributes.length > 0 && <AttributeSection title="Enterprise Cost Code Attributes" prefix="E" definitions={enterpriseAttributes} form={form} setForm={setForm}/>} 
-    {projectAttributes.length > 0 && <AttributeSection title="Project Cost Code Attributes" prefix="P" definitions={projectAttributes} form={form} setForm={setForm}/>} 
-    <div className="form-grid" style={{ marginTop: 18 }}><label className="form-field"><span>EAC Method</span><select value={form.eac_method} onChange={(event) => setForm({ ...form, eac_method: event.target.value as EacMethod })}>{EAC_METHODS.map((value) => <option key={value}>{value}</option>)}</select></label><label className="form-field"><span>Manual EAC</span><input type="number" step="0.01" disabled={form.eac_method !== "Manual"} value={form.manual_eac ?? ""} onChange={(event) => setForm({ ...form, manual_eac: event.target.value === "" ? null : Number(event.target.value) })}/></label></div>
-    <div className="form-grid" style={{ marginTop: 12 }}><label className="form-field"><span>Baseline Timephasing</span><select value={form.baseline_timephasing_method} onChange={(event) => setForm({ ...form, baseline_timephasing_method: event.target.value as TimephasingMethod })}>{BUDGET_TIMEPHASING_METHODS.map((value) => <option key={value}>{value}</option>)}</select></label><label className="form-field"><span>Current Budget Timephasing</span><select value={form.current_budget_timephasing_method} onChange={(event) => setForm({ ...form, current_budget_timephasing_method: event.target.value as TimephasingMethod })}>{BUDGET_TIMEPHASING_METHODS.map((value) => <option key={value}>{value}</option>)}</select></label></div>
-    <label className="form-field" style={{ marginTop: 12 }}><span>Cost to Complete Timephasing</span><select value={form.ctc_timephasing_method} onChange={(event) => setForm({ ...form, ctc_timephasing_method: event.target.value as TimephasingMethod })}>{CTC_TIMEPHASING_METHODS.map((value) => <option key={value}>{value}</option>)}</select></label>
-    <label className="toggle-field" style={{ marginTop: 16 }}><span><strong>Active</strong><small>Inactive cost codes remain available for historical reporting.</small></span><input type="checkbox" checked={form.is_active} onChange={(event) => setForm({ ...form, is_active: event.target.checked })}/><i/></label>
-  </div><footer><button className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={saving} onClick={() => void save()}>{saving ? "Saving…" : "Save"}</button></footer></aside></>;
+function BulkAttributeDialog({ selected, enterpriseAttributes, projectAttributes, onClose, onSaved }: { selected: string[]; enterpriseAttributes: EnterpriseAttributeDefinition[]; projectAttributes: ProjectAttributeDefinition[]; onClose: () => void; onSaved: () => void }) {
+  const choices = useMemo<BulkAttributeChoice[]>(() => [...enterpriseAttributes.map((definition) => ({ field: enterpriseField(definition.attribute_number), prefix: "E" as const, definition })), ...projectAttributes.map((definition) => ({ field: projectField(definition.attribute_number), prefix: "P" as const, definition }))], [enterpriseAttributes, projectAttributes]);
+  const [values, setValues] = useState<Record<string, string>>(Object.fromEntries(choices.map((choice) => [choice.field, KEEP]))); const [error, setError] = useState(""); const [saving, setSaving] = useState(false);
+  async function save() { const patch: CostCodeAttributePatch = {}; choices.forEach((choice) => { const choiceValue = values[choice.field]; if (choiceValue === KEEP) return; patch[choice.field] = choiceValue === CLEAR ? null : choiceValue; }); if (!Object.keys(patch).length) { setError("Choose at least one attribute to update."); return; } setSaving(true); try { await bulkUpdateCostCodeAttributes(selected, patch); onSaved(); } catch (requestError) { setError(costCodeErrorMessage(requestError)); } finally { setSaving(false); } }
+  return <div className="confirm-layer"><button className="confirm-scrim" onClick={onClose} aria-label="Close"/><div className="confirm-dialog" style={{ width: "min(620px, 94vw)" }}><h2>Bulk Edit {selected.length} Cost Code{selected.length === 1 ? "" : "s"}</h2><p>Only attributes set below will change. All others stay unchanged.</p>{error && <div className="data-message error"><span>{error}</span></div>}<div className="form-grid">{choices.map((choice) => <label key={choice.field}><span>{choice.definition.name} ({choice.prefix}{String(choice.definition.attribute_number).padStart(2, "0")})</span><select value={values[choice.field]} onChange={(e) => setValues({ ...values, [choice.field]: e.target.value })}><option value={KEEP}>Keep existing</option><option value={CLEAR}>Clear value</option>{choice.definition.attribute_values.filter((v) => v.is_active).map((v) => <option key={v.value_id} value={v.value_id}>{v.value_name}</option>)}</select></label>)}</div><div className="confirm-actions"><button className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={saving} onClick={() => void save()}>{saving ? "Updating…" : "Apply"}</button></div></div></div>;
 }
 
-function AttributeSection({ title, prefix, definitions, form, setForm }: { title: string; prefix: "E" | "P"; definitions: AttributeDefinition[]; form: Form; setForm: (value: Form) => void }) {
-  return <div style={{ marginTop: 18 }}><div className="enterprise-settings-heading"><div><strong>{title}</strong><span>Only active values can be newly assigned. Existing inactive values remain visible for history.</span></div></div><div className="form-grid">{definitions.map((definition) => {
-    const field = prefix === "E" ? enterpriseField(definition.attribute_number) : projectField(definition.attribute_number);
-    const current = form[field] ?? "";
-    const currentValue = definition.attribute_values.find((value) => value.value_id.toLowerCase() === current.toLowerCase());
-    const activeValues = definition.attribute_values.filter((value) => value.is_active);
-    return <label className="form-field" key={`${prefix}-${definition.id}`}><span>{definition.name}<small>{prefix}{String(definition.attribute_number).padStart(2, "0")}</small></span><select value={current} onChange={(event) => setForm({ ...form, [field]: event.target.value || null })}><option value="">— None —</option>{currentValue && !currentValue.is_active && <option value={currentValue.value_id} disabled>{currentValue.value_name} (Inactive)</option>}{activeValues.map((value) => <option key={value.id} value={value.value_id}>{value.value_name}</option>)}</select></label>;
-  })}</div></div>;
-}
-
-function CenteredModal({ title, children, onClose, wide = false }: { title: string; children: React.ReactNode; onClose: () => void; wide?: boolean }) {
-  return <div style={{ position: "fixed", inset: 0, zIndex: 1000, display: "grid", placeItems: "center", background: "rgba(15,23,42,.32)", padding: 20 }} onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><div className="enterprise-grid-card" style={{ width: wide ? "min(720px, 100%)" : "min(460px, 100%)", padding: 20, boxShadow: "0 24px 70px rgba(15,23,42,.22)" }}><div className="enterprise-settings-heading" style={{ marginBottom: 16 }}><div><strong>{title}</strong></div><button className="button secondary compact" onClick={onClose}>×</button></div>{children}</div></div>;
+function SaveViewDialog({ initialName, onClose, onSave }: { initialName: string; onClose: () => void; onSave: (name: string) => void }) {
+  const [name, setName] = useState(initialName);
+  return <div className="confirm-layer"><button className="confirm-scrim" onClick={onClose} aria-label="Close"/><div className="confirm-dialog"><h2>Save View</h2><label><span>View Name</span><input autoFocus value={name} onChange={(e) => setName(e.target.value)}/></label><div className="confirm-actions"><button className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={!name.trim()} onClick={() => onSave(name.trim())}>Save</button></div></div></div>;
 }
