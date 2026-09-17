@@ -41,6 +41,26 @@ table td:last-child {
   border-right-color: transparent !important;
 }
 
+/* Cost Code related-records menu lives inside the pinned Actions cell.
+ * AG Grid normally clips cell content to the row/container; allow this one
+ * pinned action cell to overflow so its menu can appear above adjacent rows. */
+.ag-root-wrapper .ag-pinned-right-cols-container {
+  overflow: visible !important;
+  z-index: 20;
+}
+
+.ag-root-wrapper .ag-pinned-right-cols-container .ag-row {
+  overflow: visible !important;
+}
+
+.ag-root-wrapper .ag-pinned-right-cols-container .ag-cell[col-id="actions"] {
+  overflow: visible !important;
+}
+
+.ag-root-wrapper .ag-pinned-right-cols-container .ag-row:has(.ag-cell[col-id="actions"]:focus-within) {
+  z-index: 1200 !important;
+}
+
 /* Keep the grid surface consistent across the app. Filters remain available
  * from each column header, so the one-off pinned Filters tool panel is hidden. */
 .ag-root-wrapper .ag-side-bar {
