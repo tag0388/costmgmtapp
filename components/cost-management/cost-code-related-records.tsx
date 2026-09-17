@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { AgGridProvider, AgGridReact } from "ag-grid-react";
 import type { CellValueChangedEvent, ColDef, GridApi, SelectionChangedEvent } from "ag-grid-community";
 import { themeQuartz } from "ag-grid-community";
@@ -85,36 +86,63 @@ function ctcPField(slot: number) { return `p_attribute_${String(slot).padStart(2
 export function CostCodeActionsCell({ costCode, project, onEdit }: { costCode: CostCode; project: Project | null; onEdit: () => void }) {
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<RelatedMode | null>(null);
+  const [menuPosition, setMenuPosition] = useState({ top: 0, right: 8 });
+  const buttonRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!open) return;
     function close(event: MouseEvent) {
-      if (!menuRef.current?.contains(event.target as Node)) setOpen(false);
+      const target = event.target as Node;
+      if (!menuRef.current?.contains(target) && !buttonRef.current?.contains(target)) setOpen(false);
     }
+    function closeOnViewportChange() { setOpen(false); }
     document.addEventListener("mousedown", close);
-    return () => document.removeEventListener("mousedown", close);
+    window.addEventListener("resize", closeOnViewportChange);
+    window.addEventListener("scroll", closeOnViewportChange, true);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      window.removeEventListener("resize", closeOnViewportChange);
+      window.removeEventListener("scroll", closeOnViewportChange, true);
+    };
   }, [open]);
 
+  function toggleMenu() {
+    if (open) { setOpen(false); return; }
+    const rect = buttonRef.current?.getBoundingClientRect();
+    if (rect) setMenuPosition({ top: rect.bottom + 4, right: Math.max(8, window.innerWidth - rect.right) });
+    setOpen(true);
+  }
+
+  const menu = typeof document !== "undefined" && open ? createPortal(
+    <div ref={menuRef} style={{ position: "fixed", right: menuPosition.right, top: menuPosition.top, zIndex: 10000, width: 210, background: "white", border: "1px solid #d1d5db", borderRadius: 7, boxShadow: "0 12px 30px rgba(15,23,42,.22)", padding: 5 }}>
+      <button disabled title="Change Management has not been configured yet" style={menuItemStyle(true)}><span>Change Records</span><small>Coming soon</small></button>
+      <button disabled={!project} style={menuItemStyle(false)} onClick={() => { setOpen(false); setMode("actual"); }}><span>Actual Cost</span><small>View / edit</small></button>
+      <button disabled={!project} style={menuItemStyle(false)} onClick={() => { setOpen(false); setMode("ctc"); }}><span>Cost to Complete</span><small>View / edit</small></button>
+    </div>,
+    document.body,
+  ) : null;
+
+  const modal = typeof document !== "undefined" && project && mode ? createPortal(
+    <RelatedRecordsModal project={project} costCode={costCode} mode={mode} onClose={() => setMode(null)}/>,
+    document.body,
+  ) : null;
+
   return <>
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 4, width: "100%", height: "100%" }} ref={menuRef}>
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 4, width: "100%", height: "100%" }}>
       <button className="button secondary compact" onClick={onEdit}>✎ Edit</button>
-      <div style={{ position: "relative" }}>
-        <button
-          className="button secondary compact"
-          aria-label={`Open related records for ${costCode.cost_code_id}`}
-          title="Related records"
-          onClick={() => setOpen((value) => !value)}
-          style={{ width: 30, paddingInline: 0, fontSize: 18, lineHeight: 1 }}
-        >⋯</button>
-        {open && <div style={{ position: "absolute", right: 0, top: "calc(100% + 4px)", zIndex: 1200, width: 210, background: "white", border: "1px solid #d1d5db", borderRadius: 7, boxShadow: "0 12px 30px rgba(15,23,42,.18)", padding: 5 }}>
-          <button disabled title="Change Management has not been configured yet" style={menuItemStyle(true)}><span>Change Records</span><small>Coming soon</small></button>
-          <button disabled={!project} style={menuItemStyle(false)} onClick={() => { setOpen(false); setMode("actual"); }}><span>Actual Cost</span><small>View / edit</small></button>
-          <button disabled={!project} style={menuItemStyle(false)} onClick={() => { setOpen(false); setMode("ctc"); }}><span>Cost to Complete</span><small>View / edit</small></button>
-        </div>}
-      </div>
+      <button
+        ref={buttonRef}
+        className="button secondary compact"
+        aria-label={`Open related records for ${costCode.cost_code_id}`}
+        aria-expanded={open}
+        title="Related records"
+        onClick={toggleMenu}
+        style={{ width: 30, paddingInline: 0, fontSize: 18, lineHeight: 1 }}
+      >⋯</button>
     </div>
-    {project && mode && <RelatedRecordsModal project={project} costCode={costCode} mode={mode} onClose={() => setMode(null)}/>} 
+    {menu}
+    {modal}
   </>;
 }
 
