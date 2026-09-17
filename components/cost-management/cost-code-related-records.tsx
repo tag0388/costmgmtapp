@@ -48,11 +48,12 @@ type CtcGridRow = CostToCompleteLedgerRow & { resource_source_label: "User" | "E
 type RelatedGridRow = ActualGridRow | CtcGridRow;
 type BulkChoice = { id: string; label: string; kind: "text" | "number" | "select" | "attribute" | "periodQty"; values?: string[]; definition?: AttributeDefinition };
 
-function SvgIcon({ type }: { type: "changes" | "actual" | "ctc" | "more" }) {
+function SvgIcon({ type }: { type: "changes" | "actual" | "ctc" | "more" | "resource" }) {
   const common = { width: 15, height: 15, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
   if (type === "changes") return <svg {...common}><path d="M4 7h11"/><path d="m12 4 3 3-3 3"/><path d="M20 17H9"/><path d="m12 14-3 3 3 3"/></svg>;
   if (type === "actual") return <svg {...common}><circle cx="12" cy="12" r="9"/><path d="M15.5 8.5c-.8-.7-1.8-1-3-1-1.7 0-3 .9-3 2.2 0 3.3 6 1.3 6 4.5 0 1.3-1.3 2.3-3.2 2.3-1.2 0-2.4-.4-3.3-1.2"/><path d="M12 5.5v13"/></svg>;
   if (type === "ctc") return <svg {...common}><path d="M4 19V9"/><path d="M10 19V5"/><path d="M16 19v-7"/><path d="M22 19V3"/><path d="M2 19h20"/></svg>;
+  if (type === "resource") return <svg {...common}><ellipse cx="12" cy="5" rx="7" ry="3"/><path d="M5 5v6c0 1.7 3.1 3 7 3s7-1.3 7-3V5"/><path d="M5 11v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/><path d="M12 8v8"/><path d="M9 12h6"/></svg>;
   return <svg {...common}><circle cx="5" cy="12" r="1" fill="currentColor"/><circle cx="12" cy="12" r="1" fill="currentColor"/><circle cx="19" cy="12" r="1" fill="currentColor"/></svg>;
 }
 
@@ -60,8 +61,19 @@ function formatPeriodDate(value: string) {
   const date = new Date(`${value}T00:00:00`);
   return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat("en-AU", { day: "2-digit", month: "short", year: "numeric" }).format(date);
 }
-function periodLabel(period: CostReportingPeriod) { return `P${period.period_number} | ${formatPeriodDate(period.end_date)}`; }
-function periodExcel(period: CostReportingPeriod) { return `P${period.period_number}`; }
+function formatPeriodDateShort(value: string) {
+  const [year, month, day] = value.split("-");
+  return year && month && day ? `${day}/${month}/${year.slice(-2)}` : value;
+}
+function periodLabel(period: CostReportingPeriod) { return `P${period.period_number} | ${formatPeriodDateShort(period.end_date)}`; }
+function periodExcel(period: CostReportingPeriod) { return periodLabel(period); }
+function periodLegacy(period: CostReportingPeriod) { return `P${period.period_number}`; }
+
+function orderedRows<T extends { id: string; row_order: number | null; created_at: string }>(input: T[]) {
+  const byCreated = [...input].sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at) || a.id.localeCompare(b.id));
+  const fallback = new Map(byCreated.map((row, index) => [row.id, (index + 1) * 1000]));
+  return [...input].sort((a, b) => (a.row_order ?? fallback.get(a.id) ?? 0) - (b.row_order ?? fallback.get(b.id) ?? 0) || a.id.localeCompare(b.id));
+}
 function numberFormat(value: unknown, decimals = 2) {
   const number = Number(value ?? 0);
   return Number.isFinite(number) ? new Intl.NumberFormat(undefined, { minimumFractionDigits: 0, maximumFractionDigits: decimals }).format(number) : "";
@@ -188,11 +200,19 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
   const [selectedView, setSelectedView] = useState("Default");
   const [viewName, setViewName] = useState("");
   const [showSaveView, setShowSaveView] = useState(false);
+  const [addCount, setAddCount] = useState(1);
+  const [insertAfterId, setInsertAfterId] = useState<string | null>(null);
+  const [resourcePaneOpen, setResourcePaneOpen] = useState(false);
+  const [resourceScope, setResourceScope] = useState<"enterprise" | "project">("enterprise");
+  const [resourceSearch, setResourceSearch] = useState("");
 
   const actualAttributes = useMemo(() => buildAttributes(enterpriseAttributes, projectAttributes, actualEField, actualPField), [enterpriseAttributes, projectAttributes]);
   const ctcAttributes = useMemo(() => buildAttributes(enterpriseAttributes, projectAttributes, ctcEField, ctcPField), [enterpriseAttributes, projectAttributes]);
   const periodByLabel = useMemo(() => new Map(periods.map((period) => [periodLabel(period), period])), [periods]);
-  const periodByExcel = useMemo(() => new Map(periods.map((period) => [periodExcel(period).toUpperCase(), period])), [periods]);
+  const periodByExcel = useMemo(() => new Map(periods.flatMap((period) => [
+    [periodExcel(period).toUpperCase(), period] as const,
+    [periodLegacy(period).toUpperCase(), period] as const,
+  ])), [periods]);
   const periodById = useMemo(() => new Map(periods.map((period) => [period.id, period])), [periods]);
   const activeEnterpriseResources = useMemo(() => enterpriseResources.filter((row) => row.is_active), [enterpriseResources]);
   const activeProjectResources = useMemo(() => projectResources.filter((row) => row.is_active), [projectResources]);
@@ -227,13 +247,35 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
 
   useEffect(() => { void refresh(); }, [refresh]);
 
-  const actualGridRows = useMemo<ActualGridRow[]>(() => actualRows.map((row) => ({ ...row, period_label: periodById.get(row.cost_period_id) ? periodLabel(periodById.get(row.cost_period_id)!) : "" })), [actualRows, periodById]);
-  const ctcGridRows = useMemo<CtcGridRow[]>(() => ctcRows.map((row) => ({ ...row, resource_source_label: row.resource_source ?? "User" })), [ctcRows]);
+  const actualGridRows = useMemo<ActualGridRow[]>(() => orderedRows(actualRows.map((row) => ({ ...row, period_label: periodById.get(row.cost_period_id) ? periodLabel(periodById.get(row.cost_period_id)!) : "" }))), [actualRows, periodById]);
+  const ctcGridRows = useMemo<CtcGridRow[]>(() => orderedRows(ctcRows.map((row) => ({ ...row, resource_source_label: row.resource_source ?? "User" }))), [ctcRows]);
   const rows: RelatedGridRow[] = mode === "actual" ? actualGridRows : ctcGridRows;
+
+  function rowOrderAt(index: number) {
+    if (index < 0 || index >= rows.length) return 0;
+    return rows[index].row_order ?? (index + 1) * 1000;
+  }
+  function insertionOrders(count: number) {
+    const safeCount = Math.max(1, Math.min(100, Math.trunc(count || 1)));
+    const anchorIndex = insertAfterId ? rows.findIndex((row) => row.id === insertAfterId) : -1;
+    const index = anchorIndex >= 0 ? anchorIndex : rows.length - 1;
+    const current = index >= 0 ? rowOrderAt(index) : 0;
+    const hasNext = index + 1 < rows.length;
+    const next = hasNext ? rowOrderAt(index + 1) : current + (safeCount + 1) * 1000;
+    if (next > current) return Array.from({ length: safeCount }, (_, i) => current + ((next - current) * (i + 1)) / (safeCount + 1));
+    return Array.from({ length: safeCount }, (_, i) => current + (i + 1) * 1000);
+  }
 
   function showNotice(message: string) { setNotice(message); window.setTimeout(() => setNotice(""), 3000); }
   function syncGroupState(api: GridApi<RelatedGridRow> | null = gridApi) { setHasGroups((api?.getRowGroupColumns().length ?? 0) > 0); }
-  function selectionChanged(event: SelectionChangedEvent<RelatedGridRow>) { setSelectedCount(event.api.getSelectedRows().length); }
+  function selectionChanged(event: SelectionChangedEvent<RelatedGridRow>) {
+    const nodes = event.api.getSelectedNodes().filter((node) => node.data);
+    setSelectedCount(nodes.length);
+    if (nodes.length) {
+      const last = [...nodes].sort((a, b) => (a.rowIndex ?? -1) - (b.rowIndex ?? -1)).at(-1);
+      if (last?.data) setInsertAfterId(last.data.id);
+    }
+  }
   const attributeEditor = useCallback((definition: AttributeDefinition) => ({ cellEditor: "agSelectCellEditor", cellEditorParams: { values: ["", ...definition.attribute_values.filter((value) => value.is_active).map((value) => value.value_id)] }, valueFormatter: (params: { value: string | null }) => valueName(definition, params.value) }), []);
 
   const actualColumnDefs = useMemo<ColDef<ActualGridRow>[]>(() => [
@@ -246,20 +288,16 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
   ], [actualAttributes, attributeEditor, periods]);
 
   const ctcColumnDefs = useMemo<ColDef<CtcGridRow>[]>(() => [
-    { field: "resource_source_label", colId: "resource_source_label", headerName: "Resource Source", editable: true, cellEditor: "agSelectCellEditor", cellEditorParams: { values: ["User", "ERes", "PRes"] }, filter: "agSetColumnFilter" },
-    { field: "item", headerName: "Item", editable: true, filter: true, cellEditorSelector: (params) => {
-      if (params.data?.resource_source === "ERes") return { component: "agSelectCellEditor", params: { values: activeEnterpriseResources.map((row) => row.resource_id) } };
-      if (params.data?.resource_source === "PRes") return { component: "agSelectCellEditor", params: { values: activeProjectResources.map((row) => row.resource_id) } };
-      return undefined;
-    } },
-    { field: "description", headerName: "Description", editable: true, filter: true, minWidth: 180 },
+    { field: "resource_source_label", colId: "resource_source_label", headerName: "Resource Source", editable: false, filter: "agSetColumnFilter" },
+    { field: "item", headerName: "Item", editable: (params) => !params.data?.resource_source, filter: true },
+    { field: "description", headerName: "Description", editable: (params) => !params.data?.resource_source, filter: true, minWidth: 180 },
     { colId: "qty", headerName: "Qty", editable: false, type: "numericColumn", aggFunc: "sum", enableValue: true, valueGetter: (params) => Object.values(params.data?.period_qty ?? {}).reduce((sum, value) => sum + Number(value || 0), 0), valueFormatter: (params) => numberFormat(params.value, 4) },
-    { field: "unit", headerName: "Unit", editable: true, filter: "agSetColumnFilter" },
-    { field: "rate", headerName: "Rate", editable: true, type: "numericColumn", valueParser: (params) => Number(params.newValue), valueFormatter: (params) => numberFormat(params.value, 4) },
+    { field: "unit", headerName: "Unit", editable: (params) => !params.data?.resource_source, filter: "agSetColumnFilter" },
+    { field: "rate", headerName: "Rate", editable: (params) => !params.data?.resource_source, type: "numericColumn", valueParser: (params) => Number(params.newValue), valueFormatter: (params) => numberFormat(params.value, 4) },
     { colId: "total", headerName: "Total", editable: false, type: "numericColumn", aggFunc: "sum", enableValue: true, valueGetter: (params) => Object.values(params.data?.period_qty ?? {}).reduce((sum, value) => sum + Number(value || 0), 0) * Number(params.data?.rate ?? 0), valueFormatter: (params) => numberFormat(params.value, 2) },
     { field: "category", headerName: "Category", editable: true, cellEditor: "agSelectCellEditor", cellEditorParams: { values: ["", ...RESOURCE_CATEGORIES] }, filter: "agSetColumnFilter", valueFormatter: (params) => params.value ?? "" },
     ...ctcAttributes.map((attribute): ColDef<CtcGridRow> => ({ field: attribute.field as keyof CtcGridRow & string, headerName: attribute.columnName, editable: true, filter: "agSetColumnFilter", ...attributeEditor(attribute.definition) })),
-    ...periods.map((period): ColDef<CtcGridRow> => ({ colId: `period:${period.id}`, headerName: periodLabel(period), editable: true, type: "numericColumn", aggFunc: "sum", enableValue: true, valueGetter: (params) => Number(params.data?.period_qty[period.id] ?? 0), valueSetter: (params) => { if (!params.data) return false; const parsed = Number(params.newValue); if (!Number.isFinite(parsed) || parsed < 0) return false; params.data.period_qty = { ...params.data.period_qty, [period.id]: parsed }; return true; }, valueFormatter: (params) => numberFormat(params.value, 4) })),
+    ...periods.map((period): ColDef<CtcGridRow> => ({ colId: `period:${period.id}`, headerName: periodLabel(period), width: 82, minWidth: 72, maxWidth: 92, headerComponent: () => <div style={{ display: "grid", justifyItems: "center", lineHeight: 1.05, width: "100%" }}><strong style={{ fontSize: 11 }}>P{period.period_number}</strong><span style={{ fontSize: 9, color: "#6b7280", marginTop: 2 }}>{formatPeriodDateShort(period.end_date)}</span></div>, editable: true, type: "numericColumn", aggFunc: "sum", enableValue: true, valueGetter: (params) => Number(params.data?.period_qty[period.id] ?? 0), valueSetter: (params) => { if (!params.data) return false; const parsed = Number(params.newValue); if (!Number.isFinite(parsed) || parsed < 0) return false; params.data.period_qty = { ...params.data.period_qty, [period.id]: parsed }; return true; }, valueFormatter: (params) => numberFormat(params.value, 4) })),
   ], [activeEnterpriseResources, activeProjectResources, attributeEditor, ctcAttributes, periods]);
 
   async function actualChanged(event: CellValueChangedEvent<ActualGridRow>) {
@@ -294,20 +332,48 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
     finally { setSaving(false); }
   }
 
-  async function addRow() {
+  async function addRows() {
+    const count = Math.max(1, Math.min(100, Math.trunc(addCount || 1)));
+    const orders = insertionOrders(count);
     setSaving(true); setError("");
     try {
       if (mode === "actual") {
         const period = periods.find((p) => p.status === "Current") ?? periods.find((p) => p.status !== "Closed") ?? periods[0];
         if (!period) throw new Error("Create a Cost Reporting Period before adding Actual Cost.");
-        const row = await createActualCostTransaction(project.id, { cost_period_id: period.id, cost_code_id: costCode.id, transaction_date: period.end_date, transaction_id: null, description: "", amount: 0, transaction_type: "MAN", ...Object.fromEntries(actualAttributes.map((a) => [a.field, null])) });
-        setActualRows((current) => [...current, row]);
+        const created: ActualCostTransaction[] = [];
+        for (const rowOrder of orders) created.push(await createActualCostTransaction(project.id, { cost_period_id: period.id, cost_code_id: costCode.id, transaction_date: period.end_date, transaction_id: null, description: "", amount: 0, transaction_type: "MAN", row_order: rowOrder, ...Object.fromEntries(actualAttributes.map((a) => [a.field, null])) }));
+        setActualRows((current) => [...current, ...created]);
+        if (created.length) setInsertAfterId(created.at(-1)!.id);
       } else {
-        const row = await createCostToCompleteDetail(project.id, { cost_code_id: costCode.id, item: null, description: null, unit: null, rate: 0, category: null, resource_source: null, ...Object.fromEntries(ctcAttributes.map((a) => [a.field, null])) });
-        setCtcRows((current) => [...current, row]);
+        const created: CostToCompleteLedgerRow[] = [];
+        for (const rowOrder of orders) created.push(await createCostToCompleteDetail(project.id, { cost_code_id: costCode.id, item: null, description: null, unit: null, rate: 0, category: null, resource_source: null, row_order: rowOrder, ...Object.fromEntries(ctcAttributes.map((a) => [a.field, null])) }));
+        setCtcRows((current) => [...current, ...created]);
+        if (created.length) setInsertAfterId(created.at(-1)!.id);
       }
-      showNotice("Row added.");
+      showNotice(`${count} row${count === 1 ? "" : "s"} added${insertAfterId ? " below the selected row" : ""}.`);
     } catch (requestError) { setError(mode === "actual" ? actualCostErrorMessage(requestError) : costToCompleteErrorMessage(requestError)); }
+    finally { setSaving(false); }
+  }
+
+  async function addResource(resource: ResourceRate | ProjectResourceRate, scope: "enterprise" | "project") {
+    const [rowOrder] = insertionOrders(1);
+    setSaving(true); setError("");
+    try {
+      const row = await createCostToCompleteDetail(project.id, {
+        cost_code_id: costCode.id,
+        resource_source: scope === "enterprise" ? "ERes" : "PRes",
+        item: resource.resource_id,
+        description: resource.resource_name,
+        unit: resource.unit,
+        rate: Number(resource.rate),
+        category: resource.category,
+        row_order: rowOrder,
+        ...Object.fromEntries(ctcAttributes.map((a) => [a.field, null])),
+      });
+      setCtcRows((current) => [...current, row]);
+      setInsertAfterId(row.id);
+      showNotice(`${resource.resource_id} added from ${scope === "enterprise" ? "Enterprise" : "Project"} Resource Rates.`);
+    } catch (requestError) { setError(costToCompleteErrorMessage(requestError)); }
     finally { setSaving(false); }
   }
 
@@ -403,7 +469,7 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
     { id: "transaction_id", label: "Item", kind: "text" }, { id: "description", label: "Description", kind: "text" }, { id: "transaction_type", label: "Transaction Type", kind: "select", values: ACTUAL_TYPES }, { id: "amount", label: "Amount", kind: "number" }, { id: "period_label", label: "Cost Reporting Period", kind: "select", values: periods.map(periodLabel) },
     ...actualAttributes.map((a) => ({ id: a.field, label: a.columnName, kind: "attribute" as const, values: ["", ...a.definition.attribute_values.filter((v) => v.is_active).map((v) => v.value_id)], definition: a.definition })),
   ] : [
-    { id: "resource_source_label", label: "Resource Source", kind: "select", values: ["User", "ERes", "PRes"] }, { id: "description", label: "Description", kind: "text" }, { id: "unit", label: "Unit", kind: "text" }, { id: "rate", label: "Rate", kind: "number" }, { id: "category", label: "Category", kind: "select", values: ["", ...RESOURCE_CATEGORIES] },
+    { id: "description", label: "Description", kind: "text" }, { id: "unit", label: "Unit", kind: "text" }, { id: "rate", label: "Rate", kind: "number" }, { id: "category", label: "Category", kind: "select", values: ["", ...RESOURCE_CATEGORIES] },
     ...ctcAttributes.map((a) => ({ id: a.field, label: a.columnName, kind: "attribute" as const, values: ["", ...a.definition.attribute_values.filter((v) => v.is_active).map((v) => v.value_id)], definition: a.definition })),
     ...periods.map((period) => ({ id: `period:${period.id}`, label: periodLabel(period), kind: "periodQty" as const })),
   ], [actualAttributes, ctcAttributes, mode, periods]);
@@ -425,8 +491,8 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
           else await updateActualCostTransaction(row.id, { [bulkField]: bulkValue || null } as Partial<Record<ActualAttributeField, string | null>>);
         } else {
           const row = selectedRow as CtcGridRow;
+          if (row.resource_source && ["description", "unit", "rate"].includes(bulkField)) throw new Error("Item, Description, Unit and Rate are read-only for Enterprise/Project Resource rows.");
           if (bulkField.startsWith("period:")) { const qty = Number(bulkValue); if (!Number.isFinite(qty) || qty < 0) throw new Error("Period quantity must be zero or greater."); await setCostToCompletePeriodQty(row.id, bulkField.slice(7), qty); }
-          else if (bulkField === "resource_source_label") { const source = bulkValue === "ERes" || bulkValue === "PRes" ? bulkValue as CtcResourceSource : null; await updateCostToCompleteDetail(row.id, { resource_source: source }); }
           else if (bulkField === "rate") { const rate = Number(bulkValue); if (!Number.isFinite(rate) || rate < 0) throw new Error("Rate must be zero or greater."); await updateCostToCompleteDetail(row.id, { rate }); }
           else if (bulkField === "description") await updateCostToCompleteDetail(row.id, { description: bulkValue || null });
           else if (bulkField === "unit") await updateCostToCompleteDetail(row.id, { unit: bulkValue || null });
