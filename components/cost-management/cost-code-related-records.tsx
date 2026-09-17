@@ -115,7 +115,12 @@ export function CostCodeActionsCell({ costCode, project, onEdit }: { costCode: C
   }
 
   const menu = typeof document !== "undefined" && open ? createPortal(
-    <div ref={menuRef} style={{ position: "fixed", right: menuPosition.right, top: menuPosition.top, zIndex: 10000, width: 210, background: "white", border: "1px solid #d1d5db", borderRadius: 7, boxShadow: "0 12px 30px rgba(15,23,42,.22)", padding: 5 }}>
+    <div
+      ref={menuRef}
+      onMouseDown={(event) => event.stopPropagation()}
+      onClick={(event) => event.stopPropagation()}
+      style={{ position: "fixed", right: menuPosition.right, top: menuPosition.top, zIndex: 10000, width: 210, background: "white", border: "1px solid #d1d5db", borderRadius: 7, boxShadow: "0 12px 30px rgba(15,23,42,.22)", padding: 5 }}
+    >
       <button disabled title="Change Management has not been configured yet" style={menuItemStyle(true)}><span>Change Records</span><small>Coming soon</small></button>
       <button disabled={!project} style={menuItemStyle(false)} onClick={() => { setOpen(false); setMode("actual"); }}><span>Actual Cost</span><small>View / edit</small></button>
       <button disabled={!project} style={menuItemStyle(false)} onClick={() => { setOpen(false); setMode("ctc"); }}><span>Cost to Complete</span><small>View / edit</small></button>
@@ -129,15 +134,20 @@ export function CostCodeActionsCell({ costCode, project, onEdit }: { costCode: C
   ) : null;
 
   return <>
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 4, width: "100%", height: "100%" }}>
-      <button className="button secondary compact" onClick={onEdit}>✎ Edit</button>
+    <div
+      style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 4, width: "100%", height: "100%" }}
+      onMouseDown={(event) => event.stopPropagation()}
+      onClick={(event) => event.stopPropagation()}
+    >
+      <button className="button secondary compact" onClick={(event) => { event.preventDefault(); event.stopPropagation(); onEdit(); }}>✎ Edit</button>
       <button
         ref={buttonRef}
         className="button secondary compact"
         aria-label={`Open related records for ${costCode.cost_code_id}`}
         aria-expanded={open}
         title="Related records"
-        onClick={toggleMenu}
+        onMouseDown={(event) => event.stopPropagation()}
+        onClick={(event) => { event.preventDefault(); event.stopPropagation(); toggleMenu(); }}
         style={{ width: 30, paddingInline: 0, fontSize: 18, lineHeight: 1 }}
       >⋯</button>
     </div>
