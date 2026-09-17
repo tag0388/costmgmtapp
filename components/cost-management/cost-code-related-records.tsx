@@ -527,6 +527,11 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
   const title = mode === "actual" ? "Actual Cost" : "Cost to Complete";
   const columns = (mode === "actual" ? actualColumnDefs : ctcColumnDefs) as ColDef<RelatedGridRow>[];
   const chosenBulk = bulkChoices.find((choice) => choice.id === bulkField);
+  const resourcePaneRows = (resourceScope === "enterprise" ? activeEnterpriseResources : activeProjectResources).filter((resource) => {
+    const needle = resourceSearch.trim().toLowerCase();
+    if (!needle) return true;
+    return [resource.resource_id, resource.resource_name, resource.category, resource.unit].some((value) => String(value ?? "").toLowerCase().includes(needle));
+  });
 
   return <div style={{ position: "fixed", inset: 0, zIndex: 12000, background: "#f5f7fa", display: "flex", flexDirection: "column" }}>
     <header style={{ minHeight: 58, background: "#fff", borderBottom: "1px solid #dfe4ea", display: "flex", alignItems: "center", gap: 14, padding: "8px 14px" }}>
@@ -538,7 +543,11 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
 
     <div className="enterprise-toolbar" style={{ flexWrap: "wrap", padding: "8px 12px", background: "#fff", borderBottom: "1px solid #e5e7eb" }}>
       <label className="enterprise-search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={`Search ${title.toLowerCase()}…`}/></label>
-      <button className="button primary" disabled={loading || saving || (mode === "actual" && periods.length === 0)} onClick={() => void addRow()}>+ Add Row</button>
+      <div style={{ display: "inline-flex", alignItems: "stretch" }}>
+        <button className="button primary" style={{ borderTopRightRadius: 0, borderBottomRightRadius: 0 }} disabled={loading || saving || (mode === "actual" && periods.length === 0)} onClick={() => void addRows()}>+ Add Row</button>
+        <input aria-label="Number of rows to add" title="Rows to add (maximum 100)" type="number" min={1} max={100} value={addCount} onChange={(event) => setAddCount(Math.max(1, Math.min(100, Number(event.target.value) || 1)))} style={{ width: 54, minWidth: 54, border: "1px solid #2563eb", borderLeft: 0, borderRadius: "0 6px 6px 0", padding: "0 6px", fontSize: 12, textAlign: "center", background: "#fff" }}/>
+      </div>
+      {mode === "ctc" && <button className="button secondary" title="Add from Enterprise or Project Resource Rates" aria-label="Add resource" onClick={() => { setResourceSearch(""); setResourcePaneOpen(true); }} style={{ width: 34, paddingInline: 0, display: "grid", placeItems: "center" }}><SvgIcon type="resource"/></button>}
       <button className="button secondary" disabled={!selectedCount || saving} onClick={() => { setBulkOpen(true); setBulkField(""); setBulkValue(""); }}>Bulk Edit{selectedCount ? ` (${selectedCount})` : ""}</button>
       <button className="button danger" disabled={!selectedCount || saving} onClick={() => void deleteSelected()}>Delete{selectedCount ? ` (${selectedCount})` : ""}</button>
       <button className="button secondary" disabled={!hasGroups} onClick={() => gridApi?.expandAll()}>Expand All</button>
@@ -567,6 +576,12 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
             getRowId={(params) => params.data.id}
             onGridReady={(event) => { setGridApi(event.api); syncGroupState(event.api); }}
             onSelectionChanged={selectionChanged}
+            onCellFocused={(event) => {
+              if (event.rowIndex == null) return;
+              const node = event.api.getDisplayedRowAtIndex(event.rowIndex);
+              if (node?.data) setInsertAfterId(node.data.id);
+            }}
+            onRowClicked={(event) => { if (event.data) setInsertAfterId(event.data.id); }}
             onColumnRowGroupChanged={(event) => syncGroupState(event.api)}
             onCellValueChanged={(event) => mode === "actual" ? void actualChanged(event as CellValueChangedEvent<ActualGridRow>) : void ctcChanged(event as CellValueChangedEvent<CtcGridRow>)}
             rowGroupPanelShow="always"
@@ -580,6 +595,31 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
       </AgGridProvider>}
     </div>
     <footer className="grid-footer" style={{ padding: "6px 14px", background: "#fff", borderTop: "1px solid #e5e7eb" }}><span>{rows.length} related {title} row{rows.length === 1 ? "" : "s"} · {selectedCount} selected</span><span>{mode === "ctc" ? `${periods.length} phasing periods` : `${periods.length} reporting periods`} · Cost Code is fixed to {costCode.cost_code_id}</span></footer>
+
+    {resourcePaneOpen && mode === "ctc" && <aside style={{ position: "fixed", zIndex: 12500, top: 58, right: 0, bottom: 0, width: "min(440px, 94vw)", background: "#fff", borderLeft: "1px solid #dfe4ea", boxShadow: "-12px 0 30px rgba(15,23,42,.12)", display: "flex", flexDirection: "column" }}>
+      <div style={{ padding: "12px 14px", borderBottom: "1px solid #e5e7eb", display: "flex", alignItems: "center", gap: 10 }}>
+        <div><div style={{ fontSize: 14, fontWeight: 700 }}>Add Resource</div><div style={{ fontSize: 11, color: "#6b7280" }}>Adds a locked snapshot to {costCode.cost_code_id}</div></div>
+        <button className="button secondary compact" style={{ marginLeft: "auto" }} onClick={() => setResourcePaneOpen(false)} aria-label="Close resource pane">✕</button>
+      </div>
+      <div style={{ padding: "10px 12px", borderBottom: "1px solid #eef0f3", display: "grid", gap: 9 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 5, padding: 3, background: "#f3f4f6", borderRadius: 7 }}>
+          <button onClick={() => setResourceScope("enterprise")} style={{ border: 0, borderRadius: 5, padding: "7px 8px", font: "inherit", fontSize: 12, fontWeight: 600, cursor: "pointer", background: resourceScope === "enterprise" ? "#fff" : "transparent", boxShadow: resourceScope === "enterprise" ? "0 1px 3px rgba(15,23,42,.12)" : "none" }}>Enterprise</button>
+          <button onClick={() => setResourceScope("project")} style={{ border: 0, borderRadius: 5, padding: "7px 8px", font: "inherit", fontSize: 12, fontWeight: 600, cursor: "pointer", background: resourceScope === "project" ? "#fff" : "transparent", boxShadow: resourceScope === "project" ? "0 1px 3px rgba(15,23,42,.12)" : "none" }}>Project</button>
+        </div>
+        <label className="enterprise-search" style={{ width: "100%" }}><span>⌕</span><input value={resourceSearch} onChange={(event) => setResourceSearch(event.target.value)} placeholder="Search Resource ID, name, category…"/></label>
+      </div>
+      <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: 8 }}>
+        {resourcePaneRows.length === 0 ? <div className="data-message"><span>No active resources found.</span></div> : resourcePaneRows.map((resource) => <div key={`${resourceScope}:${resource.id}`} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, padding: "9px 8px", borderBottom: "1px solid #eef0f3", alignItems: "center" }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ display: "flex", gap: 7, alignItems: "baseline" }}><strong style={{ fontSize: 12 }}>{resource.resource_id}</strong><span style={{ fontSize: 10, color: "#6b7280" }}>{resource.category}</span></div>
+            <div style={{ fontSize: 12, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{resource.resource_name}</div>
+            <div style={{ fontSize: 10.5, color: "#6b7280", marginTop: 2 }}>{resource.unit} · {numberFormat(resource.rate, 4)}</div>
+          </div>
+          <button className="button primary compact" disabled={saving} onClick={() => void addResource(resource, resourceScope)} title={`Add ${resource.resource_id}`}>＋</button>
+        </div>)}
+      </div>
+      <div style={{ padding: "9px 12px", borderTop: "1px solid #e5e7eb", fontSize: 10.5, color: "#6b7280" }}>Resource rows lock Item, Description, Unit and Rate. Phasing and permitted attributes remain editable.</div>
+    </aside>}
 
     {importRows && <ExcelImportDialog title={`Import ${title} · ${costCode.cost_code_id}`} rows={importRows} columns={excelColumns} errors={importErrors} replace={replace} setReplace={setReplace} importing={importing} progress={progress} onCancel={() => !importing && setImportRows(null)} onImport={() => void runImport()}/>} 
 
