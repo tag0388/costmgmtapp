@@ -38,7 +38,7 @@ import {
 import { listResourceRates, RESOURCE_CATEGORIES, type ResourceCategory, type ResourceRate } from "@/lib/resource-rates";
 import { listProjectResourceRates, type ProjectResourceRate } from "@/lib/project-resource-rates";
 
-const gridTheme = themeQuartz.withParams({ spacing: 4, rowHeight: 30, headerHeight: 34, fontSize: 12 });
+const gridTheme = themeQuartz.withParams({ spacing: 4, rowHeight: 30, headerHeight: 42, fontSize: 12 });
 const ACTUAL_TYPES: TransactionType[] = ["FIN", "MAN", "ACC", "REV"];
 type RelatedMode = "actual" | "ctc";
 type AttributeDefinition = EnterpriseAttributeDefinition | ProjectAttributeDefinition;
@@ -46,13 +46,16 @@ type ActiveAttribute<TField extends string> = { prefix: "E" | "P"; field: TField
 type ActualGridRow = ActualCostTransaction & { period_label: string };
 type CtcGridRow = CostToCompleteLedgerRow & { resource_source_label: "User" | "ERes" | "PRes" };
 type RelatedGridRow = ActualGridRow | CtcGridRow;
-type BulkChoice = { id: string; label: string; kind: "text" | "number" | "select" | "attribute" | "periodQty"; values?: string[]; definition?: AttributeDefinition };
+type BulkChoice = { id: string; label: string; kind: "text" | "number" | "select" | "attribute" | "periodQty"; values?: string[] };
+type ResourceScope = "enterprise" | "project";
+type PickerResource = ResourceRate | ProjectResourceRate;
 
-function SvgIcon({ type }: { type: "changes" | "actual" | "ctc" | "more" }) {
+function SvgIcon({ type }: { type: "changes" | "actual" | "ctc" | "more" | "resource" }) {
   const common = { width: 15, height: 15, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
   if (type === "changes") return <svg {...common}><path d="M4 7h11"/><path d="m12 4 3 3-3 3"/><path d="M20 17H9"/><path d="m12 14-3 3 3 3"/></svg>;
   if (type === "actual") return <svg {...common}><circle cx="12" cy="12" r="9"/><path d="M15.5 8.5c-.8-.7-1.8-1-3-1-1.7 0-3 .9-3 2.2 0 3.3 6 1.3 6 4.5 0 1.3-1.3 2.3-3.2 2.3-1.2 0-2.4-.4-3.3-1.2"/><path d="M12 5.5v13"/></svg>;
   if (type === "ctc") return <svg {...common}><path d="M4 19V9"/><path d="M10 19V5"/><path d="M16 19v-7"/><path d="M22 19V3"/><path d="M2 19h20"/></svg>;
+  if (type === "resource") return <svg {...common}><circle cx="9" cy="8" r="3"/><path d="M3.5 19c.7-3.4 2.6-5 5.5-5s4.8 1.6 5.5 5"/><path d="M18 8v6"/><path d="M15 11h6"/></svg>;
   return <svg {...common}><circle cx="5" cy="12" r="1" fill="currentColor"/><circle cx="12" cy="12" r="1" fill="currentColor"/><circle cx="19" cy="12" r="1" fill="currentColor"/></svg>;
 }
 
@@ -60,8 +63,13 @@ function formatPeriodDate(value: string) {
   const date = new Date(`${value}T00:00:00`);
   return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat("en-AU", { day: "2-digit", month: "short", year: "numeric" }).format(date);
 }
+function compactPeriodDate(value: string) {
+  const date = new Date(`${value}T00:00:00`);
+  return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat("en-AU", { day: "2-digit", month: "2-digit", year: "2-digit" }).format(date);
+}
 function periodLabel(period: CostReportingPeriod) { return `P${period.period_number} | ${formatPeriodDate(period.end_date)}`; }
-function periodExcel(period: CostReportingPeriod) { return `P${period.period_number}`; }
+function periodExcel(period: CostReportingPeriod) { return `P${period.period_number} | ${compactPeriodDate(period.end_date)}`; }
+function periodShort(period: CostReportingPeriod) { return `P${period.period_number}`; }
 function numberFormat(value: unknown, decimals = 2) {
   const number = Number(value ?? 0);
   return Number.isFinite(number) ? new Intl.NumberFormat(undefined, { minimumFractionDigits: 0, maximumFractionDigits: decimals }).format(number) : "";
@@ -92,6 +100,7 @@ function actualEField(slot: number) { return `e_attribute_${String(slot).padStar
 function actualPField(slot: number) { return `p_attribute_${String(slot).padStart(2, "0")}` as ActualAttributeField; }
 function ctcEField(slot: number) { return `e_attribute_${String(slot).padStart(2, "0")}` as CtcAttributeField; }
 function ctcPField(slot: number) { return `p_attribute_${String(slot).padStart(2, "0")}` as CtcAttributeField; }
+function isResourceRow(row: CtcGridRow | undefined) { return row?.resource_source === "ERes" || row?.resource_source === "PRes"; }
 function validateHeaders(rows: ExcelRow[], expected: string[]) {
   if (!rows.length) return [] as string[];
   const actual = Object.keys(rows[0]);
@@ -101,6 +110,10 @@ function validateHeaders(rows: ExcelRow[], expected: string[]) {
   if (missing.length) errors.push(`Missing required column${missing.length === 1 ? "" : "s"}: ${missing.join(", ")}.`);
   if (extra.length) errors.push(`Unexpected column${extra.length === 1 ? "" : "s"}: ${extra.join(", ")}.`);
   return errors;
+}
+
+function PeriodHeader({ period }: { period: CostReportingPeriod }) {
+  return <div style={{ width: "100%", textAlign: "center", lineHeight: "15px", paddingTop: 4 }}><strong style={{ display: "block", fontSize: 11 }}>{periodShort(period)}</strong><span style={{ display: "block", fontSize: 10, color: "#6b7280", whiteSpace: "nowrap" }}>{compactPeriodDate(period.end_date)}</span></div>;
 }
 
 export function CostCodeActionsCell({ costCode, project, onEdit }: { costCode: CostCode; project: Project | null; onEdit: () => void }) {
@@ -176,6 +189,11 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
   const [selectedCount, setSelectedCount] = useState(0);
   const [gridApi, setGridApi] = useState<GridApi<RelatedGridRow> | null>(null);
   const [hasGroups, setHasGroups] = useState(false);
+  const [addCount, setAddCount] = useState(1);
+  const [anchorId, setAnchorId] = useState<string | null>(null);
+  const [resourcePaneOpen, setResourcePaneOpen] = useState(false);
+  const [resourceScope, setResourceScope] = useState<ResourceScope>("enterprise");
+  const [resourceSearch, setResourceSearch] = useState("");
   const [importRows, setImportRows] = useState<ExcelRow[] | null>(null);
   const [importErrors, setImportErrors] = useState<string[]>([]);
   const [replace, setReplace] = useState(false);
@@ -192,7 +210,7 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
   const actualAttributes = useMemo(() => buildAttributes(enterpriseAttributes, projectAttributes, actualEField, actualPField), [enterpriseAttributes, projectAttributes]);
   const ctcAttributes = useMemo(() => buildAttributes(enterpriseAttributes, projectAttributes, ctcEField, ctcPField), [enterpriseAttributes, projectAttributes]);
   const periodByLabel = useMemo(() => new Map(periods.map((period) => [periodLabel(period), period])), [periods]);
-  const periodByExcel = useMemo(() => new Map(periods.map((period) => [periodExcel(period).toUpperCase(), period])), [periods]);
+  const periodByExcel = useMemo(() => new Map(periods.map((period) => [periodExcel(period).toLowerCase(), period])), [periods]);
   const periodById = useMemo(() => new Map(periods.map((period) => [period.id, period])), [periods]);
   const activeEnterpriseResources = useMemo(() => enterpriseResources.filter((row) => row.is_active), [enterpriseResources]);
   const activeProjectResources = useMemo(() => projectResources.filter((row) => row.is_active), [projectResources]);
@@ -233,7 +251,11 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
 
   function showNotice(message: string) { setNotice(message); window.setTimeout(() => setNotice(""), 3000); }
   function syncGroupState(api: GridApi<RelatedGridRow> | null = gridApi) { setHasGroups((api?.getRowGroupColumns().length ?? 0) > 0); }
-  function selectionChanged(event: SelectionChangedEvent<RelatedGridRow>) { setSelectedCount(event.api.getSelectedRows().length); }
+  function selectionChanged(event: SelectionChangedEvent<RelatedGridRow>) {
+    const selected = event.api.getSelectedRows();
+    setSelectedCount(selected.length);
+    if (selected.length) setAnchorId(selected[selected.length - 1].id);
+  }
   const attributeEditor = useCallback((definition: AttributeDefinition) => ({ cellEditor: "agSelectCellEditor", cellEditorParams: { values: ["", ...definition.attribute_values.filter((value) => value.is_active).map((value) => value.value_id)] }, valueFormatter: (params: { value: string | null }) => valueName(definition, params.value) }), []);
 
   const actualColumnDefs = useMemo<ColDef<ActualGridRow>[]>(() => [
@@ -246,21 +268,32 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
   ], [actualAttributes, attributeEditor, periods]);
 
   const ctcColumnDefs = useMemo<ColDef<CtcGridRow>[]>(() => [
-    { field: "resource_source_label", colId: "resource_source_label", headerName: "Resource Source", editable: true, cellEditor: "agSelectCellEditor", cellEditorParams: { values: ["User", "ERes", "PRes"] }, filter: "agSetColumnFilter" },
-    { field: "item", headerName: "Item", editable: true, filter: true, cellEditorSelector: (params) => {
-      if (params.data?.resource_source === "ERes") return { component: "agSelectCellEditor", params: { values: activeEnterpriseResources.map((row) => row.resource_id) } };
-      if (params.data?.resource_source === "PRes") return { component: "agSelectCellEditor", params: { values: activeProjectResources.map((row) => row.resource_id) } };
-      return undefined;
-    } },
-    { field: "description", headerName: "Description", editable: true, filter: true, minWidth: 180 },
-    { colId: "qty", headerName: "Qty", editable: false, type: "numericColumn", aggFunc: "sum", enableValue: true, valueGetter: (params) => Object.values(params.data?.period_qty ?? {}).reduce((sum, value) => sum + Number(value || 0), 0), valueFormatter: (params) => numberFormat(params.value, 4) },
-    { field: "unit", headerName: "Unit", editable: true, filter: "agSetColumnFilter" },
-    { field: "rate", headerName: "Rate", editable: true, type: "numericColumn", valueParser: (params) => Number(params.newValue), valueFormatter: (params) => numberFormat(params.value, 4) },
-    { colId: "total", headerName: "Total", editable: false, type: "numericColumn", aggFunc: "sum", enableValue: true, valueGetter: (params) => Object.values(params.data?.period_qty ?? {}).reduce((sum, value) => sum + Number(value || 0), 0) * Number(params.data?.rate ?? 0), valueFormatter: (params) => numberFormat(params.value, 2) },
+    { field: "resource_source_label", colId: "resource_source_label", headerName: "Source", editable: (params) => !isResourceRow(params.data), cellEditor: "agSelectCellEditor", cellEditorParams: { values: ["User"] }, filter: "agSetColumnFilter", width: 92, maxWidth: 105 },
+    { field: "item", headerName: "Item", editable: (params) => !isResourceRow(params.data), filter: true, cellClassRules: { "resource-snapshot-cell": (params) => isResourceRow(params.data) } },
+    { field: "description", headerName: "Description", editable: (params) => !isResourceRow(params.data), filter: true, minWidth: 180, cellClassRules: { "resource-snapshot-cell": (params) => isResourceRow(params.data) } },
+    { colId: "qty", headerName: "Qty", editable: false, type: "numericColumn", aggFunc: "sum", enableValue: true, width: 86, valueGetter: (params) => Object.values(params.data?.period_qty ?? {}).reduce((sum, value) => sum + Number(value || 0), 0), valueFormatter: (params) => numberFormat(params.value, 4) },
+    { field: "unit", headerName: "Unit", editable: (params) => !isResourceRow(params.data), filter: "agSetColumnFilter", width: 82, cellClassRules: { "resource-snapshot-cell": (params) => isResourceRow(params.data) } },
+    { field: "rate", headerName: "Rate", editable: (params) => !isResourceRow(params.data), type: "numericColumn", width: 94, valueParser: (params) => Number(params.newValue), valueFormatter: (params) => numberFormat(params.value, 4), cellClassRules: { "resource-snapshot-cell": (params) => isResourceRow(params.data) } },
+    { colId: "total", headerName: "Total", editable: false, type: "numericColumn", aggFunc: "sum", enableValue: true, width: 100, valueGetter: (params) => Object.values(params.data?.period_qty ?? {}).reduce((sum, value) => sum + Number(value || 0), 0) * Number(params.data?.rate ?? 0), valueFormatter: (params) => numberFormat(params.value, 2) },
     { field: "category", headerName: "Category", editable: true, cellEditor: "agSelectCellEditor", cellEditorParams: { values: ["", ...RESOURCE_CATEGORIES] }, filter: "agSetColumnFilter", valueFormatter: (params) => params.value ?? "" },
     ...ctcAttributes.map((attribute): ColDef<CtcGridRow> => ({ field: attribute.field as keyof CtcGridRow & string, headerName: attribute.columnName, editable: true, filter: "agSetColumnFilter", ...attributeEditor(attribute.definition) })),
-    ...periods.map((period): ColDef<CtcGridRow> => ({ colId: `period:${period.id}`, headerName: periodLabel(period), editable: true, type: "numericColumn", aggFunc: "sum", enableValue: true, valueGetter: (params) => Number(params.data?.period_qty[period.id] ?? 0), valueSetter: (params) => { if (!params.data) return false; const parsed = Number(params.newValue); if (!Number.isFinite(parsed) || parsed < 0) return false; params.data.period_qty = { ...params.data.period_qty, [period.id]: parsed }; return true; }, valueFormatter: (params) => numberFormat(params.value, 4) })),
-  ], [activeEnterpriseResources, activeProjectResources, attributeEditor, ctcAttributes, periods]);
+    ...periods.map((period): ColDef<CtcGridRow> => ({
+      colId: `period:${period.id}`,
+      headerName: periodExcel(period),
+      headerComponent: () => <PeriodHeader period={period}/>,
+      editable: true,
+      type: "numericColumn",
+      aggFunc: "sum",
+      enableValue: true,
+      width: 82,
+      minWidth: 72,
+      maxWidth: 92,
+      suppressSizeToFit: true,
+      valueGetter: (params) => Number(params.data?.period_qty[period.id] ?? 0),
+      valueSetter: (params) => { if (!params.data) return false; const parsed = Number(params.newValue); if (!Number.isFinite(parsed) || parsed < 0) return false; params.data.period_qty = { ...params.data.period_qty, [period.id]: parsed }; return true; },
+      valueFormatter: (params) => numberFormat(params.value, 4),
+    })),
+  ], [attributeEditor, ctcAttributes, periods]);
 
   async function actualChanged(event: CellValueChangedEvent<ActualGridRow>) {
     if (!event.data || event.newValue === event.oldValue) return;
@@ -279,35 +312,101 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
 
   async function ctcChanged(event: CellValueChangedEvent<CtcGridRow>) {
     if (!event.data || event.newValue === event.oldValue) return;
+    const colId = event.column.getColId();
+    if (isResourceRow(event.data) && ["resource_source_label", "item", "description", "unit", "rate"].includes(colId)) { event.node.setDataValue(event.column, event.oldValue); return; }
     setSaving(true); setError("");
     try {
-      const colId = event.column.getColId();
-      if (colId.startsWith("period:")) { const periodId = colId.slice(7); const qty = Number(event.data.period_qty[periodId] ?? 0); if (!Number.isFinite(qty) || qty < 0) throw new Error("Period quantity must be zero or greater."); await setCostToCompletePeriodQty(event.data.id, periodId, qty); event.api.refreshCells({ rowNodes: [event.node], columns: ["qty", "total"], force: true }); }
-      else if (colId === "resource_source_label") { const source = event.newValue === "ERes" || event.newValue === "PRes" ? event.newValue as CtcResourceSource : null; event.data.resource_source = source; await updateCostToCompleteDetail(event.data.id, { resource_source: source }); }
-      else if (colId === "item") { const item = event.newValue ? String(event.newValue).trim() : null; const source = event.data.resource_source; const validIds = source === "ERes" ? enterpriseResourceIds : source === "PRes" ? projectResourceIds : null; if (source && (!item || !validIds?.has(item.toLowerCase()))) throw new Error(`Item must be an active ${source === "ERes" ? "Enterprise" : "Project"} Resource ID.`); await updateCostToCompleteDetail(event.data.id, { item }); }
-      else if (colId === "rate") { const rate = Number(event.newValue); if (!Number.isFinite(rate) || rate < 0) throw new Error("Rate must be zero or greater."); await updateCostToCompleteDetail(event.data.id, { rate }); event.api.refreshCells({ rowNodes: [event.node], columns: ["total"], force: true }); }
+      if (colId.startsWith("period:")) {
+        const qty = Number(event.newValue); if (!Number.isFinite(qty) || qty < 0) throw new Error("Period quantity must be zero or greater.");
+        await setCostToCompletePeriodQty(event.data.id, colId.slice(7), qty);
+      } else if (colId === "resource_source_label") {
+        event.data.resource_source = null; await updateCostToCompleteDetail(event.data.id, { resource_source: null });
+      } else if (colId === "item") await updateCostToCompleteDetail(event.data.id, { item: event.newValue ? String(event.newValue) : null });
       else if (colId === "description") await updateCostToCompleteDetail(event.data.id, { description: event.newValue ? String(event.newValue) : null });
       else if (colId === "unit") await updateCostToCompleteDetail(event.data.id, { unit: event.newValue ? String(event.newValue) : null });
+      else if (colId === "rate") { const rate = Number(event.newValue); if (!Number.isFinite(rate) || rate < 0) throw new Error("Rate must be zero or greater."); await updateCostToCompleteDetail(event.data.id, { rate }); }
       else if (colId === "category") await updateCostToCompleteDetail(event.data.id, { category: event.newValue ? event.newValue as ResourceCategory : null });
       else if (colId.startsWith("e_attribute_") || colId.startsWith("p_attribute_")) await updateCostToCompleteDetail(event.data.id, { [colId]: event.newValue || null } as Partial<Record<CtcAttributeField, string | null>>);
     } catch (requestError) { event.node.setDataValue(event.column, event.oldValue); setError(costToCompleteErrorMessage(requestError)); }
     finally { setSaving(false); }
   }
 
-  async function addRow() {
-    setSaving(true); setError("");
+  function currentAnchorId() {
+    const focused = gridApi?.getFocusedCell();
+    if (focused?.rowIndex != null) {
+      const data = gridApi?.getDisplayedRowAtIndex(focused.rowIndex)?.data;
+      if (data?.id) return data.id;
+    }
+    const selectedNodes = gridApi?.getSelectedNodes().filter((node) => node.data?.id) ?? [];
+    if (selectedNodes.length) {
+      selectedNodes.sort((a, b) => (a.rowIndex ?? -1) - (b.rowIndex ?? -1));
+      return selectedNodes[selectedNodes.length - 1].data!.id;
+    }
+    return anchorId;
+  }
+
+  function insertionOrders(count: number) {
+    const base = mode === "actual" ? actualRows : ctcRows;
+    const anchor = currentAnchorId();
+    const index = anchor ? base.findIndex((row) => row.id === anchor) : -1;
+    const insertAfter = index >= 0 ? index : base.length - 1;
+    const low = insertAfter >= 0 ? Number(base[insertAfter].sort_order ?? (insertAfter + 1) * 1000) : 0;
+    const next = base[insertAfter + 1];
+    const high = next ? Number(next.sort_order ?? (insertAfter + 2) * 1000) : low + 1000 * (count + 1);
+    const step = (high - low) / (count + 1);
+    return Array.from({ length: count }, (_, i) => low + step * (i + 1));
+  }
+
+  async function addRows() {
+    const count = Math.max(1, Math.min(100, Math.floor(addCount || 1)));
+    setAddCount(count); setSaving(true); setError("");
     try {
+      const orders = insertionOrders(count);
+      const createdIds: string[] = [];
       if (mode === "actual") {
         const period = periods.find((p) => p.status === "Current") ?? periods.find((p) => p.status !== "Closed") ?? periods[0];
         if (!period) throw new Error("Create a Cost Reporting Period before adding Actual Cost.");
-        const row = await createActualCostTransaction(project.id, { cost_period_id: period.id, cost_code_id: costCode.id, transaction_date: period.end_date, transaction_id: null, description: "", amount: 0, transaction_type: "MAN", ...Object.fromEntries(actualAttributes.map((a) => [a.field, null])) });
-        setActualRows((current) => [...current, row]);
+        const created: ActualCostTransaction[] = [];
+        for (const sort_order of orders) {
+          const row = await createActualCostTransaction(project.id, { cost_period_id: period.id, cost_code_id: costCode.id, transaction_date: period.end_date, transaction_id: null, description: "", amount: 0, transaction_type: "MAN", sort_order, ...Object.fromEntries(actualAttributes.map((a) => [a.field, null])) });
+          created.push(row); createdIds.push(row.id);
+        }
+        const anchor = currentAnchorId(); const index = anchor ? actualRows.findIndex((row) => row.id === anchor) : actualRows.length - 1;
+        const next = [...actualRows]; next.splice(index + 1, 0, ...created); setActualRows(next);
       } else {
-        const row = await createCostToCompleteDetail(project.id, { cost_code_id: costCode.id, item: null, description: null, unit: null, rate: 0, category: null, resource_source: null, ...Object.fromEntries(ctcAttributes.map((a) => [a.field, null])) });
-        setCtcRows((current) => [...current, row]);
+        const created: CostToCompleteLedgerRow[] = [];
+        for (const sort_order of orders) {
+          const row = await createCostToCompleteDetail(project.id, { cost_code_id: costCode.id, item: null, description: null, unit: null, rate: 0, category: null, resource_source: null, sort_order, ...Object.fromEntries(ctcAttributes.map((a) => [a.field, null])) });
+          created.push(row); createdIds.push(row.id);
+        }
+        const anchor = currentAnchorId(); const index = anchor ? ctcRows.findIndex((row) => row.id === anchor) : ctcRows.length - 1;
+        const next = [...ctcRows]; next.splice(index + 1, 0, ...created); setCtcRows(next);
       }
-      showNotice("Row added.");
+      setAnchorId(createdIds[createdIds.length - 1] ?? null); showNotice(`${count} row${count === 1 ? "" : "s"} inserted.`);
     } catch (requestError) { setError(mode === "actual" ? actualCostErrorMessage(requestError) : costToCompleteErrorMessage(requestError)); }
+    finally { setSaving(false); }
+  }
+
+  async function addResource(resource: PickerResource, scope: ResourceScope) {
+    if (mode !== "ctc") return;
+    setSaving(true); setError("");
+    try {
+      const [sort_order] = insertionOrders(1);
+      const created = await createCostToCompleteDetail(project.id, {
+        cost_code_id: costCode.id,
+        item: resource.resource_id,
+        description: resource.resource_name,
+        unit: resource.unit,
+        rate: Number(resource.rate),
+        category: resource.category,
+        resource_source: scope === "enterprise" ? "ERes" : "PRes",
+        sort_order,
+        ...Object.fromEntries(ctcAttributes.map((a) => [a.field, null])),
+      });
+      const anchor = currentAnchorId(); const index = anchor ? ctcRows.findIndex((row) => row.id === anchor) : ctcRows.length - 1;
+      const next = [...ctcRows]; next.splice(index + 1, 0, created); setCtcRows(next); setAnchorId(created.id);
+      showNotice(`${resource.resource_id} added from ${scope === "enterprise" ? "Enterprise" : "Project"} Resource Rates.`);
+    } catch (requestError) { setError(costToCompleteErrorMessage(requestError)); }
     finally { setSaving(false); }
   }
 
@@ -319,7 +418,7 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
       const ids = selected.map((row) => row.id);
       if (mode === "actual") { await deleteActualCostTransactions(ids); setActualRows((current) => current.filter((row) => !ids.includes(row.id))); }
       else { await deleteCostToCompleteDetails(ids); setCtcRows((current) => current.filter((row) => !ids.includes(row.id))); }
-      gridApi?.deselectAll(); setSelectedCount(0); showNotice("Selected rows deleted.");
+      gridApi?.deselectAll(); setSelectedCount(0); setAnchorId(null); showNotice("Selected rows deleted.");
     } catch (requestError) { setError(mode === "actual" ? actualCostErrorMessage(requestError) : costToCompleteErrorMessage(requestError)); }
     finally { setSaving(false); }
   }
@@ -354,11 +453,10 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
         if (mode === "actual") {
           if (!ACTUAL_TYPES.includes((row["Transaction Type"] ?? "") as TransactionType)) errors.push(`Row ${line}: Transaction Type must be FIN, MAN, ACC or REV.`);
           if (Number.isNaN(parseNumber(row.Amount))) errors.push(`Row ${line}: Amount must be a valid number.`);
-          if (!periodByExcel.has((row["Cost Reporting Period"] ?? "").trim().toUpperCase())) errors.push(`Row ${line}: Cost Reporting Period must be one of ${periods.map(periodExcel).join(", ")}.`);
+          if (!periodByExcel.has((row["Cost Reporting Period"] ?? "").trim().toLowerCase())) errors.push(`Row ${line}: Cost Reporting Period must match the exported period/date header.`);
           actualAttributes.forEach((a) => { const value = (row[a.columnName] ?? "").trim(); if (value && !a.definition.attribute_values.some((v) => v.is_active && v.value_id.toLowerCase() === value.toLowerCase())) errors.push(`Row ${line}: ${a.columnName} must contain an active Value ID.`); });
         } else {
-          const sourceText = (row["Resource Source"] ?? "").trim();
-          const item = (row.Item ?? "").trim();
+          const sourceText = (row["Resource Source"] ?? "").trim(); const item = (row.Item ?? "").trim();
           if (sourceText && sourceText !== "ERes" && sourceText !== "PRes") errors.push(`Row ${line}: Resource Source must be blank, ERes or PRes.`);
           if (sourceText === "ERes" && (!item || !enterpriseResourceIds.has(item.toLowerCase()))) errors.push(`Row ${line}: Item must be an active Enterprise Resource ID for ERes.`);
           if (sourceText === "PRes" && (!item || !projectResourceIds.has(item.toLowerCase()))) errors.push(`Row ${line}: Item must be an active Project Resource ID for PRes.`);
@@ -381,16 +479,29 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
         if (mode === "actual") await deleteActualCostTransactions(actualRows.map((row) => row.id));
         else await deleteCostToCompleteDetails(ctcRows.map((row) => row.id));
       }
+      const existing = replace ? [] : mode === "actual" ? actualRows : ctcRows;
+      const startOrder = existing.length ? Number(existing[existing.length - 1].sort_order ?? existing.length * 1000) : 0;
       for (let index = 0; index < importRows.length; index += 1) {
-        const row = importRows[index];
+        const row = importRows[index]; const sort_order = startOrder + (index + 1) * 1000;
         if (mode === "actual") {
-          const period = periodByExcel.get((row["Cost Reporting Period"] ?? "").trim().toUpperCase())!;
-          await createActualCostTransaction(project.id, { cost_code_id: costCode.id, cost_period_id: period.id, transaction_date: period.end_date, transaction_id: (row.Item ?? "").trim() || null, description: (row.Description ?? "").trim(), transaction_type: row["Transaction Type"] as TransactionType, amount: parseNumber(row.Amount), ...Object.fromEntries(actualAttributes.map((a) => [a.field, (row[a.columnName] ?? "").trim() || null])) });
+          const period = periodByExcel.get((row["Cost Reporting Period"] ?? "").trim().toLowerCase())!;
+          await createActualCostTransaction(project.id, { cost_code_id: costCode.id, cost_period_id: period.id, transaction_date: period.end_date, transaction_id: (row.Item ?? "").trim() || null, description: (row.Description ?? "").trim(), transaction_type: row["Transaction Type"] as TransactionType, amount: parseNumber(row.Amount), sort_order, ...Object.fromEntries(actualAttributes.map((a) => [a.field, (row[a.columnName] ?? "").trim() || null])) });
         } else {
-          const sourceText = (row["Resource Source"] ?? "").trim();
-          await createCostToCompleteDetail(project.id, { cost_code_id: costCode.id, resource_source: sourceText === "ERes" || sourceText === "PRes" ? sourceText : null, item: (row.Item ?? "").trim() || null, description: (row.Description ?? "").trim() || null, unit: (row.Unit ?? "").trim() || null, rate: parseNumber(row.Rate), category: (row.Category ?? "").trim() ? row.Category as ResourceCategory : null, ...Object.fromEntries(ctcAttributes.map((a) => [a.field, (row[a.columnName] ?? "").trim() || null])) }).then(async (created) => {
-            for (const period of periods) { const qty = parseNumber(row[periodExcel(period)]); if (qty !== 0) await setCostToCompletePeriodQty(created.id, period.id, qty); }
+          const sourceText = (row["Resource Source"] ?? "").trim(); const item = (row.Item ?? "").trim();
+          const library = sourceText === "ERes" ? activeEnterpriseResources : sourceText === "PRes" ? activeProjectResources : [];
+          const resource = library.find((entry) => entry.resource_id.toLowerCase() === item.toLowerCase());
+          const created = await createCostToCompleteDetail(project.id, {
+            cost_code_id: costCode.id,
+            resource_source: sourceText === "ERes" || sourceText === "PRes" ? sourceText : null,
+            item: item || null,
+            description: resource ? resource.resource_name : (row.Description ?? "").trim() || null,
+            unit: resource ? resource.unit : (row.Unit ?? "").trim() || null,
+            rate: resource ? Number(resource.rate) : parseNumber(row.Rate),
+            category: resource ? resource.category : (row.Category ?? "").trim() ? row.Category as ResourceCategory : null,
+            sort_order,
+            ...Object.fromEntries(ctcAttributes.map((a) => [a.field, (row[a.columnName] ?? "").trim() || null])),
           });
+          for (const period of periods) { const qty = parseNumber(row[periodExcel(period)]); if (qty !== 0) await setCostToCompletePeriodQty(created.id, period.id, qty); }
         }
         setProgress(((index + 1) / Math.max(importRows.length, 1)) * 100);
       }
@@ -401,19 +512,19 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
 
   const bulkChoices = useMemo<BulkChoice[]>(() => mode === "actual" ? [
     { id: "transaction_id", label: "Item", kind: "text" }, { id: "description", label: "Description", kind: "text" }, { id: "transaction_type", label: "Transaction Type", kind: "select", values: ACTUAL_TYPES }, { id: "amount", label: "Amount", kind: "number" }, { id: "period_label", label: "Cost Reporting Period", kind: "select", values: periods.map(periodLabel) },
-    ...actualAttributes.map((a) => ({ id: a.field, label: a.columnName, kind: "attribute" as const, values: ["", ...a.definition.attribute_values.filter((v) => v.is_active).map((v) => v.value_id)], definition: a.definition })),
+    ...actualAttributes.map((a) => ({ id: a.field, label: a.columnName, kind: "attribute" as const, values: ["", ...a.definition.attribute_values.filter((v) => v.is_active).map((v) => v.value_id)] })),
   ] : [
-    { id: "resource_source_label", label: "Resource Source", kind: "select", values: ["User", "ERes", "PRes"] }, { id: "description", label: "Description", kind: "text" }, { id: "unit", label: "Unit", kind: "text" }, { id: "rate", label: "Rate", kind: "number" }, { id: "category", label: "Category", kind: "select", values: ["", ...RESOURCE_CATEGORIES] },
-    ...ctcAttributes.map((a) => ({ id: a.field, label: a.columnName, kind: "attribute" as const, values: ["", ...a.definition.attribute_values.filter((v) => v.is_active).map((v) => v.value_id)], definition: a.definition })),
-    ...periods.map((period) => ({ id: `period:${period.id}`, label: periodLabel(period), kind: "periodQty" as const })),
+    { id: "description", label: "Description (User rows)", kind: "text" }, { id: "unit", label: "Unit (User rows)", kind: "text" }, { id: "rate", label: "Rate (User rows)", kind: "number" }, { id: "category", label: "Category", kind: "select", values: ["", ...RESOURCE_CATEGORIES] },
+    ...ctcAttributes.map((a) => ({ id: a.field, label: a.columnName, kind: "attribute" as const, values: ["", ...a.definition.attribute_values.filter((v) => v.is_active).map((v) => v.value_id)] })),
+    ...periods.map((period) => ({ id: `period:${period.id}`, label: periodExcel(period), kind: "periodQty" as const })),
   ], [actualAttributes, ctcAttributes, mode, periods]);
 
   async function applyBulkEdit() {
-    const selected = gridApi?.getSelectedRows() ?? [];
-    const choice = bulkChoices.find((item) => item.id === bulkField);
+    const selected = gridApi?.getSelectedRows() ?? []; const choice = bulkChoices.find((item) => item.id === bulkField);
     if (!selected.length || !choice) return;
     setSaving(true); setError("");
     try {
+      if (mode === "ctc" && ["description", "unit", "rate"].includes(bulkField) && selected.some((row) => isResourceRow(row as CtcGridRow))) throw new Error("Item, Description, Unit and Rate are read-only for Enterprise/Project resource rows. Select User rows only for this bulk edit.");
       for (const selectedRow of selected) {
         if (mode === "actual") {
           const row = selectedRow as ActualGridRow;
@@ -426,7 +537,6 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
         } else {
           const row = selectedRow as CtcGridRow;
           if (bulkField.startsWith("period:")) { const qty = Number(bulkValue); if (!Number.isFinite(qty) || qty < 0) throw new Error("Period quantity must be zero or greater."); await setCostToCompletePeriodQty(row.id, bulkField.slice(7), qty); }
-          else if (bulkField === "resource_source_label") { const source = bulkValue === "ERes" || bulkValue === "PRes" ? bulkValue as CtcResourceSource : null; await updateCostToCompleteDetail(row.id, { resource_source: source }); }
           else if (bulkField === "rate") { const rate = Number(bulkValue); if (!Number.isFinite(rate) || rate < 0) throw new Error("Rate must be zero or greater."); await updateCostToCompleteDetail(row.id, { rate }); }
           else if (bulkField === "description") await updateCostToCompleteDetail(row.id, { description: bulkValue || null });
           else if (bulkField === "unit") await updateCostToCompleteDetail(row.id, { unit: bulkValue || null });
@@ -461,8 +571,13 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
   const title = mode === "actual" ? "Actual Cost" : "Cost to Complete";
   const columns = (mode === "actual" ? actualColumnDefs : ctcColumnDefs) as ColDef<RelatedGridRow>[];
   const chosenBulk = bulkChoices.find((choice) => choice.id === bulkField);
+  const pickerRows = (resourceScope === "enterprise" ? activeEnterpriseResources : activeProjectResources).filter((row) => {
+    const query = resourceSearch.trim().toLowerCase();
+    return !query || row.resource_id.toLowerCase().includes(query) || row.resource_name.toLowerCase().includes(query) || row.category.toLowerCase().includes(query);
+  });
 
   return <div style={{ position: "fixed", inset: 0, zIndex: 12000, background: "#f5f7fa", display: "flex", flexDirection: "column" }}>
+    <style>{`.resource-snapshot-cell{background:#f8fafc!important;color:#475569!important}.resource-snapshot-cell:after{content:" 🔒";font-size:9px;color:#94a3b8}`}</style>
     <header style={{ minHeight: 58, background: "#fff", borderBottom: "1px solid #dfe4ea", display: "flex", alignItems: "center", gap: 14, padding: "8px 14px" }}>
       <button className="button secondary compact" onClick={onClose}>← Back</button>
       <div style={{ minWidth: 0 }}><div style={{ fontSize: 16, fontWeight: 700 }}>{title}</div><div style={{ fontSize: 12, color: "#68707d" }}><strong>{costCode.cost_code_id}</strong> · {costCode.name}</div></div>
@@ -472,7 +587,11 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
 
     <div className="enterprise-toolbar" style={{ flexWrap: "wrap", padding: "8px 12px", background: "#fff", borderBottom: "1px solid #e5e7eb" }}>
       <label className="enterprise-search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={`Search ${title.toLowerCase()}…`}/></label>
-      <button className="button primary" disabled={loading || saving || (mode === "actual" && periods.length === 0)} onClick={() => void addRow()}>+ Add Row</button>
+      <div style={{ display: "inline-flex", alignItems: "stretch" }}>
+        <button className="button primary" style={{ borderTopRightRadius: 0, borderBottomRightRadius: 0 }} disabled={loading || saving || (mode === "actual" && periods.length === 0)} onClick={() => void addRows()}>+ Add Row</button>
+        <input aria-label="Number of rows to add" title="Rows to insert (1–100)" type="number" min={1} max={100} value={addCount} onChange={(event) => setAddCount(Math.max(1, Math.min(100, Number(event.target.value) || 1)))} style={{ width: 54, border: "1px solid #2563eb", borderLeft: 0, borderRadius: "0 5px 5px 0", padding: "0 5px", fontSize: 12, textAlign: "center" }}/>
+      </div>
+      {mode === "ctc" && <button className="button secondary" title="Add from Enterprise / Project Resource Rates" aria-label="Add resource" onClick={() => setResourcePaneOpen(true)} style={{ width: 34, paddingInline: 0, display: "grid", placeItems: "center" }}><SvgIcon type="resource"/></button>}
       <button className="button secondary" disabled={!selectedCount || saving} onClick={() => { setBulkOpen(true); setBulkField(""); setBulkValue(""); }}>Bulk Edit{selectedCount ? ` (${selectedCount})` : ""}</button>
       <button className="button danger" disabled={!selectedCount || saving} onClick={() => void deleteSelected()}>Delete{selectedCount ? ` (${selectedCount})` : ""}</button>
       <button className="button secondary" disabled={!hasGroups} onClick={() => gridApi?.expandAll()}>Expand All</button>
@@ -487,6 +606,7 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
     </div>
 
     {error && <div className="data-message error" style={{ margin: "8px 12px 0" }}><strong>Unable to update {title}</strong><span>{error}</span></div>}
+    {notice && <div style={{ margin: "6px 12px 0", fontSize: 12, color: "#166534" }}>{notice}</div>}
     <div style={{ flex: 1, minHeight: 0, padding: "8px 12px 10px" }}>
       {loading ? <div className="data-message" style={{ height: "100%" }}><span className="spinner"/>Loading {title} records…</div> : <AgGridProvider modules={[AllEnterpriseModule]} licenseKey={process.env.NEXT_PUBLIC_AG_GRID_LICENSE_KEY ?? ""}>
         <div className="enterprise-grid-card" style={{ height: "100%", width: "100%", overflow: "hidden" }}>
@@ -494,13 +614,15 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
             theme={gridTheme}
             rowData={rows}
             columnDefs={columns}
-            defaultColDef={{ sortable: true, resizable: true, filter: true, minWidth: 80, enableRowGroup: true }}
+            defaultColDef={{ sortable: true, resizable: true, filter: true, minWidth: 70, enableRowGroup: true }}
             quickFilterText={search}
             rowSelection={{ mode: "multiRow" }}
             selectionColumnDef={{ pinned: "left", width: 42, maxWidth: 42, suppressHeaderMenuButton: true }}
             getRowId={(params) => params.data.id}
             onGridReady={(event) => { setGridApi(event.api); syncGroupState(event.api); }}
             onSelectionChanged={selectionChanged}
+            onCellFocused={(event) => { if (event.rowIndex != null) { const data = event.api.getDisplayedRowAtIndex(event.rowIndex)?.data; if (data?.id) setAnchorId(data.id); } }}
+            onCellClicked={(event) => { if (event.data?.id) setAnchorId(event.data.id); }}
             onColumnRowGroupChanged={(event) => syncGroupState(event.api)}
             onCellValueChanged={(event) => mode === "actual" ? void actualChanged(event as CellValueChangedEvent<ActualGridRow>) : void ctcChanged(event as CellValueChangedEvent<CtcGridRow>)}
             rowGroupPanelShow="always"
@@ -513,14 +635,27 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
         </div>
       </AgGridProvider>}
     </div>
-    <footer className="grid-footer" style={{ padding: "6px 14px", background: "#fff", borderTop: "1px solid #e5e7eb" }}><span>{rows.length} related {title} row{rows.length === 1 ? "" : "s"} · {selectedCount} selected</span><span>{mode === "ctc" ? `${periods.length} phasing periods` : `${periods.length} reporting periods`} · Cost Code is fixed to {costCode.cost_code_id}</span></footer>
+    <footer className="grid-footer" style={{ padding: "6px 14px", background: "#fff", borderTop: "1px solid #e5e7eb" }}><span>{rows.length} related {title} row{rows.length === 1 ? "" : "s"} · {selectedCount} selected</span><span>{mode === "ctc" ? `${periods.length} phasing periods` : `${periods.length} reporting periods`} · Cost Code fixed to {costCode.cost_code_id}</span></footer>
+
+    {resourcePaneOpen && mode === "ctc" && <div style={{ position: "fixed", inset: 0, zIndex: 13000, pointerEvents: "none" }}>
+      <button aria-label="Close resource picker" onClick={() => setResourcePaneOpen(false)} style={{ position: "absolute", inset: 0, border: 0, background: "rgba(15,23,42,.18)", pointerEvents: "auto" }}/>
+      <aside style={{ position: "absolute", top: 0, right: 0, bottom: 0, width: "min(430px, 92vw)", background: "#fff", borderLeft: "1px solid #dbe1e8", boxShadow: "-12px 0 30px rgba(15,23,42,.16)", pointerEvents: "auto", display: "flex", flexDirection: "column" }}>
+        <div style={{ padding: 14, borderBottom: "1px solid #e5e7eb", display: "flex", alignItems: "center", gap: 8 }}><div><strong style={{ display: "block" }}>Add Resource</strong><span style={{ fontSize: 11, color: "#6b7280" }}>Adds below the active/selected row</span></div><button className="button secondary compact" style={{ marginLeft: "auto" }} onClick={() => setResourcePaneOpen(false)}>✕</button></div>
+        <div style={{ padding: 10, borderBottom: "1px solid #e5e7eb", display: "grid", gap: 8 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", border: "1px solid #d1d5db", borderRadius: 6, overflow: "hidden" }}><button onClick={() => setResourceScope("enterprise")} style={{ border: 0, padding: 7, fontSize: 12, fontWeight: 600, background: resourceScope === "enterprise" ? "#eef4ff" : "#fff", color: resourceScope === "enterprise" ? "#1d4ed8" : "#4b5563" }}>Enterprise</button><button onClick={() => setResourceScope("project")} style={{ border: 0, borderLeft: "1px solid #d1d5db", padding: 7, fontSize: 12, fontWeight: 600, background: resourceScope === "project" ? "#eef4ff" : "#fff", color: resourceScope === "project" ? "#1d4ed8" : "#4b5563" }}>Project</button></div>
+          <input value={resourceSearch} onChange={(event) => setResourceSearch(event.target.value)} placeholder="Search Resource ID, name or category…" style={{ width: "100%", border: "1px solid #d1d5db", borderRadius: 6, padding: "7px 9px", fontSize: 12 }}/>
+        </div>
+        <div style={{ overflow: "auto", flex: 1 }}>
+          {pickerRows.length === 0 ? <div style={{ padding: 18, color: "#6b7280", fontSize: 12 }}>No active resources match this search.</div> : pickerRows.map((resource) => <div key={`${resourceScope}-${resource.id}`} style={{ padding: "9px 10px", borderBottom: "1px solid #eef0f3", display: "grid", gridTemplateColumns: "1fr auto", gap: 10, alignItems: "center" }}><div style={{ minWidth: 0 }}><div style={{ display: "flex", gap: 7, alignItems: "baseline" }}><strong style={{ fontSize: 12 }}>{resource.resource_id}</strong><span style={{ fontSize: 10, color: "#64748b" }}>{resource.category}</span></div><div style={{ fontSize: 12, color: "#374151", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{resource.resource_name}</div><div style={{ fontSize: 10.5, color: "#6b7280" }}>{resource.unit} · {numberFormat(resource.rate, 4)}</div></div><button className="button secondary compact" disabled={saving} onClick={() => void addResource(resource, resourceScope)}>+ Add</button></div>)}
+        </div>
+        <div style={{ padding: 10, borderTop: "1px solid #e5e7eb", fontSize: 10.5, color: "#64748b" }}>Resource rows are snapshots. Item, Description, Unit and Rate are locked after insertion.</div>
+      </aside>
+    </div>}
 
     {importRows && <ExcelImportDialog title={`Import ${title} · ${costCode.cost_code_id}`} rows={importRows} columns={excelColumns} errors={importErrors} replace={replace} setReplace={setReplace} importing={importing} progress={progress} onCancel={() => !importing && setImportRows(null)} onImport={() => void runImport()}/>} 
 
-    {bulkOpen && <div className="confirm-layer"><button className="confirm-scrim" onClick={() => !saving && setBulkOpen(false)} aria-label="Close bulk edit"/><div className="confirm-dialog" role="dialog" aria-modal="true" style={{ width: "min(520px, 92vw)" }}><h2>Bulk Edit {selectedCount} Row{selectedCount === 1 ? "" : "s"}</h2><p>Choose one field and apply the same value to all selected rows.</p><div style={{ display: "grid", gap: 10, textAlign: "left" }}><label><span>Field</span><select value={bulkField} onChange={(event) => { setBulkField(event.target.value); setBulkValue(""); }}><option value="">Select field…</option>{bulkChoices.map((choice) => <option key={choice.id} value={choice.id}>{choice.label}</option>)}</select></label>{chosenBulk && <label><span>Value</span>{chosenBulk.values ? <select value={bulkValue} onChange={(event) => setBulkValue(event.target.value)}>{chosenBulk.values.map((value) => <option key={value || "blank"} value={value}>{value || "(Blank)"}</option>)}</select> : <input type={chosenBulk.kind === "number" || chosenBulk.kind === "periodQty" ? "number" : "text"} min={chosenBulk.kind === "periodQty" ? 0 : undefined} value={bulkValue} onChange={(event) => setBulkValue(event.target.value)}/>}</label>}</div><div className="confirm-actions"><button className="button secondary" disabled={saving} onClick={() => setBulkOpen(false)}>Cancel</button><button className="button primary" disabled={saving || !bulkField || (chosenBulk?.values ? false : bulkValue === "")} onClick={() => void applyBulkEdit()}>{saving ? "Updating…" : "Apply"}</button></div></div></div>}
+    {bulkOpen && <div className="confirm-layer"><button className="confirm-scrim" onClick={() => !saving && setBulkOpen(false)} aria-label="Close bulk edit"/><div className="confirm-dialog" role="dialog" aria-modal="true" style={{ width: "min(520px, 92vw)" }}><h2>Bulk Edit {selectedCount} Row{selectedCount === 1 ? "" : "s"}</h2><p>Choose one field and apply the same value to all selected rows.</p><div style={{ display: "grid", gap: 10, textAlign: "left" }}><label><span>Field</span><select value={bulkField} onChange={(event) => { setBulkField(event.target.value); setBulkValue(""); }}><option value="">Select field…</option>{bulkChoices.map((choice) => <option key={choice.id} value={choice.id}>{choice.label}</option>)}</select></label>{chosenBulk && <label><span>Value</span>{chosenBulk.values ? <select value={bulkValue} onChange={(event) => setBulkValue(event.target.value)}>{chosenBulk.values.map((value) => <option key={value || "blank"} value={value}>{value || "(Blank)"}</option>)}</select> : <input type={chosenBulk.kind === "number" || chosenBulk.kind === "periodQty" ? "number" : "text"} value={bulkValue} onChange={(event) => setBulkValue(event.target.value)}/>}</label>}</div><div className="confirm-actions"><button className="button secondary" disabled={saving} onClick={() => setBulkOpen(false)}>Cancel</button><button className="button primary" disabled={!bulkField || saving} onClick={() => void applyBulkEdit()}>{saving ? "Applying…" : "Apply"}</button></div></div></div>}
 
-    {showSaveView && <div className="confirm-layer"><button className="confirm-scrim" onClick={() => setShowSaveView(false)} aria-label="Close save view"/><div className="confirm-dialog" style={{ width: "min(440px, 92vw)" }}><h2>Save Grid View</h2><p>Save the current columns, order, grouping and filters for this related-record workspace.</p><label style={{ textAlign: "left", display: "grid", gap: 5 }}><span>View Name</span><input value={viewName} onChange={(event) => setViewName(event.target.value)} autoFocus/></label><div className="confirm-actions"><button className="button secondary" onClick={() => setShowSaveView(false)}>Cancel</button><button className="button primary" disabled={!viewName.trim()} onClick={() => void saveView()}>Save</button></div></div></div>}
-
-    {notice && <div className="admin-toast">{notice}</div>}
+    {showSaveView && <div className="confirm-layer"><button className="confirm-scrim" onClick={() => setShowSaveView(false)} aria-label="Close save view"/><div className="confirm-dialog" role="dialog" aria-modal="true"><h2>Save View</h2><p>Save the current columns, grouping, order and filters.</p><input autoFocus value={viewName} onChange={(event) => setViewName(event.target.value)} placeholder="View name"/><div className="confirm-actions"><button className="button secondary" onClick={() => setShowSaveView(false)}>Cancel</button><button className="button primary" disabled={!viewName.trim()} onClick={() => void saveView()}>Save</button></div></div></div>}
   </div>;
 }
