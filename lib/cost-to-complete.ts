@@ -20,6 +20,7 @@ export type CostToCompleteDetail = {
   rate: number;
   category: ResourceCategory | null;
   resource_source: CtcResourceSource;
+  sort_order: number | null;
   created_at: string;
   updated_at: string;
 } & CtcAttributeValues;
@@ -40,11 +41,11 @@ export type CostToCompleteImportRow = Omit<CostToCompleteDetail, "id" | "project
 };
 
 export type CostToCompleteEditablePatch = Partial<Pick<CostToCompleteDetail,
-  "item" | "description" | "unit" | "rate" | "category" | "resource_source"
+  "item" | "description" | "unit" | "rate" | "category" | "resource_source" | "sort_order"
 >> & CtcAttributeValues;
 
 const detailSelect = [
-  "id", "project_id", "cost_code_id", "item", "description", "unit", "rate", "category", "resource_source", "created_at", "updated_at",
+  "id", "project_id", "cost_code_id", "item", "description", "unit", "rate", "category", "resource_source", "sort_order", "created_at", "updated_at",
   ...CTC_ENTERPRISE_ATTRIBUTE_FIELDS,
   ...CTC_PROJECT_ATTRIBUTE_FIELDS,
 ].join(",");
@@ -52,7 +53,7 @@ const detailSelect = [
 async function listLedger(projectId: string, costCodeId?: string): Promise<CostToCompleteLedgerRow[]> {
   const costCodeFilter = costCodeId ? `&cost_code_id=eq.${encodeURIComponent(costCodeId)}` : "";
   const details = await supabaseRequest<CostToCompleteDetail[]>(
-    `cost_to_complete_details?project_id=eq.${encodeURIComponent(projectId)}${costCodeFilter}&select=${encodeURIComponent(detailSelect)}&order=created_at.asc`,
+    `cost_to_complete_details?project_id=eq.${encodeURIComponent(projectId)}${costCodeFilter}&select=${encodeURIComponent(detailSelect)}&order=sort_order.asc.nullslast,created_at.asc`,
   );
   if (!details.length) return [];
 
@@ -72,7 +73,7 @@ async function listLedger(projectId: string, costCodeId?: string): Promise<CostT
     values[row.cost_period_id] = Number(row.qty);
     byDetail.set(row.cost_to_complete_detail_id, values);
   });
-  return details.map((row) => ({ ...row, rate: Number(row.rate), period_qty: byDetail.get(row.id) ?? {} }));
+  return details.map((row) => ({ ...row, rate: Number(row.rate), sort_order: row.sort_order == null ? null : Number(row.sort_order), period_qty: byDetail.get(row.id) ?? {} }));
 }
 
 export function listCostToCompleteLedger(projectId: string) {
@@ -90,7 +91,7 @@ export async function createCostToCompleteDetail(projectId: string, row: Omit<Co
     headers: { Prefer: "return=representation" },
     body: JSON.stringify(body),
   });
-  return { ...rows[0], rate: Number(rows[0].rate), period_qty: {} } as CostToCompleteLedgerRow;
+  return { ...rows[0], rate: Number(rows[0].rate), sort_order: rows[0].sort_order == null ? null : Number(rows[0].sort_order), period_qty: {} } as CostToCompleteLedgerRow;
 }
 
 export async function updateCostToCompleteDetail(id: string, patch: CostToCompleteEditablePatch) {
