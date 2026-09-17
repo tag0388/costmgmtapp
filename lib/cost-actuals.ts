@@ -20,6 +20,7 @@ export type ActualCostTransaction = {
   amount: number;
   transaction_type: TransactionType;
   reversal_of_transaction_id: string | null;
+  row_order: number | null;
   created_at: string;
   updated_at: string;
 } & ActualAttributeValues;
@@ -32,6 +33,7 @@ export type ActualCostImportRow = {
   description: string;
   amount: number;
   transaction_type: TransactionType;
+  row_order?: number | null;
 } & ActualAttributeValues;
 
 export type ActualCostEditablePatch = Partial<Pick<ActualCostImportRow,
@@ -40,7 +42,7 @@ export type ActualCostEditablePatch = Partial<Pick<ActualCostImportRow,
 
 const ATTRIBUTE_FIELDS = [...ACTUAL_ENTERPRISE_ATTRIBUTE_FIELDS, ...ACTUAL_PROJECT_ATTRIBUTE_FIELDS];
 const select = [
-  "id", "project_id", "cost_period_id", "cost_code_id", "transaction_date", "transaction_id", "description", "amount", "transaction_type", "reversal_of_transaction_id", "created_at", "updated_at",
+  "id", "project_id", "cost_period_id", "cost_code_id", "transaction_date", "transaction_id", "description", "amount", "transaction_type", "reversal_of_transaction_id", "row_order", "created_at", "updated_at",
   ...ATTRIBUTE_FIELDS,
 ].join(",");
 
@@ -67,6 +69,7 @@ async function insertRow(projectId: string, row: ActualCostImportRow) {
     amount: row.amount,
     transaction_type: row.transaction_type,
     reversal_of_transaction_id: null,
+    row_order: row.row_order ?? null,
     ...Object.fromEntries(ATTRIBUTE_FIELDS.map((field) => [field, row[field] ?? null])),
   };
   await supabaseRequest("actual_cost_transactions", {
@@ -85,6 +88,7 @@ export async function createActualCostTransaction(projectId: string, row: Actual
     amount: row.amount,
     transaction_type: row.transaction_type,
     reversal_of_transaction_id: null,
+    row_order: row.row_order ?? null,
     ...Object.fromEntries(ATTRIBUTE_FIELDS.map((field) => [field, row[field] ?? null])),
   };
   const rows = await supabaseRequest<ActualCostTransaction[]>(`actual_cost_transactions?select=${encodeURIComponent(select)}`, {
@@ -107,6 +111,7 @@ export async function createActualCostTransactions(projectId: string, inputRows:
     amount: row.amount,
     transaction_type: row.transaction_type,
     reversal_of_transaction_id: null,
+    row_order: row.row_order ?? null,
     ...Object.fromEntries(ATTRIBUTE_FIELDS.map((field) => [field, row[field] ?? null])),
   }));
   return supabaseRequest<ActualCostTransaction[]>(`actual_cost_transactions?select=${encodeURIComponent(select)}`, {
