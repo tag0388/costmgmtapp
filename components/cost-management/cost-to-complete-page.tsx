@@ -192,19 +192,21 @@ export default function CostToCompletePage({ projectPublicId }: { projectPublicI
       valueFormatter: (params) => valueName(attribute.definition, params.value as string | null),
     }));
     const userCols: ColDef<GridRow>[] = [
-      ...CTC_USER_NUMBER_COLUMNS.map(({ field, label }): ColDef<GridRow> => ({
+      ...CTC_USER_NUMBER_COLUMNS.map(({ field, label }, index): ColDef<GridRow> => ({
         field: field as keyof GridRow & string,
         headerName: label,
         minWidth: 110,
         type: "numericColumn",
         filter: "agNumberColumnFilter",
         valueFormatter: (params) => params.value == null ? "" : numberFormat(params.value, 4),
+        columnGroupShow: index === 0 ? undefined : "open",
       })),
       ...CTC_USER_TEXT_COLUMNS.map(({ field, label }): ColDef<GridRow> => ({
         field: field as keyof GridRow & string,
         headerName: label,
         minWidth: 125,
         filter: true,
+        columnGroupShow: "open",
       })),
     ];
     const periodCols = periods.map((period): ColDef<GridRow> => ({
@@ -233,7 +235,7 @@ export default function CostToCompletePage({ projectPublicId }: { projectPublicI
       { groupId: "ctc-bulk-general", headerName: "General Info", marryChildren: true, children: generalInfo },
       ...(enterpriseAttributeCols.length ? [{ groupId: "ctc-bulk-enterprise", headerName: "Enterprise Line-Item Attributes", marryChildren: true, children: enterpriseAttributeCols }] : []),
       ...(projectAttributeCols.length ? [{ groupId: "ctc-bulk-project", headerName: "Project Line-Item Attributes", marryChildren: true, children: projectAttributeCols }] : []),
-      { groupId: "ctc-bulk-user", headerName: "User Columns", marryChildren: true, children: userCols },
+      { groupId: "ctc-bulk-user", headerName: "User Columns", marryChildren: true, openByDefault: false, children: userCols },
       { groupId: "ctc-bulk-phasing", headerName: "Phasing", marryChildren: true, children: periodCols },
     ];
   }, [activeAttributes, periods]);
