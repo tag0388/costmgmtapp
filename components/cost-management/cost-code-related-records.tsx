@@ -310,36 +310,66 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
     ...actualAttributes.map((attribute): ColDef<ActualGridRow> => ({ field: attribute.field as keyof ActualGridRow & string, headerName: attribute.columnName, editable: true, filter: "agSetColumnFilter", ...attributeEditor(attribute.definition) })),
   ], [actualAttributes, attributeEditor, periods]);
 
-  const ctcColumnDefs = useMemo<ColDef<CtcGridRow>[]>(() => {
+  const ctcColumnDefs = useMemo<(ColDef<CtcGridRow> | ColGroupDef<CtcGridRow>)[]>(() => {
     const resourceCellStyle = (params: { data?: CtcGridRow }) => params.data?.resource_source ? { backgroundColor: "#f8fafc", color: "#475569" } : undefined;
-    return [
-      { field: "resource_source_label", colId: "resource_source_label", headerName: "Resource Source", editable: false, filter: "agSetColumnFilter", minWidth: 105, maxWidth: 125 },
-      { field: "item", headerName: "Item", editable: (params) => !params.data?.resource_source, filter: true, cellStyle: resourceCellStyle },
-      { field: "description", headerName: "Description", editable: (params) => !params.data?.resource_source, filter: true, minWidth: 180, cellStyle: resourceCellStyle },
-      { colId: "qty", headerName: "Qty", editable: false, type: "numericColumn", aggFunc: "sum", enableValue: true, valueGetter: (params) => Object.values(params.data?.period_qty ?? {}).reduce((sum, value) => sum + Number(value || 0), 0), valueFormatter: (params) => numberFormat(params.value, 4) },
-      { field: "unit", headerName: "Unit", editable: (params) => !params.data?.resource_source, filter: "agSetColumnFilter", cellStyle: resourceCellStyle },
-      { field: "rate", headerName: "Rate", editable: (params) => !params.data?.resource_source, type: "numericColumn", valueParser: (params) => Number(params.newValue), valueFormatter: (params) => numberFormat(params.value, 4), cellStyle: resourceCellStyle },
-      { colId: "total", headerName: "Total", editable: false, type: "numericColumn", aggFunc: "sum", enableValue: true, valueGetter: (params) => Object.values(params.data?.period_qty ?? {}).reduce((sum, value) => sum + Number(value || 0), 0) * Number(params.data?.rate ?? 0), valueFormatter: (params) => numberFormat(params.value, 2) },
-      { field: "category", headerName: "Category", editable: true, cellEditor: "agSelectCellEditor", cellEditorParams: { values: ["", ...RESOURCE_CATEGORIES] }, filter: "agSetColumnFilter", valueFormatter: (params) => params.value ?? "" },
-      ...ctcAttributes.map((attribute): ColDef<CtcGridRow> => ({ field: attribute.field as keyof CtcGridRow & string, headerName: attribute.columnName, editable: true, filter: "agSetColumnFilter", ...attributeEditor(attribute.definition) })),
-      ...periods.map((period): ColDef<CtcGridRow> => ({
-        colId: `period:${period.id}`,
-        headerName: periodColumnLabel(period),
-        editable: true,
-        type: "numericColumn",
-        aggFunc: "sum",
-        enableValue: true,
-        width: 82,
-        minWidth: 72,
-        maxWidth: 92,
-        wrapHeaderText: true,
-        autoHeaderHeight: true,
-        valueGetter: (params) => Number(params.data?.period_qty[period.id] ?? 0),
-        valueSetter: (params) => { if (!params.data) return false; const parsed = Number(params.newValue); if (!Number.isFinite(parsed) || parsed < 0) return false; params.data.period_qty = { ...params.data.period_qty, [period.id]: parsed }; return true; },
-        valueFormatter: (params) => numberFormat(params.value, 4),
-      })),
+    const formulaCellStyle = { backgroundColor: "#eef1f4", color: "#475569", fontWeight: 600 };
+    const enterpriseCols = ctcAttributes.filter((attribute) => attribute.prefix === "E").map((attribute): ColDef<CtcGridRow> => ({
+      field: attribute.field as keyof CtcGridRow & string,
+      headerName: attribute.columnName,
+      editable: true,
+      filter: "agSetColumnFilter",
+      ...attributeEditor(attribute.definition),
+    }));
+    const projectCols = ctcAttributes.filter((attribute) => attribute.prefix === "P").map((attribute): ColDef<CtcGridRow> => ({
+      field: attribute.field as keyof CtcGridRow & string,
+      headerName: attribute.columnName,
+      editable: true,
+      filter: "agSetColumnFilter",
+      ...attributeEditor(attribute.definition),
+    }));
+    const phasingCols = ctcPeriods.map((period): ColDef<CtcGridRow> => ({
+      colId: `period:${period.id}`,
+      headerName: periodColumnLabel(period),
+      editable: true,
+      type: "numericColumn",
+      aggFunc: "sum",
+      enableValue: true,
+      width: 82,
+      minWidth: 72,
+      maxWidth: 92,
+      wrapHeaderText: true,
+      autoHeaderHeight: true,
+      valueGetter: (params) => Number(params.data?.period_qty[period.id] ?? 0),
+      valueSetter: (params) => {
+        if (!params.data) return false;
+        const parsed = Number(params.newValue);
+        if (!Number.isFinite(parsed) || parsed < 0) return false;
+        params.data.period_qty = { ...params.data.period_qty, [period.id]: parsed };
+        return true;
+      },
+      valueFormatter: (params) => numberFormat(params.value, 4),
+    }));
+    const groups: (ColDef<CtcGridRow> | ColGroupDef<CtcGridRow>)[] = [
+      {
+        headerName: "General Info",
+        marryChildren: true,
+        children: [
+          { field: "resource_source_label", colId: "resource_source_label", headerName: "Resource Source", editable: false, filter: "agSetColumnFilter", minWidth: 105, maxWidth: 125 },
+          { field: "item", headerName: "Item", editable: (params) => !params.data?.resource_source, filter: true, cellStyle: resourceCellStyle },
+          { field: "description", headerName: "Description", editable: (params) => !params.data?.resource_source, filter: true, minWidth: 180, cellStyle: resourceCellStyle },
+          { colId: "qty", headerName: "Qty", editable: false, type: "numericColumn", aggFunc: "sum", enableValue: true, cellStyle: formulaCellStyle, valueGetter: (params) => ctcPeriods.reduce((sum, period) => sum + Number(params.data?.period_qty[period.id] ?? 0), 0), valueFormatter: (params) => numberFormat(params.value, 4) },
+          { field: "unit", headerName: "Unit", editable: (params) => !params.data?.resource_source, filter: "agSetColumnFilter", cellStyle: resourceCellStyle },
+          { field: "rate", headerName: "Rate", editable: (params) => !params.data?.resource_source, type: "numericColumn", valueParser: (params) => Number(params.newValue), valueFormatter: (params) => numberFormat(params.value, 4), cellStyle: resourceCellStyle },
+          { colId: "total", headerName: "Total", editable: false, type: "numericColumn", aggFunc: "sum", enableValue: true, cellStyle: formulaCellStyle, valueGetter: (params) => ctcPeriods.reduce((sum, period) => sum + Number(params.data?.period_qty[period.id] ?? 0), 0) * Number(params.data?.rate ?? 0), valueFormatter: (params) => numberFormat(params.value, 2) },
+          { field: "category", headerName: "Category", editable: true, cellEditor: "agSelectCellEditor", cellEditorParams: { values: ["", ...RESOURCE_CATEGORIES] }, filter: "agSetColumnFilter", valueFormatter: (params) => params.value ?? "" },
+        ],
+      },
     ];
-  }, [attributeEditor, ctcAttributes, periods]);
+    if (enterpriseCols.length) groups.push({ headerName: "Enterprise Line-Item Attributes", marryChildren: true, children: enterpriseCols });
+    if (projectCols.length) groups.push({ headerName: "Project Line-Item Attributes", marryChildren: true, children: projectCols });
+    if (phasingCols.length) groups.push({ headerName: "Phasing", marryChildren: true, children: phasingCols });
+    return groups;
+  }, [attributeEditor, ctcAttributes, ctcPeriods]);
 
   async function actualChanged(event: CellValueChangedEvent<ActualGridRow>) {
     if (!event.data || event.newValue === event.oldValue) return;
@@ -442,7 +472,7 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
   const excelColumns = useMemo(() => mode === "actual" ? [
     "Item", "Description", "Transaction Type", "Amount", "Cost Reporting Period", ...actualAttributes.map((a) => a.columnName),
   ] : [
-    "Resource Source", "Item", "Description", "Unit", "Rate", "Category", ...ctcAttributes.map((a) => a.columnName), ...periods.map(periodExcel),
+    "Resource Source", "Item", "Description", "Unit", "Rate", "Category", ...ctcAttributes.map((a) => a.columnName), ...ctcPeriods.map(periodExcel),
   ], [actualAttributes, ctcAttributes, mode, periods]);
 
   function exportRows() {
@@ -452,7 +482,7 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
     })) : ctcGridRows.map((row) => ({
       "Resource Source": row.resource_source ?? "", Item: row.item ?? "", Description: row.description ?? "", Unit: row.unit ?? "", Rate: String(row.rate), Category: row.category ?? "",
       ...Object.fromEntries(ctcAttributes.map((a) => [a.columnName, row[a.field] ?? ""])),
-      ...Object.fromEntries(periods.map((period) => [periodExcel(period), String(row.period_qty[period.id] ?? 0)])),
+      ...Object.fromEntries(ctcPeriods.map((period) => [periodExcel(period), String(row.period_qty[period.id] ?? 0)])),
     }));
     const template = Object.fromEntries(excelColumns.map((column) => [column, ""])) as ExcelRow;
     exportExcel(`${project.project_code}-${costCode.cost_code_id}-${mode === "actual" ? "actual-cost" : "cost-to-complete"}`, mode === "actual" ? "Actual Cost" : "Cost to Complete", data.length ? data : [template]);
@@ -486,7 +516,7 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
           }
           const category = (row.Category ?? "").trim(); if (category && !RESOURCE_CATEGORIES.includes(category as ResourceCategory)) errors.push(`Row ${line}: Category is invalid.`);
           ctcAttributes.forEach((a) => { const value = (row[a.columnName] ?? "").trim(); if (value && !a.definition.attribute_values.some((v) => v.is_active && v.value_id.toLowerCase() === value.toLowerCase())) errors.push(`Row ${line}: ${a.columnName} must contain an active Value ID.`); });
-          periods.forEach((period) => { const qty = parseNumber(row[periodExcel(period)]); if (Number.isNaN(qty) || qty < 0) errors.push(`Row ${line}: ${periodExcel(period)} must be zero or greater.`); });
+          ctcPeriods.forEach((period) => { const qty = parseNumber(row[periodExcel(period)]); if (Number.isNaN(qty) || qty < 0) errors.push(`Row ${line}: ${periodExcel(period)} must be zero or greater.`); });
         }
       });
       setImportRows(incoming); setImportErrors(errors); setReplace(false); setProgress(0);
@@ -512,7 +542,7 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
           const item = (row.Item ?? "").trim();
           const sourceResource = sourceText === "ERes" ? enterpriseResourceById.get(item.toLowerCase()) : sourceText === "PRes" ? projectResourceById.get(item.toLowerCase()) : null;
           await createCostToCompleteDetail(project.id, { cost_code_id: costCode.id, resource_source: sourceText === "ERes" || sourceText === "PRes" ? sourceText : null, item: sourceResource?.resource_id ?? (item || null), description: sourceResource?.resource_name ?? ((row.Description ?? "").trim() || null), unit: sourceResource?.unit ?? ((row.Unit ?? "").trim() || null), rate: sourceResource ? Number(sourceResource.rate) : parseNumber(row.Rate), category: (row.Category ?? "").trim() ? row.Category as ResourceCategory : null, ...Object.fromEntries(ctcAttributes.map((a) => [a.field, (row[a.columnName] ?? "").trim() || null])) }).then(async (created) => {
-            for (const period of periods) { const qty = parseNumber(row[periodExcel(period)]); if (qty !== 0) await setCostToCompletePeriodQty(created.id, period.id, qty); }
+            for (const period of ctcPeriods) { const qty = parseNumber(row[periodExcel(period)]); if (qty !== 0) await setCostToCompletePeriodQty(created.id, period.id, qty); }
           });
         }
         setProgress(((index + 1) / Math.max(importRows.length, 1)) * 100);
@@ -528,8 +558,8 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
   ] : [
     { id: "description", label: "Description", kind: "text" }, { id: "unit", label: "Unit", kind: "text" }, { id: "rate", label: "Rate", kind: "number" }, { id: "category", label: "Category", kind: "select", values: ["", ...RESOURCE_CATEGORIES] },
     ...ctcAttributes.map((a) => ({ id: a.field, label: a.columnName, kind: "attribute" as const, values: ["", ...a.definition.attribute_values.filter((v) => v.is_active).map((v) => v.value_id)], definition: a.definition })),
-    ...periods.map((period) => ({ id: `period:${period.id}`, label: periodLabel(period), kind: "periodQty" as const })),
-  ], [actualAttributes, ctcAttributes, mode, periods]);
+    ...ctcPeriods.map((period) => ({ id: `period:${period.id}`, label: periodLabel(period), kind: "periodQty" as const })),
+  ], [actualAttributes, ctcAttributes, ctcPeriods, mode, periods]);
 
   async function applyBulkEdit() {
     const selected = gridApi?.getSelectedRows() ?? [];
@@ -585,7 +615,7 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
   }
 
   const title = mode === "actual" ? "Actual Cost" : "Cost to Complete";
-  const columns = (mode === "actual" ? actualColumnDefs : ctcColumnDefs) as ColDef<RelatedGridRow>[];
+  const columns = (mode === "actual" ? actualColumnDefs : ctcColumnDefs) as (ColDef<RelatedGridRow> | ColGroupDef<RelatedGridRow>)[];
   const chosenBulk = bulkChoices.find((choice) => choice.id === bulkField);
 
   return <div style={{ position: "fixed", inset: 0, zIndex: 12000, background: "#f5f7fa", display: "flex", flexDirection: "column" }}>
