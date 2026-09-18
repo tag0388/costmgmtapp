@@ -24,8 +24,10 @@ import {
   updateChangeRecord,
   type ChangeAttributeField,
   type ChangeOrder,
+  type ChangeOrderInput,
   type ChangeOrderStatus,
   type ChangeRecord,
+  type ChangeRecordInput,
 } from "@/lib/change-management";
 
 const gridTheme=themeQuartz.withParams({spacing:4,rowHeight:30,headerHeight:34,fontSize:12});
@@ -121,7 +123,7 @@ export default function ChangeManagementPage({projectPublicId}:{projectPublicId:
 
  async function orderChanged(event:CellValueChangedEvent<ChangeOrder>){
   if(!event.data||event.newValue===event.oldValue)return;setSaving(true);setError("");
-  try{const col=event.column.getColId();let patch:Record<string,unknown>={};
+  try{const col=event.column.getColId();let patch:Partial<ChangeOrderInput>={};
    if(col==="description")patch.description=String(event.newValue??"").trim();
    else if(col==="status")patch.status=event.newValue as ChangeOrderStatus;
    else if(col.startsWith("e_attribute_")||col.startsWith("p_attribute_"))patch[col]=event.newValue||null;
@@ -131,7 +133,7 @@ export default function ChangeManagementPage({projectPublicId}:{projectPublicId:
  }
  async function recordChanged(event:CellValueChangedEvent<RecordGridRow>){
   if(!event.data||event.newValue===event.oldValue)return;setSaving(true);setError("");
-  try{const col=event.column.getColId();let patch:Record<string,unknown>={};
+  try{const col=event.column.getColId();let patch:Partial<ChangeRecordInput>={};
    if(col==="cost_code_ref"){const code=codeByRef.get(String(event.newValue).toLowerCase());if(!code)throw new Error("Select a valid active Cost Code.");patch.cost_code_id=code.id;}
    else if(col==="item")patch.item=String(event.newValue??"").trim();
    else if(col==="description")patch.description=String(event.newValue??"").trim()||null;
