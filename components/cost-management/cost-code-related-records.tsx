@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AgGridProvider, AgGridReact } from "ag-grid-react";
-import type { CellValueChangedEvent, ColDef, ColumnState, GridApi, SelectionChangedEvent } from "ag-grid-community";
+import type { CellValueChangedEvent, ColDef, ColGroupDef, ColumnState, GridApi, SelectionChangedEvent } from "ag-grid-community";
 import { themeQuartz } from "ag-grid-community";
 import { AllEnterpriseModule } from "ag-grid-enterprise";
 import ExcelImportDialog from "@/components/shared/excel-import-dialog";
@@ -30,6 +30,7 @@ import {
   createCostToCompleteDetail,
   createCostToCompleteDetails,
   deleteCostToCompleteDetails,
+  deleteCostToCompletePeriodQtyForPeriods,
   listCostToCompleteLedgerForCostCode,
   setCostToCompletePeriodQty,
   updateCostToCompleteDetail,
@@ -39,6 +40,7 @@ import {
 } from "@/lib/cost-to-complete";
 import { listResourceRates, RESOURCE_CATEGORIES, type ResourceCategory, type ResourceRate } from "@/lib/resource-rates";
 import { listProjectResourceRates, type ProjectResourceRate } from "@/lib/project-resource-rates";
+import { getCostCodeFinancialSummary, type CostCodeFinancialSummary } from "@/lib/cost-code-summary";
 
 const gridTheme = themeQuartz.withParams({ spacing: 4, rowHeight: 30, headerHeight: 34, fontSize: 12 });
 const ACTUAL_TYPES: TransactionType[] = ["FIN", "MAN", "ACC", "REV"];
@@ -79,6 +81,10 @@ function orderedRows<T extends { id: string; row_order: number | null; created_a
 function numberFormat(value: unknown, decimals = 2) {
   const number = Number(value ?? 0);
   return Number.isFinite(number) ? new Intl.NumberFormat(undefined, { minimumFractionDigits: 0, maximumFractionDigits: decimals }).format(number) : "";
+}
+function moneyFormat(value: unknown) {
+  const number = Number(value ?? 0);
+  return Number.isFinite(number) ? new Intl.NumberFormat("en-AU", { style: "currency", currency: "AUD", minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(number) : "$0";
 }
 function parseNumber(value: unknown) {
   const text = String(value ?? "").trim();
@@ -208,9 +214,15 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
   const [resourceLibrary, setResourceLibrary] = useState<"enterprise" | "project">("enterprise");
   const [resourceSearch, setResourceSearch] = useState("");
   const [selectedResourceIds, setSelectedResourceIds] = useState<string[]>([]);
+  const [financialSummary, setFinancialSummary] = useState<CostCodeFinancialSummary>({ baseline_budget: 0, budget_changes: 0, actual_cost_to_date: 0 });
 
   const actualAttributes = useMemo(() => buildAttributes(enterpriseAttributes, projectAttributes, actualEField, actualPField), [enterpriseAttributes, projectAttributes]);
   const ctcAttributes = useMemo(() => buildAttributes(enterpriseAttributes, projectAttributes, ctcEField, ctcPField), [enterpriseAttributes, projectAttributes]);
+  const currentPeriod = useMemo(() => periods.find((period) => period.status === "Current") ?? null, [periods]);
+  const futurePeriods = useMemo(() => periods.filter((period) => period.status === "Future"), [periods]);
+  const futurePeriodIds = useMemo(() => new Set(futurePeriods.map((period) => period.id)), [futurePeriods]);
+  const enterpriseCtcAttributes = useMemo(() => ctcAttributes.filter((attribute) => attribute.prefix === "E"), [ctcAttributes]);
+  const projectCtcAttributes = useMemo(() => ctcAttributes.filter((attribute) => attribute.prefix === "P"), [ctcAttributes]);
   const periodByLabel = useMemo(() => new Map(periods.map((period) => [periodLabel(period), period])), [periods]);
   const periodByExcel = useMemo(() => new Map(periods.map((period) => [periodExcel(period).toUpperCase(), period])), [periods]);
   const periodById = useMemo(() => new Map(periods.map((period) => [period.id, period])), [periods]);
@@ -243,9 +255,20 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
         setActualRows(await listActualCostTransactionsForCostCode(project.id, costCode.id));
         setCtcRows([]); setEnterpriseResources([]); setProjectResources([]);
       } else {
-        const [rows, eResources, pResources] = await Promise.all([
-          listCostToCompleteLedgerForCostCode(project.id, costCode.id), listResourceRates(project.enterprise_id), listProjectResourceRates(project.id),
+        const [initialRows, eResources, pResources, summary] = await Promise.all([
+          listCostToCompleteLedgerForCostCode(project.id, costCode.id),
+          listResourceRates(project.enterprise_id),
+          listProjectResourceRates(project.id),
+          getCostCodeFinancialSummary(project.id, costCode.id),
         ]);
+        const nonFuturePeriodIds = reportingPeriods.filter((period) => period.status !== "Future").map((period) => period.id);
+        if (nonFuturePeriodIds.length && initialRows.length) {
+          await deleteCostToCompletePeriodQtyForPeriods(initialRows.map((row) => row.id), nonFuturePeriodIds);
+        }
+        const rows = nonFuturePeriodIds.length && initialRows.length
+          ? await listCostToCompleteLedgerForCostCode(project.id, costCode.id)
+          : initialRows;
+        setFinancialSummary(summary);
         setCtcRows(rows); setActualRows([]); setEnterpriseResources(eResources); setProjectResources(pResources);
       }
       setSelectedCount(0);
@@ -258,6 +281,13 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
   const actualGridRows = useMemo<ActualGridRow[]>(() => orderedRows(actualRows.map((row) => ({ ...row, period_label: periodById.get(row.cost_period_id) ? periodLabel(periodById.get(row.cost_period_id)!) : "" }))), [actualRows, periodById]);
   const ctcGridRows = useMemo<CtcGridRow[]>(() => orderedRows(ctcRows.map((row) => ({ ...row, resource_source_label: row.resource_source ?? "User" }))), [ctcRows]);
   const rows: RelatedGridRow[] = mode === "actual" ? actualGridRows : ctcGridRows;
+  const costToCompleteTotal = useMemo(() => ctcGridRows.reduce((grandTotal, row) => {
+    const qty = futurePeriods.reduce((total, period) => total + Number(row.period_qty[period.id] ?? 0), 0);
+    return grandTotal + qty * Number(row.rate ?? 0);
+  }, 0), [ctcGridRows, futurePeriods]);
+  const currentBudget = financialSummary.baseline_budget + financialSummary.budget_changes;
+  const eac = financialSummary.actual_cost_to_date + costToCompleteTotal;
+  const variance = currentBudget - eac;
 
   function rowOrderAt(index: number) {
     if (index < 0 || index >= rows.length) return 0;
