@@ -124,12 +124,15 @@ export async function deleteCostToCompleteDetails(ids: string[]) {
 
 export async function clearCostToCompletePeriods(detailIds: string[], costPeriodIds: string[]) {
   if (!detailIds.length || !costPeriodIds.length) return;
-  const detailFilter = detailIds.map(encodeURIComponent).join(",");
   const periodFilter = costPeriodIds.map(encodeURIComponent).join(",");
-  await supabaseRequest(
-    `cost_to_complete_detail_periods?cost_to_complete_detail_id=in.(${detailFilter})&cost_period_id=in.(${periodFilter})`,
-    { method: "DELETE", headers: { Prefer: "return=minimal" } },
-  );
+  const batchSize = 100;
+  for (let index = 0; index < detailIds.length; index += batchSize) {
+    const detailFilter = detailIds.slice(index, index + batchSize).map(encodeURIComponent).join(",");
+    await supabaseRequest(
+      `cost_to_complete_detail_periods?cost_to_complete_detail_id=in.(${detailFilter})&cost_period_id=in.(${periodFilter})`,
+      { method: "DELETE", headers: { Prefer: "return=minimal" } },
+    );
+  }
 }
 
 export async function setCostToCompletePeriodQty(detailId: string, costPeriodId: string, qty: number) {
