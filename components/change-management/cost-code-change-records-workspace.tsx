@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgGridProvider, AgGridReact } from "ag-grid-react";
-import type { CellValueChangedEvent, ColDef, GridApi } from "ag-grid-community";
+import type { CellValueChangedEvent, ColDef, ColGroupDef, GridApi } from "ag-grid-community";
 import { AllEnterpriseModule } from "ag-grid-enterprise";
 import { themeQuartz } from "ag-grid-community";
 import ExcelImportDialog from "@/components/shared/excel-import-dialog";
@@ -132,7 +132,7 @@ export default function CostCodeChangeRecordsWorkspace({ project, costCode, onCl
     valueFormatter: (params: { value: string | null }) => valueName(definition, params.value),
   }), []);
 
-  const columnDefs = useMemo(() => {
+  const columnDefs = useMemo<Array<ColDef<GridRow> | ColGroupDef<GridRow>>>(() => {
     const general: ColDef<GridRow>[] = [
       { field: "change_order_ref", headerName: "Change Order ID", pinned: "left", minWidth: 145, editable: true, cellEditor: "agSelectCellEditor", cellEditorParams: { values: orderRefs }, filter: true },
       { field: "change_order_status", headerName: "Status", minWidth: 105, editable: false, filter: "agSetColumnFilter" },
