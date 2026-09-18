@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AgGridProvider, AgGridReact } from "ag-grid-react";
-import type { CellValueChangedEvent, ColDef, ColumnState, GridApi, SelectionChangedEvent } from "ag-grid-community";
+import type { CellValueChangedEvent, ColDef, ColGroupDef, ColumnState, GridApi, SelectionChangedEvent } from "ag-grid-community";
 import { themeQuartz } from "ag-grid-community";
 import { AllEnterpriseModule } from "ag-grid-enterprise";
 import ExcelImportDialog from "@/components/shared/excel-import-dialog";
@@ -11,6 +11,7 @@ import { ExcelRow, exportExcel, readExcel } from "@/lib/excel";
 import type { CostCode } from "@/lib/cost-codes";
 import type { Project } from "@/lib/projects";
 import { listCostReportingPeriods, type CostReportingPeriod } from "@/lib/cost-reporting";
+import { getCostCodeFinancialSummary, type CostCodeFinancialSummary } from "@/lib/cost-code-financial-summary";
 import { listEnterpriseAttributes, type EnterpriseAttributeDefinition } from "@/lib/enterprise-attributes";
 import { listProjectAttributes, type ProjectAttributeDefinition } from "@/lib/project-scope-attributes";
 import { deleteProjectGridView, gridViewErrorMessage, listProjectGridViews, type ProjectGridView, saveProjectGridView } from "@/lib/grid-views";
@@ -26,6 +27,7 @@ import {
   type TransactionType,
 } from "@/lib/cost-actuals";
 import {
+  clearCostToCompletePeriods,
   costToCompleteErrorMessage,
   createCostToCompleteDetail,
   createCostToCompleteDetails,
@@ -182,6 +184,7 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
   const [projectResources, setProjectResources] = useState<ProjectResourceRate[]>([]);
   const [actualRows, setActualRows] = useState<ActualCostTransaction[]>([]);
   const [ctcRows, setCtcRows] = useState<CostToCompleteLedgerRow[]>([]);
+  const [financialSummary, setFinancialSummary] = useState<CostCodeFinancialSummary>({ baselineBudget: 0, budgetChanges: 0, currentBudget: 0, actualCostToDate: 0 });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -214,6 +217,8 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
   const periodByLabel = useMemo(() => new Map(periods.map((period) => [periodLabel(period), period])), [periods]);
   const periodByExcel = useMemo(() => new Map(periods.map((period) => [periodExcel(period).toUpperCase(), period])), [periods]);
   const periodById = useMemo(() => new Map(periods.map((period) => [period.id, period])), [periods]);
+  const currentPeriod = useMemo(() => periods.find((period) => period.status === "Current") ?? null, [periods]);
+  const ctcPeriods = useMemo(() => currentPeriod ? periods.filter((period) => period.period_number > currentPeriod.period_number) : periods.filter((period) => period.status === "Future"), [currentPeriod, periods]);
   const activeEnterpriseResources = useMemo(() => enterpriseResources.filter((row) => row.is_active), [enterpriseResources]);
   const activeProjectResources = useMemo(() => projectResources.filter((row) => row.is_active), [projectResources]);
   const enterpriseResourceIds = useMemo(() => new Set(activeEnterpriseResources.map((row) => row.resource_id.toLowerCase())), [activeEnterpriseResources]);
@@ -231,13 +236,14 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
   const refresh = useCallback(async () => {
     setLoading(true); setError("");
     try {
-      const [reportingPeriods, enterpriseDefs, projectDefs, savedViews] = await Promise.all([
+      const [reportingPeriods, enterpriseDefs, projectDefs, savedViews, summary] = await Promise.all([
         listCostReportingPeriods(project.id),
         listEnterpriseAttributes(project.enterprise_id, "Line Item"),
         listProjectAttributes(project.id, "Line Item"),
         listProjectGridViews(project.id, mode === "actual" ? "cost-code-related-actual" : "cost-code-related-ctc"),
+        getCostCodeFinancialSummary(project.id, costCode.id),
       ]);
-      setPeriods(reportingPeriods); setEnterpriseAttributes(enterpriseDefs); setProjectAttributes(projectDefs); setViews(savedViews);
+      setPeriods(reportingPeriods); setEnterpriseAttributes(enterpriseDefs); setProjectAttributes(projectDefs); setViews(savedViews); setFinancialSummary(summary);
       setSelectedView((current) => current === "Default" || savedViews.some((view) => view.id === current) ? current : "Default");
       if (mode === "actual") {
         setActualRows(await listActualCostTransactionsForCostCode(project.id, costCode.id));
@@ -246,7 +252,17 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
         const [rows, eResources, pResources] = await Promise.all([
           listCostToCompleteLedgerForCostCode(project.id, costCode.id), listResourceRates(project.enterprise_id), listProjectResourceRates(project.id),
         ]);
-        setCtcRows(rows); setActualRows([]); setEnterpriseResources(eResources); setProjectResources(pResources);
+        const activePeriod = reportingPeriods.find((period) => period.status === "Current") ?? null;
+        const lockedPeriodIds = activePeriod
+          ? reportingPeriods.filter((period) => period.period_number <= activePeriod.period_number).map((period) => period.id)
+          : reportingPeriods.filter((period) => period.status === "Closed").map((period) => period.id);
+        const hasLockedValues = rows.some((row) => lockedPeriodIds.some((periodId) => Number(row.period_qty[periodId] ?? 0) !== 0));
+        if (hasLockedValues) await clearCostToCompletePeriods(rows.map((row) => row.id), lockedPeriodIds);
+        const sanitizedRows = rows.map((row) => ({
+          ...row,
+          period_qty: Object.fromEntries(Object.entries(row.period_qty).filter(([periodId]) => !lockedPeriodIds.includes(periodId))),
+        }));
+        setCtcRows(sanitizedRows); setActualRows([]); setEnterpriseResources(eResources); setProjectResources(pResources);
       }
       setSelectedCount(0);
     } catch (requestError) { setError(mode === "actual" ? actualCostErrorMessage(requestError) : costToCompleteErrorMessage(requestError)); }
