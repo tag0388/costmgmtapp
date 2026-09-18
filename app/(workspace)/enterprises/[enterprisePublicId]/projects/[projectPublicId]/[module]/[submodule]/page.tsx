@@ -33,5 +33,6 @@ export default async function ProjectContextPage({ params }: { params: Promise<{
   if (module === "cost-management" && submodule === "bulk-cost-to-complete") return <CostToCompletePage projectPublicId={projectPublicId}/>;
   if (module === "change-management" && submodule === "change-management") return <ChangeManagementPage projectPublicId={projectPublicId}/>;
   if (module === "change-management" && submodule === "change-attributes") return <ProjectChangeAttributesPage projectPublicId={projectPublicId}/>;
+  if (module === "change-management" && submodule === "bulk-change-records") return <ChangeManagementPage projectPublicId={projectPublicId} bulkOnly/>;
   return null;
 }
