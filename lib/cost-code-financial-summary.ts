@@ -24,12 +24,12 @@ export async function getCostCodeFinancialSummary(projectId: string, costCodeId:
   const project = encodeURIComponent(projectId);
   const costCode = encodeURIComponent(costCodeId);
 
-  const [baselineRows, changeRows, actualRows, periods] = await Promise.all([
+  const [baselineRows, approvedOrders, actualRows, periods] = await Promise.all([
     supabaseRequest<Array<{ total: number | null }>>(
       `baseline_details?project_id=eq.${project}&cost_code_id=eq.${costCode}&select=total`,
     ),
-    supabaseRequest<Array<{ change_to_budget: number | null }>>(
-      `change_records?project_id=eq.${project}&cost_code_id=eq.${costCode}&select=change_to_budget`,
+    supabaseRequest<Array<{ id: string }>>(
+      `change_orders?project_id=eq.${project}&status=eq.Approved&select=id`,
     ),
     supabaseRequest<Array<{ cost_period_id: string; amount: number | null }>>(
       `actual_cost_transactions?project_id=eq.${project}&cost_code_id=eq.${costCode}&select=cost_period_id,amount`,
@@ -38,6 +38,13 @@ export async function getCostCodeFinancialSummary(projectId: string, costCodeId:
       `cost_reporting_periods?project_id=eq.${project}&select=id,period_number,status&order=period_number.asc`,
     ),
   ]);
+
+  const approvedOrderIds = approvedOrders.map((row) => row.id);
+  const changeRows = approvedOrderIds.length
+    ? await supabaseRequest<Array<{ change_to_budget: number | null }>>(
+        `change_records?project_id=eq.${project}&cost_code_id=eq.${costCode}&change_order_id=in.(${approvedOrderIds.map(encodeURIComponent).join(",")})&select=change_to_budget`,
+      )
+    : [];
 
   const currentPeriod = periods.find((period) => period.status === "Current") ?? null;
   const previousClosed = [...periods].filter((period) => period.status === "Closed").sort((a, b) => b.period_number - a.period_number)[0] ?? null;
