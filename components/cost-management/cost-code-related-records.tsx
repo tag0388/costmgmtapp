@@ -248,8 +248,6 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
 
   const actualAttributes = useMemo(() => buildAttributes(enterpriseAttributes, projectAttributes, actualEField, actualPField), [enterpriseAttributes, projectAttributes]);
   const ctcAttributes = useMemo(() => buildAttributes(enterpriseAttributes, projectAttributes, ctcEField, ctcPField), [enterpriseAttributes, projectAttributes]);
-  const periodByLabel = useMemo(() => new Map(periods.map((period) => [periodLabel(period), period])), [periods]);
-  const periodByExcel = useMemo(() => new Map(periods.map((period) => [periodExcel(period).toUpperCase(), period])), [periods]);
   const periodById = useMemo(() => new Map(periods.map((period) => [period.id, period])), [periods]);
   const currentPeriod = useMemo(() => periods.find((period) => period.status === "Current") ?? null, [periods]);
   const actualAllowedPeriods = useMemo(() => periods.filter((period) => period.status !== "Future"), [periods]);
