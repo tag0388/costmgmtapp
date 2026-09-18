@@ -171,10 +171,14 @@ export default function CostCodeChangeRecordsWorkspace({ project, costCode, onCl
         await updateChangeRecord(event.data.id, { item });
       } else if (colId === "description") {
         await updateChangeRecord(event.data.id, { description: String(event.newValue ?? "").trim() || null });
-      } else if (colId === "change_to_budget" || colId === "change_to_eac") {
+      } else if (colId === "change_to_budget") {
         const value = Number(event.newValue);
-        if (!Number.isFinite(value)) throw new Error("Change value must be a valid number.");
-        await updateChangeRecord(event.data.id, { [colId]: value });
+        if (!Number.isFinite(value)) throw new Error("Change to Budget must be a valid number.");
+        await updateChangeRecord(event.data.id, { change_to_budget: value });
+      } else if (colId === "change_to_eac") {
+        const value = Number(event.newValue);
+        if (!Number.isFinite(value)) throw new Error("Change to EAC must be a valid number.");
+        await updateChangeRecord(event.data.id, { change_to_eac: value });
       } else if (colId.startsWith("e_attribute_") || colId.startsWith("p_attribute_")) {
         await updateChangeRecord(event.data.id, { [colId]: event.newValue || null } as Partial<ChangeAttributeValues>);
       }
