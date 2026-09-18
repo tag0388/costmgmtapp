@@ -78,6 +78,13 @@ function orderedRows<T extends { id: string; row_order: number | null; created_a
   const fallback = new Map(byCreated.map((row, index) => [row.id, (index + 1) * 1000]));
   return [...input].sort((a, b) => (a.row_order ?? fallback.get(a.id) ?? 0) - (b.row_order ?? fallback.get(b.id) ?? 0) || a.id.localeCompare(b.id));
 }
+function ctcQtyForRow(row: CostToCompleteLedgerRow | undefined, futurePeriods: CostReportingPeriod[]) {
+  if (!row) return 0;
+  return futurePeriods.reduce((sum, period) => sum + Number(row.period_qty[period.id] ?? 0), 0);
+}
+function ctcTotalForRow(row: CostToCompleteLedgerRow | undefined, futurePeriods: CostReportingPeriod[]) {
+  return ctcQtyForRow(row, futurePeriods) * Number(row?.rate ?? 0);
+}
 function numberFormat(value: unknown, decimals = 2) {
   const number = Number(value ?? 0);
   return Number.isFinite(number) ? new Intl.NumberFormat(undefined, { minimumFractionDigits: 0, maximumFractionDigits: decimals }).format(number) : "";
@@ -283,10 +290,7 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
   const actualGridRows = useMemo<ActualGridRow[]>(() => orderedRows(actualRows.map((row) => ({ ...row, period_label: periodById.get(row.cost_period_id) ? periodLabel(periodById.get(row.cost_period_id)!) : "" }))), [actualRows, periodById]);
   const ctcGridRows = useMemo<CtcGridRow[]>(() => orderedRows(ctcRows.map((row) => ({ ...row, resource_source_label: row.resource_source ?? "User" }))), [ctcRows]);
   const rows: RelatedGridRow[] = mode === "actual" ? actualGridRows : ctcGridRows;
-  const ctcTotal = useMemo(() => ctcRows.reduce((grandTotal, row) => {
-    const qty = Object.entries(row.period_qty).reduce((sum, [periodId, value]) => futurePeriodIds.has(periodId) ? sum + Number(value || 0) : sum, 0);
-    return grandTotal + qty * Number(row.rate ?? 0);
-  }, 0), [ctcRows, futurePeriodIds]);
+  const ctcTotal = useMemo(() => ctcGridRows.reduce((sum, row) => sum + ctcTotalForRow(row, futurePeriods), 0), [ctcGridRows, futurePeriods]);
   const currentBudget = financialSummary.baseline_budget + financialSummary.budget_changes;
   const eac = financialSummary.actual_cost_to_date + ctcTotal;
   const variance = currentBudget - eac;
@@ -333,15 +337,16 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
       { field: "resource_source_label", colId: "resource_source_label", headerName: "Resource Source", editable: false, filter: "agSetColumnFilter", minWidth: 105, maxWidth: 125 },
       { field: "item", headerName: "Item", editable: (params) => !params.data?.resource_source, filter: true, cellStyle: resourceCellStyle },
       { field: "description", headerName: "Description", editable: (params) => !params.data?.resource_source, filter: true, minWidth: 180, cellStyle: resourceCellStyle },
-      { colId: "qty", headerName: "Qty", editable: false, type: "numericColumn", aggFunc: "sum", enableValue: true, cellStyle: formulaCellStyle, valueGetter: (params) => futurePeriods.reduce((sum, period) => sum + Number(params.data?.period_qty[period.id] ?? 0), 0), valueFormatter: (params) => numberFormat(params.value, 4) },
+      { colId: "qty", headerName: "Qty", editable: false, type: "numericColumn", aggFunc: "sum", enableValue: true, cellStyle: formulaCellStyle, valueGetter: (params) => ctcQtyForRow(params.data, futurePeriods), valueFormatter: (params) => numberFormat(params.value, 4) },
       { field: "unit", headerName: "Unit", editable: (params) => !params.data?.resource_source, filter: "agSetColumnFilter", cellStyle: resourceCellStyle },
       { field: "rate", headerName: "Rate", editable: (params) => !params.data?.resource_source, type: "numericColumn", valueParser: (params) => Number(params.newValue), valueFormatter: (params) => numberFormat(params.value, 4), cellStyle: resourceCellStyle },
-      { colId: "total", headerName: "Total", editable: false, type: "numericColumn", aggFunc: "sum", enableValue: true, cellStyle: formulaCellStyle, valueGetter: (params) => futurePeriods.reduce((sum, period) => sum + Number(params.data?.period_qty[period.id] ?? 0), 0) * Number(params.data?.rate ?? 0), valueFormatter: (params) => numberFormat(params.value, 2) },
+      { colId: "total", headerName: "Total", editable: false, type: "numericColumn", aggFunc: "sum", enableValue: true, cellStyle: formulaCellStyle, valueGetter: (params) => ctcTotalForRow(params.data, futurePeriods), valueFormatter: (params) => numberFormat(params.value, 2) },
       { field: "category", headerName: "Category", editable: true, cellEditor: "agSelectCellEditor", cellEditorParams: { values: ["", ...RESOURCE_CATEGORIES] }, filter: "agSetColumnFilter", valueFormatter: (params) => params.value ?? "" },
     ];
-    const enterpriseColumns = ctcAttributes.filter((attribute) => attribute.prefix === "E").map((attribute): ColDef<CtcGridRow> => ({ field: attribute.field as keyof CtcGridRow & string, headerName: attribute.columnName, editable: true, filter: "agSetColumnFilter", ...attributeEditor(attribute.definition) }));
-    const projectColumns = ctcAttributes.filter((attribute) => attribute.prefix === "P").map((attribute): ColDef<CtcGridRow> => ({ field: attribute.field as keyof CtcGridRow & string, headerName: attribute.columnName, editable: true, filter: "agSetColumnFilter", ...attributeEditor(attribute.definition) }));
-    const phasingColumns = futurePeriods.map((period): ColDef<CtcGridRow> => ({
+    const enterpriseColumns = ctcAttributes.filter((attribute) => attribute.prefix === "E").map((attribute, index): ColDef<CtcGridRow> => ({ field: attribute.field as keyof CtcGridRow & string, headerName: attribute.columnName, editable: true, filter: "agSetColumnFilter", columnGroupShow: index === 0 ? undefined : "open", ...attributeEditor(attribute.definition) }));
+    const projectColumns = ctcAttributes.filter((attribute) => attribute.prefix === "P").map((attribute, index): ColDef<CtcGridRow> => ({ field: attribute.field as keyof CtcGridRow & string, headerName: attribute.columnName, editable: true, filter: "agSetColumnFilter", columnGroupShow: index === 0 ? undefined : "open", ...attributeEditor(attribute.definition) }));
+    generalInfo.forEach((column, index) => { if (index > 0) column.columnGroupShow = "open"; });
+    const phasingColumns = futurePeriods.map((period, index): ColDef<CtcGridRow> => ({
       colId: `period:${period.id}`,
       headerName: periodColumnLabel(period),
       editable: true,
@@ -356,12 +361,13 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
       valueGetter: (params) => Number(params.data?.period_qty[period.id] ?? 0),
       valueSetter: (params) => { if (!params.data) return false; const parsed = Number(params.newValue); if (!Number.isFinite(parsed) || parsed < 0) return false; params.data.period_qty = { ...params.data.period_qty, [period.id]: parsed }; return true; },
       valueFormatter: (params) => numberFormat(params.value, 4),
+      columnGroupShow: index === 0 ? undefined : "open",
     }));
     const groups: Array<ColGroupDef<CtcGridRow>> = [
-      { headerName: "General Info", marryChildren: true, children: generalInfo },
-      ...(enterpriseColumns.length ? [{ headerName: "Enterprise Line-Item Attributes", marryChildren: true, children: enterpriseColumns }] : []),
-      ...(projectColumns.length ? [{ headerName: "Project Line-Item Attributes", marryChildren: true, children: projectColumns }] : []),
-      { headerName: "Phasing", marryChildren: true, children: phasingColumns },
+      { groupId: "ctc-general", headerName: "General Info", marryChildren: true, openByDefault: true, children: generalInfo },
+      ...(enterpriseColumns.length ? [{ groupId: "ctc-enterprise-attrs", headerName: "Enterprise Line-Item Attributes", marryChildren: true, openByDefault: true, children: enterpriseColumns }] : []),
+      ...(projectColumns.length ? [{ groupId: "ctc-project-attrs", headerName: "Project Line-Item Attributes", marryChildren: true, openByDefault: true, children: projectColumns }] : []),
+      { groupId: "ctc-phasing", headerName: "Phasing", marryChildren: true, openByDefault: true, children: phasingColumns },
     ];
     return groups;
   }, [attributeEditor, ctcAttributes, futurePeriods]);
@@ -609,35 +615,48 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
     catch (requestError) { setError(gridViewErrorMessage(requestError)); }
   }
 
+  function setAllGroupsOpen(open: boolean) {
+    if (!gridApi) return;
+    if (open) gridApi.expandAll(); else gridApi.collapseAll();
+    if (mode === "ctc") {
+      ["ctc-general", "ctc-enterprise-attrs", "ctc-project-attrs", "ctc-phasing"].forEach((groupId) => gridApi.setColumnGroupOpened(groupId, open));
+    }
+  }
+
   const title = mode === "actual" ? "Actual Cost" : "Cost to Complete";
   const columns = (mode === "actual" ? actualColumnDefs : ctcColumnDefs) as Array<ColDef<RelatedGridRow> | ColGroupDef<RelatedGridRow>>;
   const chosenBulk = bulkChoices.find((choice) => choice.id === bulkField);
 
   return <div style={{ position: "fixed", inset: 0, zIndex: 12000, background: "#f5f7fa", display: "flex", flexDirection: "column" }}>
-    <header style={{ minHeight: 58, background: "#fff", borderBottom: "1px solid #dfe4ea", display: "flex", alignItems: "center", gap: 14, padding: "8px 14px" }}>
+    <header style={{ minHeight: 58, background: "#fff", borderBottom: "1px solid #dfe4ea", display: "flex", alignItems: "center", gap: 12, padding: "7px 12px", overflowX: "auto" }}>
       <button className="button secondary compact" onClick={onClose}>← Back</button>
-      <div style={{ minWidth: 0 }}><div style={{ fontSize: 16, fontWeight: 700 }}>{title}</div><div style={{ fontSize: 12, color: "#68707d" }}><strong>{costCode.cost_code_id}</strong> · {costCode.name}</div></div>
-      <div style={{ marginLeft: "auto", fontSize: 11, color: saving ? "#2563eb" : "#68707d" }}>{saving ? "Saving…" : "Auto-save enabled"}</div>
+      <div style={{ minWidth: 155, flex: "0 0 auto" }}>
+        <div style={{ fontSize: 16, fontWeight: 700 }}>{title}</div>
+        <div style={{ fontSize: 12, color: "#68707d", whiteSpace: "nowrap" }}><strong>{costCode.cost_code_id}</strong> · {costCode.name}</div>
+      </div>
+      {mode === "ctc" && <>
+        <div style={{ flex: "0 0 auto", borderLeft: "1px solid #e5e7eb", paddingLeft: 10 }}>
+          <div style={{ fontSize: 9.5, color: "#64748b", lineHeight: "12px" }}>Current Period</div>
+          <div style={{ fontSize: 11.5, fontWeight: 700, whiteSpace: "nowrap" }}>{currentPeriod ? `P${currentPeriod.period_number} | ${formatCompactPeriodDate(currentPeriod.end_date)}` : "Not set"}</div>
+        </div>
+        <div style={{ display: "flex", alignItems: "stretch", flex: "0 0 auto", border: "1px solid #e5e7eb", borderRadius: 6, overflow: "hidden", background: "#fafafa" }}>
+          {[
+            ["Baseline Budget", financialSummary.baseline_budget],
+            ["Budget Changes", financialSummary.budget_changes],
+            ["Current Budget", currentBudget],
+            ["Actual Cost", financialSummary.actual_cost_to_date],
+            ["Cost to Complete", ctcTotal],
+            ["EAC", eac],
+            ["Variance", variance],
+          ].map(([label, value], index) => <div key={String(label)} style={{ minWidth: 102, padding: "5px 8px", borderLeft: index ? "1px solid #e5e7eb" : 0, textAlign: "right" }}>
+            <div style={{ fontSize: 9, color: "#64748b", whiteSpace: "nowrap", lineHeight: "11px" }}>{label}</div>
+            <div style={{ fontSize: 11.5, fontWeight: 700, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{numberFormat(Number(value), 2)}</div>
+          </div>)}
+        </div>
+      </>}
+      <div style={{ marginLeft: "auto", fontSize: 11, color: saving ? "#2563eb" : "#68707d", whiteSpace: "nowrap" }}>{saving ? "Saving…" : "Auto-save enabled"}</div>
       <button className="button secondary compact" onClick={onClose} aria-label="Close workspace">✕</button>
     </header>
-
-    {mode === "ctc" && <section style={{ background: "#fff", borderBottom: "1px solid #e5e7eb", padding: "8px 12px 9px" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 7, fontSize: 11.5, color: "#475569" }}>
-        <strong>Current Cost Reporting Period</strong>
-        <span style={{ border: "1px solid #cbd5e1", background: "#f8fafc", borderRadius: 5, padding: "3px 7px", fontWeight: 700, color: "#1f2937" }}>{currentPeriod ? `P${currentPeriod.period_number} | ${formatCompactPeriodDate(currentPeriod.end_date)}` : "Not set"}</span>
-        <span style={{ color: "#94a3b8" }}>CTC phasing starts from {futurePeriods[0] ? `P${futurePeriods[0].period_number}` : "the next available future period"}.</span>
-      </div>
-      <div style={{ overflowX: "auto" }}>
-        <table style={{ width: "100%", minWidth: 850, tableLayout: "fixed" }}>
-          <thead><tr>
-            {["Baseline Budget", "Budget Changes", "Current Budget", "Actual Cost to Date", "Cost to Complete", "EAC", "Variance"].map((label) => <th key={label} style={{ textAlign: "right", whiteSpace: "nowrap" }}>{label}</th>)}
-          </tr></thead>
-          <tbody><tr>
-            {[financialSummary.baseline_budget, financialSummary.budget_changes, currentBudget, financialSummary.actual_cost_to_date, ctcTotal, eac, variance].map((value, index) => <td key={index} style={{ textAlign: "right", fontWeight: index >= 2 ? 700 : 600, fontVariantNumeric: "tabular-nums" }}>{numberFormat(value, 2)}</td>)}
-          </tr></tbody>
-        </table>
-      </div>
-    </section>}
 
     <div className="enterprise-toolbar" style={{ flexWrap: "wrap", padding: "8px 12px", background: "#fff", borderBottom: "1px solid #e5e7eb" }}>
       <label className="enterprise-search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={`Search ${title.toLowerCase()}…`}/></label>
@@ -648,8 +667,8 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
       {mode === "ctc" && <button className="button secondary" aria-label="Add resources" title="Add Resources from Enterprise or Project Resource Rates" disabled={loading || saving} onClick={() => { setResourcePaneOpen(true); setResourceSearch(""); setSelectedResourceIds([]); }} style={{ width: 34, paddingInline: 0, display: "grid", placeItems: "center" }}><SvgIcon type="resource"/></button>}
       <button className="button secondary" disabled={!selectedCount || saving} onClick={() => { setBulkOpen(true); setBulkField(""); setBulkValue(""); }}>Bulk Edit{selectedCount ? ` (${selectedCount})` : ""}</button>
       <button className="button danger" disabled={!selectedCount || saving} onClick={() => void deleteSelected()}>Delete{selectedCount ? ` (${selectedCount})` : ""}</button>
-      <button className="button secondary" disabled={!hasGroups} onClick={() => gridApi?.expandAll()}>Expand All</button>
-      <button className="button secondary" disabled={!hasGroups} onClick={() => gridApi?.collapseAll()}>Collapse All</button>
+      <button className="button secondary" disabled={mode !== "ctc" && !hasGroups} onClick={() => setAllGroupsOpen(true)}>Expand All</button>
+      <button className="button secondary" disabled={mode !== "ctc" && !hasGroups} onClick={() => setAllGroupsOpen(false)}>Collapse All</button>
       <button className="button secondary" onClick={exportRows}>⇩ Export</button>
       <button className="button secondary" onClick={() => fileRef.current?.click()}>⇧ Import</button>
       <input ref={fileRef} hidden type="file" accept=".xlsx,.xls" onChange={(event) => void chooseImport(event.target.files?.[0])}/>
