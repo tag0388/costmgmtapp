@@ -34,9 +34,13 @@ import {
   listCostToCompleteLedgerForCostCode,
   setCostToCompletePeriodQty,
   updateCostToCompleteDetail,
+  CTC_USER_NUMBER_FIELDS,
+  CTC_USER_TEXT_FIELDS,
   type CostToCompleteLedgerRow,
   type CtcAttributeField,
   type CtcResourceSource,
+  type CtcUserNumberField,
+  type CtcUserTextField,
 } from "@/lib/cost-to-complete";
 import { listResourceRates, RESOURCE_CATEGORIES, type ResourceCategory, type ResourceRate } from "@/lib/resource-rates";
 import { listProjectResourceRates, type ProjectResourceRate } from "@/lib/project-resource-rates";
@@ -44,6 +48,9 @@ import { getCostCodeFinancialSummary, type CostCodeFinancialSummary } from "@/li
 
 const gridTheme = themeQuartz.withParams({ spacing: 4, rowHeight: 30, headerHeight: 34, fontSize: 12 });
 const ACTUAL_TYPES: TransactionType[] = ["FIN", "MAN", "ACC", "REV"];
+const CTC_USER_NUMBER_COLUMNS = CTC_USER_NUMBER_FIELDS.map((field, index) => ({ field, label: `User Number ${index + 1}` }));
+const CTC_USER_TEXT_COLUMNS = CTC_USER_TEXT_FIELDS.map((field, index) => ({ field, label: `User Text ${index + 1}` }));
+const COST_CODE_MENU_EVENT = "costwise:open-cost-code-actions";
 type RelatedMode = "actual" | "ctc";
 type AttributeDefinition = EnterpriseAttributeDefinition | ProjectAttributeDefinition;
 type ActiveAttribute<TField extends string> = { prefix: "E" | "P"; field: TField; definition: AttributeDefinition; columnName: string };
@@ -137,20 +144,31 @@ export function CostCodeActionsCell({ costCode, project, onEdit }: { costCode: C
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!open) return;
     function close(event: MouseEvent) {
+      if (!open) return;
       const target = event.target as Node;
       if (!menuRef.current?.contains(target) && !buttonRef.current?.contains(target)) setOpen(false);
     }
     function closeViewport() { setOpen(false); }
+    function closeForAnotherMenu(event: Event) {
+      const detail = (event as CustomEvent<string>).detail;
+      if (detail !== costCode.id) setOpen(false);
+    }
     document.addEventListener("mousedown", close);
     window.addEventListener("resize", closeViewport);
     window.addEventListener("scroll", closeViewport, true);
-    return () => { document.removeEventListener("mousedown", close); window.removeEventListener("resize", closeViewport); window.removeEventListener("scroll", closeViewport, true); };
-  }, [open]);
+    window.addEventListener(COST_CODE_MENU_EVENT, closeForAnotherMenu as EventListener);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      window.removeEventListener("resize", closeViewport);
+      window.removeEventListener("scroll", closeViewport, true);
+      window.removeEventListener(COST_CODE_MENU_EVENT, closeForAnotherMenu as EventListener);
+    };
+  }, [costCode.id, open]);
 
   function toggleMenu() {
     if (open) { setOpen(false); return; }
+    window.dispatchEvent(new CustomEvent<string>(COST_CODE_MENU_EVENT, { detail: costCode.id }));
     const rect = buttonRef.current?.getBoundingClientRect();
     if (rect) setMenuPosition({ top: rect.bottom + 4, right: Math.max(8, window.innerWidth - rect.right) });
     setOpen(true);
@@ -308,17 +326,17 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
     project_id: project.id,
     cost_code_id: costCode.id,
     item: null,
-    description: "Forecast Cost",
+    description: "Forecast Cost by Period",
     unit: null,
     rate: 0,
     category: null,
     resource_source: null,
-    resource_source_label: "Forecast Cost",
+    resource_source_label: "FORECAST COST",
     row_order: null,
     created_at: "",
     updated_at: "",
-    period_qty: {},
-  }), [costCode.id, project.id]);
+    period_qty: Object.fromEntries(futurePeriods.map((period) => [period.id, periodForecastTotals.get(period.id) ?? 0])),
+  }), [costCode.id, futurePeriods, periodForecastTotals, project.id]);
 
   function rowOrderAt(index: number) {
     if (index < 0 || index >= rows.length) return 0;
@@ -370,6 +388,25 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
     ];
     const enterpriseColumns = ctcAttributes.filter((attribute) => attribute.prefix === "E").map((attribute, index): ColDef<CtcGridRow> => ({ field: attribute.field as keyof CtcGridRow & string, headerName: attribute.columnName, editable: true, filter: "agSetColumnFilter", columnGroupShow: index === 0 ? undefined : "open", ...attributeEditor(attribute.definition) }));
     const projectColumns = ctcAttributes.filter((attribute) => attribute.prefix === "P").map((attribute, index): ColDef<CtcGridRow> => ({ field: attribute.field as keyof CtcGridRow & string, headerName: attribute.columnName, editable: true, filter: "agSetColumnFilter", columnGroupShow: index === 0 ? undefined : "open", ...attributeEditor(attribute.definition) }));
+    const userColumns: ColDef<CtcGridRow>[] = [
+      ...CTC_USER_NUMBER_COLUMNS.map(({ field, label }, index): ColDef<CtcGridRow> => ({
+        field: field as keyof CtcGridRow & string,
+        headerName: label,
+        editable: (params) => !params.node?.rowPinned,
+        type: "numericColumn",
+        filter: "agNumberColumnFilter",
+        valueParser: (params) => String(params.newValue ?? "").trim() === "" ? null : Number(params.newValue),
+        valueFormatter: (params) => params.value == null ? "" : numberFormat(params.value, 4),
+        columnGroupShow: index === 0 ? undefined : "open",
+      })),
+      ...CTC_USER_TEXT_COLUMNS.map(({ field, label }): ColDef<CtcGridRow> => ({
+        field: field as keyof CtcGridRow & string,
+        headerName: label,
+        editable: (params) => !params.node?.rowPinned,
+        filter: true,
+        columnGroupShow: "open",
+      })),
+    ];
     generalInfo.forEach((column, index) => { if (index > 0) column.columnGroupShow = "open"; });
     const phasingColumns = futurePeriods.map((period, index): ColDef<CtcGridRow> => ({
       colId: `period:${period.id}`,
@@ -384,7 +421,7 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
       wrapHeaderText: true,
       autoHeaderHeight: true,
       cellStyle: (params) => params.node?.rowPinned ? { backgroundColor: "#f1f5f9", color: "#334155", fontSize: 10, fontWeight: 700 } : undefined,
-      valueGetter: (params) => params.node?.rowPinned ? (periodForecastTotals.get(period.id) ?? 0) : Number(params.data?.period_qty[period.id] ?? 0),
+      valueGetter: (params) => Number(params.data?.period_qty[period.id] ?? 0),
       valueSetter: (params) => { if (!params.data) return false; const parsed = Number(params.newValue); if (!Number.isFinite(parsed) || parsed < 0) return false; params.data.period_qty = { ...params.data.period_qty, [period.id]: parsed }; return true; },
       valueFormatter: (params) => params.node?.rowPinned ? numberFormat(params.value, 2) : numberFormat(params.value, 4),
       columnGroupShow: index === 0 ? undefined : "open",
@@ -393,6 +430,7 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
       { groupId: "ctc-general", headerName: "General Info", marryChildren: true, openByDefault: true, children: generalInfo },
       ...(enterpriseColumns.length ? [{ groupId: "ctc-enterprise-attrs", headerName: "Enterprise Line-Item Attributes", marryChildren: true, openByDefault: true, children: enterpriseColumns }] : []),
       ...(projectColumns.length ? [{ groupId: "ctc-project-attrs", headerName: "Project Line-Item Attributes", marryChildren: true, openByDefault: true, children: projectColumns }] : []),
+      { groupId: "ctc-user-columns", headerName: "User Columns", marryChildren: true, openByDefault: true, children: userColumns },
       { groupId: "ctc-phasing", headerName: "Phasing", marryChildren: true, openByDefault: true, children: phasingColumns },
     ];
     return groups;
@@ -446,6 +484,15 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
           throw requestError;
         }
         event.api.refreshCells({ rowNodes: [event.node], columns: ["total"], force: true });
+      }
+      else if (colId.startsWith("user_number_")) {
+        const raw = String(event.newValue ?? "").trim();
+        const value = raw === "" ? null : Number(event.newValue);
+        if (value !== null && !Number.isFinite(value)) throw new Error("User Number must be a valid number.");
+        await updateCostToCompleteDetail(event.data.id, { [colId]: value } as Partial<Record<CtcUserNumberField, number | null>>);
+      }
+      else if (colId.startsWith("user_text_")) {
+        await updateCostToCompleteDetail(event.data.id, { [colId]: String(event.newValue ?? "").trim() || null } as Partial<Record<CtcUserTextField, string | null>>);
       }
       else if (colId === "description") await updateCostToCompleteDetail(event.data.id, { description: event.newValue ? String(event.newValue) : null });
       else if (colId === "unit") await updateCostToCompleteDetail(event.data.id, { unit: event.newValue ? String(event.newValue) : null });
@@ -524,7 +571,10 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
   const excelColumns = useMemo(() => mode === "actual" ? [
     "Item", "Description", "Transaction Type", "Amount", "Cost Reporting Period", ...actualAttributes.map((a) => a.columnName),
   ] : [
-    "Resource Source", "Item", "Description", "Unit", "Rate", "Category", ...ctcAttributes.map((a) => a.columnName), ...futurePeriods.map(periodExcel),
+    "Resource Source", "Item", "Description", "Unit", "Rate", "Category", ...ctcAttributes.map((a) => a.columnName),
+    ...CTC_USER_NUMBER_COLUMNS.map((column) => column.label),
+    ...CTC_USER_TEXT_COLUMNS.map((column) => column.label),
+    ...futurePeriods.map(periodExcel),
   ], [actualAttributes, ctcAttributes, futurePeriods, mode]);
 
   function exportRows() {
@@ -534,6 +584,8 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
     })) : ctcGridRows.map((row) => ({
       "Resource Source": row.resource_source ?? "", Item: row.item ?? "", Description: row.description ?? "", Unit: row.unit ?? "", Rate: String(row.rate), Category: row.category ?? "",
       ...Object.fromEntries(ctcAttributes.map((a) => [a.columnName, row[a.field] ?? ""])),
+      ...Object.fromEntries(CTC_USER_NUMBER_COLUMNS.map(({ field, label }) => [label, row[field] == null ? "" : String(row[field])])),
+      ...Object.fromEntries(CTC_USER_TEXT_COLUMNS.map(({ field, label }) => [label, row[field] ?? ""])),
       ...Object.fromEntries(futurePeriods.map((period) => [periodExcel(period), String(row.period_qty[period.id] ?? 0)])),
     }));
     const template = Object.fromEntries(excelColumns.map((column) => [column, ""])) as ExcelRow;
@@ -568,6 +620,7 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
           }
           const category = (row.Category ?? "").trim(); if (category && !RESOURCE_CATEGORIES.includes(category as ResourceCategory)) errors.push(`Row ${line}: Category is invalid.`);
           ctcAttributes.forEach((a) => { const value = (row[a.columnName] ?? "").trim(); if (value && !a.definition.attribute_values.some((v) => v.is_active && v.value_id.toLowerCase() === value.toLowerCase())) errors.push(`Row ${line}: ${a.columnName} must contain an active Value ID.`); });
+          CTC_USER_NUMBER_COLUMNS.forEach(({ label }) => { const raw = (row[label] ?? "").trim(); if (raw && Number.isNaN(parseNumber(raw))) errors.push(`Row ${line}: ${label} must be a valid number or blank.`); });
           futurePeriods.forEach((period) => { const qty = parseNumber(row[periodExcel(period)]); if (Number.isNaN(qty) || qty < 0) errors.push(`Row ${line}: ${periodExcel(period)} must be zero or greater.`); });
         }
       });
@@ -593,7 +646,11 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
           const sourceText = (row["Resource Source"] ?? "").trim();
           const item = (row.Item ?? "").trim();
           const sourceResource = sourceText === "ERes" ? enterpriseResourceById.get(item.toLowerCase()) : sourceText === "PRes" ? projectResourceById.get(item.toLowerCase()) : null;
-          await createCostToCompleteDetail(project.id, { cost_code_id: costCode.id, resource_source: sourceText === "ERes" || sourceText === "PRes" ? sourceText : null, item: sourceResource?.resource_id ?? (item || null), description: sourceResource?.resource_name ?? ((row.Description ?? "").trim() || null), unit: sourceResource?.unit ?? ((row.Unit ?? "").trim() || null), rate: sourceResource ? Number(sourceResource.rate) : parseNumber(row.Rate), category: (row.Category ?? "").trim() ? row.Category as ResourceCategory : null, ...Object.fromEntries(ctcAttributes.map((a) => [a.field, (row[a.columnName] ?? "").trim() || null])) }).then(async (created) => {
+          await createCostToCompleteDetail(project.id, { cost_code_id: costCode.id, resource_source: sourceText === "ERes" || sourceText === "PRes" ? sourceText : null, item: sourceResource?.resource_id ?? (item || null), description: sourceResource?.resource_name ?? ((row.Description ?? "").trim() || null), unit: sourceResource?.unit ?? ((row.Unit ?? "").trim() || null), rate: sourceResource ? Number(sourceResource.rate) : parseNumber(row.Rate), category: (row.Category ?? "").trim() ? row.Category as ResourceCategory : null,
+            ...Object.fromEntries(ctcAttributes.map((a) => [a.field, (row[a.columnName] ?? "").trim() || null])),
+            ...Object.fromEntries(CTC_USER_NUMBER_COLUMNS.map(({ field, label }) => { const raw = (row[label] ?? "").trim(); return [field, raw ? parseNumber(raw) : null]; })),
+            ...Object.fromEntries(CTC_USER_TEXT_COLUMNS.map(({ field, label }) => [field, (row[label] ?? "").trim() || null])),
+          }).then(async (created) => {
             for (const period of futurePeriods) { const qty = parseNumber(row[periodExcel(period)]); if (qty !== 0) await setCostToCompletePeriodQty(created.id, period.id, qty); }
           });
         }
@@ -610,6 +667,8 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
   ] : [
     { id: "description", label: "Description", kind: "text" }, { id: "unit", label: "Unit", kind: "text" }, { id: "rate", label: "Rate", kind: "number" }, { id: "category", label: "Category", kind: "select", values: ["", ...RESOURCE_CATEGORIES] },
     ...ctcAttributes.map((a) => ({ id: a.field, label: a.columnName, kind: "attribute" as const, values: ["", ...a.definition.attribute_values.filter((v) => v.is_active).map((v) => v.value_id)], definition: a.definition })),
+    ...CTC_USER_NUMBER_COLUMNS.map(({ field, label }) => ({ id: field, label, kind: "number" as const })),
+    ...CTC_USER_TEXT_COLUMNS.map(({ field, label }) => ({ id: field, label, kind: "text" as const })),
     ...futurePeriods.map((period) => ({ id: `period:${period.id}`, label: periodLabel(period), kind: "periodQty" as const })),
   ], [actualAttributes, ctcAttributes, futurePeriods, mode, periods]);
 
@@ -636,6 +695,8 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
           if (bulkField.startsWith("period:")) { const periodId = bulkField.slice(7); if (!futurePeriodIds.has(periodId)) throw new Error("Cost to Complete can only be phased into future reporting periods."); const qty = Number(bulkValue); if (!Number.isFinite(qty) || qty < 0) throw new Error("Period quantity must be zero or greater."); await setCostToCompletePeriodQty(row.id, periodId, qty); }
           else if (bulkField === "resource_source_label") { const source = bulkValue === "ERes" || bulkValue === "PRes" ? bulkValue as CtcResourceSource : null; await updateCostToCompleteDetail(row.id, { resource_source: source }); }
           else if (bulkField === "rate") { const rate = Number(bulkValue); if (!Number.isFinite(rate) || rate < 0) throw new Error("Rate must be zero or greater."); await updateCostToCompleteDetail(row.id, { rate }); }
+          else if (bulkField.startsWith("user_number_")) { const value = bulkValue.trim() === "" ? null : Number(bulkValue); if (value !== null && !Number.isFinite(value)) throw new Error("User Number must be a valid number."); await updateCostToCompleteDetail(row.id, { [bulkField]: value } as Partial<Record<CtcUserNumberField, number | null>>); }
+          else if (bulkField.startsWith("user_text_")) await updateCostToCompleteDetail(row.id, { [bulkField]: bulkValue.trim() || null } as Partial<Record<CtcUserTextField, string | null>>);
           else if (bulkField === "description") await updateCostToCompleteDetail(row.id, { description: bulkValue || null });
           else if (bulkField === "unit") await updateCostToCompleteDetail(row.id, { unit: bulkValue || null });
           else if (bulkField === "category") await updateCostToCompleteDetail(row.id, { category: bulkValue ? bulkValue as ResourceCategory : null });
@@ -670,7 +731,7 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
     if (!gridApi) return;
     if (open) gridApi.expandAll(); else gridApi.collapseAll();
     if (mode === "ctc") {
-      ["ctc-general", "ctc-enterprise-attrs", "ctc-project-attrs", "ctc-phasing"].forEach((groupId) => gridApi.setColumnGroupOpened(groupId, open));
+      ["ctc-general", "ctc-enterprise-attrs", "ctc-project-attrs", "ctc-user-columns", "ctc-phasing"].forEach((groupId) => gridApi.setColumnGroupOpened(groupId, open));
     }
   }
 
@@ -748,8 +809,8 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
             rowSelection={{ mode: "multiRow" }}
             selectionColumnDef={{ pinned: "left", width: 42, maxWidth: 42, suppressHeaderMenuButton: true }}
             getRowId={(params) => params.data.id}
-            getRowHeight={(params) => params.node?.rowPinned ? 24 : undefined}
-            getRowStyle={(params) => params.node?.rowPinned ? { backgroundColor: "#f1f5f9", borderBottom: "1px solid #cbd5e1", borderTop: "1px solid #cbd5e1" } : undefined}
+            getRowHeight={(params) => params.node?.rowPinned ? 26 : undefined}
+            getRowStyle={(params) => params.node?.rowPinned ? { backgroundColor: "#e8eef7", borderBottom: "2px solid #94a3b8", borderTop: "1px solid #94a3b8" } : undefined}
             onGridReady={(event) => { setGridApi(event.api); syncGroupState(event.api); }}
             onSelectionChanged={selectionChanged}
             onCellFocused={(event) => { const node = event.rowIndex == null ? null : event.api.getDisplayedRowAtIndex(event.rowIndex); if (node?.data) setInsertAfterId(node.data.id); }}
