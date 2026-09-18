@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgGridProvider, AgGridReact } from "ag-grid-react";
-import type { ColDef } from "ag-grid-community";
+import type { ColDef, ColGroupDef } from "ag-grid-community";
 import { themeQuartz } from "ag-grid-community";
 import { AllEnterpriseModule } from "ag-grid-enterprise";
 import ExcelImportDialog from "@/components/shared/excel-import-dialog";
@@ -12,6 +12,8 @@ import { listProjectAttributes, ProjectAttributeDefinition } from "@/lib/project
 import { CostCode, listCostCodes } from "@/lib/cost-codes";
 import { CostReportingPeriod, listCostReportingPeriods } from "@/lib/cost-reporting";
 import {
+  ACTUAL_USER_NUMBER_FIELDS,
+  ACTUAL_USER_TEXT_FIELDS,
   ActualAttributeField,
   ActualCostTransaction,
   actualCostErrorMessage,
@@ -23,6 +25,8 @@ import { getProjectByPublicId, Project } from "@/lib/projects";
 
 const gridTheme = themeQuartz.withParams({ spacing: 7, rowHeight: 38, headerHeight: 42 });
 const TYPES: TransactionType[] = ["FIN", "MAN", "ACC", "REV"];
+const ACTUAL_USER_NUMBER_COLUMNS = ACTUAL_USER_NUMBER_FIELDS.map((field, index) => ({ field, label: `User Number ${index + 1}` }));
+const ACTUAL_USER_TEXT_COLUMNS = ACTUAL_USER_TEXT_FIELDS.map((field, index) => ({ field, label: `User Text ${index + 1}` }));
 
 type GridRow = ActualCostTransaction & { cost_code_ref: string; period_label: string };
 type ActiveAttribute = {
@@ -122,6 +126,7 @@ export default function ActualCostPage({ projectPublicId }: { projectPublicId: s
   const codeById = useMemo(() => new Map(costCodes.map((code) => [code.id, code])), [costCodes]);
   const codeByRef = useMemo(() => new Map(costCodes.map((code) => [code.cost_code_id.toLowerCase(), code])), [costCodes]);
   const periodById = useMemo(() => new Map(periods.map((period) => [period.id, period])), [periods]);
+  const actualPeriods = useMemo(() => periods.filter((period) => period.status === "Closed" || period.status === "Current"), [periods]);
 
   const rows = useMemo<GridRow[]>(() => transactions.map((transaction) => ({
     ...transaction,
@@ -132,24 +137,47 @@ export default function ActualCostPage({ projectPublicId }: { projectPublicId: s
   const excelColumns = useMemo(() => [
     "Cost Code ID", "Item", "Description", "Transaction Type", "Amount", "Cost Reporting Period",
     ...activeAttributes.map((attribute) => attribute.columnName),
+    ...ACTUAL_USER_NUMBER_COLUMNS.map((column) => column.label),
+    ...ACTUAL_USER_TEXT_COLUMNS.map((column) => column.label),
   ], [activeAttributes]);
 
-  const columnDefs = useMemo<ColDef<GridRow>[]>(() => [
-    { field: "cost_code_ref", headerName: "Cost Code ID", pinned: "left", minWidth: 145, filter: true },
-    { field: "transaction_id", headerName: "Item", minWidth: 150, filter: true },
-    { field: "description", headerName: "Description", minWidth: 260, filter: true },
-    { field: "transaction_type", headerName: "Transaction Type", minWidth: 150, filter: "agSetColumnFilter" },
-    { field: "amount", headerName: "Amount", minWidth: 135, type: "numericColumn", aggFunc: "sum", enableValue: true, valueFormatter: (params) => money(params.value as number | null) },
-    { field: "period_label", headerName: "Cost Reporting Period", minWidth: 180, filter: "agSetColumnFilter" },
-    ...activeAttributes.map((attribute): ColDef<GridRow> => ({
-      colId: attribute.field,
-      headerName: attribute.columnName,
-      headerTooltip: `${attribute.prefix}${String(attribute.definition.attribute_number).padStart(2, "0")} · ${attribute.definition.name}`,
-      minWidth: 150,
-      valueGetter: (params) => valueName(attribute.definition, params.data?.[attribute.field]),
-      filter: "agSetColumnFilter",
-    })),
-  ], [activeAttributes]);
+  const columnDefs = useMemo<Array<ColDef<GridRow> | ColGroupDef<GridRow>>>(() => {
+    const userColumns: ColDef<GridRow>[] = [
+      ...ACTUAL_USER_NUMBER_COLUMNS.map(({ field, label }, index): ColDef<GridRow> => ({
+        field: field as keyof GridRow & string,
+        headerName: label,
+        minWidth: 115,
+        type: "numericColumn",
+        filter: "agNumberColumnFilter",
+        valueFormatter: (params) => params.value == null ? "" : money(Number(params.value)),
+        columnGroupShow: index === 0 ? undefined : "open",
+      })),
+      ...ACTUAL_USER_TEXT_COLUMNS.map(({ field, label }): ColDef<GridRow> => ({
+        field: field as keyof GridRow & string,
+        headerName: label,
+        minWidth: 130,
+        filter: true,
+        columnGroupShow: "open",
+      })),
+    ];
+    return [
+      { field: "cost_code_ref", headerName: "Cost Code ID", pinned: "left", minWidth: 145, filter: true },
+      { field: "transaction_id", headerName: "Item", minWidth: 150, filter: true },
+      { field: "description", headerName: "Description", minWidth: 260, filter: true },
+      { field: "transaction_type", headerName: "Transaction Type", minWidth: 150, filter: "agSetColumnFilter" },
+      { field: "amount", headerName: "Amount", minWidth: 135, type: "numericColumn", aggFunc: "sum", enableValue: true, valueFormatter: (params) => money(params.value as number | null) },
+      { field: "period_label", headerName: "Cost Reporting Period", minWidth: 180, filter: "agSetColumnFilter" },
+      ...activeAttributes.map((attribute): ColDef<GridRow> => ({
+        colId: attribute.field,
+        headerName: attribute.columnName,
+        headerTooltip: `${attribute.prefix}${String(attribute.definition.attribute_number).padStart(2, "0")} · ${attribute.definition.name}`,
+        minWidth: 150,
+        valueGetter: (params) => valueName(attribute.definition, params.data?.[attribute.field]),
+        filter: "agSetColumnFilter",
+      })),
+      { groupId: "actual-bulk-user-columns", headerName: "User Columns", marryChildren: true, openByDefault: false, children: userColumns },
+    ];
+  }, [activeAttributes]);
 
   const totalActual = useMemo(() => transactions.reduce((sum, row) => sum + Number(row.amount ?? 0), 0), [transactions]);
   function showNotice(message: string) { setNotice(message); window.setTimeout(() => setNotice(""), 3500); }
@@ -164,6 +192,8 @@ export default function ActualCostPage({ projectPublicId }: { projectPublicId: s
       Amount: String(row.amount),
       "Cost Reporting Period": periodById.get(row.cost_period_id) ? periodExcelValue(periodById.get(row.cost_period_id)!) : "",
       ...Object.fromEntries(activeAttributes.map((attribute) => [attribute.columnName, row[attribute.field] ?? ""])),
+      ...Object.fromEntries(ACTUAL_USER_NUMBER_COLUMNS.map(({ field, label }) => [label, row[field] == null ? "" : String(row[field])])),
+      ...Object.fromEntries(ACTUAL_USER_TEXT_COLUMNS.map(({ field, label }) => [label, row[field] ?? ""])),
     }));
     exportExcel(`${project.project_code}-actual-cost`, "Actual Cost", data.length ? data : [Object.fromEntries(excelColumns.map((column) => [column, ""]))]);
   }
@@ -190,11 +220,16 @@ export default function ActualCostPage({ projectPublicId }: { projectPublicId: s
         if (!TYPES.includes(type)) errors.push(`Row ${line}: Transaction Type must be FIN, MAN, ACC or REV.`);
         if (Number.isNaN(amount)) errors.push(`Row ${line}: Amount must be a valid number.`);
         if (!period) errors.push(`Row ${line}: Cost Reporting Period must match an existing project period such as P1.`);
+        else if (period.status === "Future") errors.push(`Row ${line}: P${period.period_number} is a Future period; Actual Cost can only use Current or Closed periods.`);
         activeAttributes.forEach((attribute) => {
           const valueId = (row[attribute.columnName] ?? "").trim();
           if (!valueId) return;
           if (valueId.length > 50) errors.push(`Row ${line}: ${attribute.columnName} is longer than 50 characters.`);
           if (!attribute.definition.attribute_values.some((value) => value.is_active && value.value_id.toLowerCase() === valueId.toLowerCase())) errors.push(`Row ${line}: ${attribute.columnName} must contain an active Value ID.`);
+        });
+        ACTUAL_USER_NUMBER_COLUMNS.forEach(({ label }) => {
+          const raw = (row[label] ?? "").trim();
+          if (raw && Number.isNaN(parseNumber(raw))) errors.push(`Row ${line}: ${label} must be a valid number or blank.`);
         });
       });
       setImportRows(incoming); setImportErrors(errors); setReplace(false); setProgress(0);
@@ -208,7 +243,7 @@ export default function ActualCostPage({ projectPublicId }: { projectPublicId: s
     try {
       const mapped = importRows.map((row) => {
         const code = codeByRef.get(row["Cost Code ID"].trim().toLowerCase())!;
-        const period = parsePeriod(row["Cost Reporting Period"], periods)!;
+        const period = parsePeriod(row["Cost Reporting Period"], actualPeriods)!;
         return {
           cost_code_id: code.id,
           cost_period_id: period.id,
@@ -218,6 +253,8 @@ export default function ActualCostPage({ projectPublicId }: { projectPublicId: s
           transaction_type: row["Transaction Type"].trim().toUpperCase() as TransactionType,
           amount: parseNumber(row.Amount),
           ...Object.fromEntries(activeAttributes.map((attribute) => [attribute.field, row[attribute.columnName]?.trim() || null])),
+          ...Object.fromEntries(ACTUAL_USER_NUMBER_COLUMNS.map(({ field, label }) => { const raw = (row[label] ?? "").trim(); return [field, raw ? parseNumber(raw) : null]; })),
+          ...Object.fromEntries(ACTUAL_USER_TEXT_COLUMNS.map(({ field, label }) => [field, (row[label] ?? "").trim() || null])),
         };
       });
       await importActualCostTransactions(project.id, mapped, replace, setProgress);
@@ -236,7 +273,7 @@ export default function ActualCostPage({ projectPublicId }: { projectPublicId: s
         <input ref={fileRef} hidden type="file" accept=".xlsx,.xls" onChange={(event) => void chooseImport(event.target.files?.[0])}/>
         <button className="button secondary" disabled={loading || importing} onClick={() => void refresh()}>↻ Refresh</button>
       </div>
-      <div className="data-message" style={{ minHeight: 48 }}><span>Item and Description may be blank or duplicated. Import/export supports FIN, MAN, ACC and REV. REV can be imported directly or generated automatically during period rollover. Only active, configured Line Item attributes are shown. Cost Reporting Period accepts values such as P1.</span></div>
+      <div className="data-message" style={{ minHeight: 48 }}><span>Item and Description may be blank or duplicated. Import/export supports FIN, MAN, ACC and REV. REV can be imported directly or generated automatically during period rollover. Only active, configured Line Item attributes are shown. Cost Reporting Period accepts values such as P1 and must be Current or Closed; Future periods are rejected.</span></div>
       {error && <div className="data-message error"><strong>Unable to load Actual Cost</strong><span>{error}</span></div>}
       {!error && loading && <div className="data-message"><span className="spinner"/>Loading Actual Cost…</div>}
       {!error && !loading && periods.length === 0 && <div className="data-message"><strong>No Cost Reporting Periods</strong><span>Set up Cost Management → Reporting Periods before importing Actual Cost.</span></div>}
