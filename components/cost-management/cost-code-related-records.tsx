@@ -193,7 +193,7 @@ export function CostCodeActionsCell({ costCode, project, onEdit }: { costCode: C
   const workspace = typeof document !== "undefined" && project && mode ? createPortal(
     <RelatedRecordsWorkspace project={project} costCode={costCode} mode={mode} onClose={() => setMode(null)}/>, document.body,
   ) : null;
-  const changeWorkspace = project && changeOpen ? <CostCodeChangeRecordsWorkspace project={project} costCode={costCode} onClose={() => setChangeOpen(false)}/> : null;
+  const changeWorkspace = typeof document !== "undefined" && project && changeOpen ? createPortal(\n    <CostCodeChangeRecordsWorkspace project={project} costCode={costCode} onClose={() => setChangeOpen(false)}/>, document.body,\n  ) : null;
 
   return <>
     <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 4, width: "100%", height: "100%" }} onMouseDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>
