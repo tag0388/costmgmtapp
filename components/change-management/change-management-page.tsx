@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgGridProvider, AgGridReact } from "ag-grid-react";
-import type { CellValueChangedEvent, ColDef, ColGroupDef, GridApi, RowClickedEvent, SelectionChangedEvent } from "ag-grid-community";
+import type { CellValueChangedEvent, ColDef, ColGroupDef, RowClickedEvent, SelectionChangedEvent } from "ag-grid-community";
 import { AllEnterpriseModule } from "ag-grid-enterprise";
 import { themeQuartz } from "ag-grid-community";
 import ExcelImportDialog from "@/components/shared/excel-import-dialog";
@@ -89,8 +89,6 @@ export default function ChangeManagementPage({ projectPublicId }: { projectPubli
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [selectedOrderRows, setSelectedOrderRows] = useState<string[]>([]);
   const [selectedRecordRows, setSelectedRecordRows] = useState<string[]>([]);
-  const [orderApi, setOrderApi] = useState<GridApi<ChangeOrderGridRow> | null>(null);
-  const [recordApi, setRecordApi] = useState<GridApi<ChangeRecordGridRow> | null>(null);
   const [orderSearch, setOrderSearch] = useState("");
   const [recordSearch, setRecordSearch] = useState("");
   const [loading, setLoading] = useState(true);
@@ -152,15 +150,26 @@ export default function ChangeManagementPage({ projectPublicId }: { projectPubli
     .map((record) => ({ ...record, cost_code_ref: codeById.get(record.cost_code_id)?.cost_code_id ?? "" })),
   [records, selectedOrderId, codeById]);
 
-  const attributeCol = useCallback((attribute: ActiveAttribute): ColDef<any> => ({
-    field: attribute.field,
+  const orderAttributeCol = useCallback((attribute: ActiveAttribute): ColDef<ChangeOrderGridRow> => ({
+    field: attribute.field as keyof ChangeOrderGridRow & string,
     headerName: attribute.columnName,
     editable: true,
     minWidth: 145,
     filter: "agSetColumnFilter",
     cellEditor: "agSelectCellEditor",
     cellEditorParams: { values: ["", ...attribute.definition.attribute_values.filter((value) => value.is_active).map((value) => value.value_id)] },
-    valueFormatter: (params) => valueName(attribute.definition, params.value),
+    valueFormatter: (params) => valueName(attribute.definition, params.value as string | null | undefined),
+  }), []);
+
+  const recordAttributeCol = useCallback((attribute: ActiveAttribute): ColDef<ChangeRecordGridRow> => ({
+    field: attribute.field as keyof ChangeRecordGridRow & string,
+    headerName: attribute.columnName,
+    editable: true,
+    minWidth: 145,
+    filter: "agSetColumnFilter",
+    cellEditor: "agSelectCellEditor",
+    cellEditorParams: { values: ["", ...attribute.definition.attribute_values.filter((value) => value.is_active).map((value) => value.value_id)] },
+    valueFormatter: (params) => valueName(attribute.definition, params.value as string | null | undefined),
   }), []);
 
   const orderColumns = useMemo<Array<ColDef<ChangeOrderGridRow> | ColGroupDef<ChangeOrderGridRow>>>(() => {
@@ -172,14 +181,14 @@ export default function ChangeManagementPage({ projectPublicId }: { projectPubli
       { field: "budget_change", headerName: "Change to Budget", editable: false, type: "numericColumn", minWidth: 130, aggFunc: "sum", valueFormatter: (params) => numberFormat(params.value) },
       { field: "eac_change", headerName: "Change to EAC", editable: false, type: "numericColumn", minWidth: 120, aggFunc: "sum", valueFormatter: (params) => numberFormat(params.value) },
     ];
-    const eCols = enterpriseChangeAttributes.map((attribute, index) => ({ ...attributeCol(attribute), columnGroupShow: index === 0 ? undefined : "open" } as ColDef<ChangeOrderGridRow>));
-    const pCols = projectChangeAttributes.map((attribute, index) => ({ ...attributeCol(attribute), columnGroupShow: index === 0 ? undefined : "open" } as ColDef<ChangeOrderGridRow>));
+    const eCols = enterpriseChangeAttributes.map((attribute, index) => ({ ...orderAttributeCol(attribute), columnGroupShow: index === 0 ? undefined : "open" } as ColDef<ChangeOrderGridRow>));
+    const pCols = projectChangeAttributes.map((attribute, index) => ({ ...orderAttributeCol(attribute), columnGroupShow: index === 0 ? undefined : "open" } as ColDef<ChangeOrderGridRow>));
     return [
       { groupId: "change-order-general", headerName: "General Info", marryChildren: true, openByDefault: true, children: general },
       ...(eCols.length ? [{ groupId: "change-order-enterprise", headerName: "Enterprise Change Attributes", marryChildren: true, openByDefault: true, children: eCols }] : []),
       ...(pCols.length ? [{ groupId: "change-order-project", headerName: "Project Change Attributes", marryChildren: true, openByDefault: true, children: pCols }] : []),
     ];
-  }, [attributeCol, enterpriseChangeAttributes, projectChangeAttributes]);
+  }, [orderAttributeCol, enterpriseChangeAttributes, projectChangeAttributes]);
 
   const recordColumns = useMemo<Array<ColDef<ChangeRecordGridRow> | ColGroupDef<ChangeRecordGridRow>>>(() => {
     const general: ColDef<ChangeRecordGridRow>[] = [
@@ -189,14 +198,14 @@ export default function ChangeManagementPage({ projectPublicId }: { projectPubli
       { field: "change_to_budget", headerName: "Change to Budget", editable: true, type: "numericColumn", minWidth: 135, aggFunc: "sum", valueParser: (params) => Number(params.newValue), valueFormatter: (params) => numberFormat(params.value) },
       { field: "change_to_eac", headerName: "Change to EAC", editable: true, type: "numericColumn", minWidth: 125, aggFunc: "sum", valueParser: (params) => Number(params.newValue), valueFormatter: (params) => numberFormat(params.value) },
     ];
-    const eCols = enterpriseChangeAttributes.map((attribute, index) => ({ ...attributeCol(attribute), columnGroupShow: index === 0 ? undefined : "open" } as ColDef<ChangeRecordGridRow>));
-    const pCols = projectChangeAttributes.map((attribute, index) => ({ ...attributeCol(attribute), columnGroupShow: index === 0 ? undefined : "open" } as ColDef<ChangeRecordGridRow>));
+    const eCols = enterpriseChangeAttributes.map((attribute, index) => ({ ...recordAttributeCol(attribute), columnGroupShow: index === 0 ? undefined : "open" } as ColDef<ChangeRecordGridRow>));
+    const pCols = projectChangeAttributes.map((attribute, index) => ({ ...recordAttributeCol(attribute), columnGroupShow: index === 0 ? undefined : "open" } as ColDef<ChangeRecordGridRow>));
     return [
       { groupId: "change-record-general", headerName: "General Info", marryChildren: true, openByDefault: true, children: general },
       ...(eCols.length ? [{ groupId: "change-record-enterprise", headerName: "Enterprise Change Attributes", marryChildren: true, openByDefault: true, children: eCols }] : []),
       ...(pCols.length ? [{ groupId: "change-record-project", headerName: "Project Change Attributes", marryChildren: true, openByDefault: true, children: pCols }] : []),
     ];
-  }, [attributeCol, costCodes, enterpriseChangeAttributes, projectChangeAttributes]);
+  }, [recordAttributeCol, costCodes, enterpriseChangeAttributes, projectChangeAttributes]);
 
   async function orderChanged(event: CellValueChangedEvent<ChangeOrderGridRow>) {
     if (!event.data || event.newValue === event.oldValue) return;
@@ -438,7 +447,6 @@ export default function ChangeManagementPage({ projectPublicId }: { projectPubli
             rowSelection={{ mode: "multiRow" }}
             selectionColumnDef={{ pinned: "left", width: 42, maxWidth: 42 }}
             getRowId={(params) => params.data.id}
-            onGridReady={(event) => setOrderApi(event.api)}
             onSelectionChanged={orderSelection}
             onRowClicked={orderClicked}
             onCellValueChanged={(event) => void orderChanged(event)}
@@ -471,7 +479,6 @@ export default function ChangeManagementPage({ projectPublicId }: { projectPubli
             rowSelection={{ mode: "multiRow" }}
             selectionColumnDef={{ pinned: "left", width: 42, maxWidth: 42 }}
             getRowId={(params) => params.data.id}
-            onGridReady={(event) => setRecordApi(event.api)}
             onSelectionChanged={recordSelection}
             onCellValueChanged={(event) => void recordChanged(event)}
             rowGroupPanelShow="always"
