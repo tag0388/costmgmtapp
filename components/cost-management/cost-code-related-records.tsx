@@ -7,6 +7,7 @@ import type { CellValueChangedEvent, ColDef, ColGroupDef, ColumnState, GridApi, 
 import { themeQuartz } from "ag-grid-community";
 import { AllEnterpriseModule } from "ag-grid-enterprise";
 import ExcelImportDialog from "@/components/shared/excel-import-dialog";
+import CostCodeChangeRecordsWorkspace from "@/components/change-management/cost-code-change-records-workspace";
 import { ExcelRow, exportExcel, readExcel } from "@/lib/excel";
 import type { CostCode } from "@/lib/cost-codes";
 import type { Project } from "@/lib/projects";
@@ -145,6 +146,7 @@ function validateHeaders(rows: ExcelRow[], expected: string[]) {
 export function CostCodeActionsCell({ costCode, project, onEdit }: { costCode: CostCode; project: Project | null; onEdit: () => void }) {
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<RelatedMode | null>(null);
+  const [changeOpen, setChangeOpen] = useState(false);
   const [menuPosition, setMenuPosition] = useState({ top: 0, right: 8 });
   const buttonRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -182,7 +184,7 @@ export function CostCodeActionsCell({ costCode, project, onEdit }: { costCode: C
 
   const menu = typeof document !== "undefined" && open ? createPortal(
     <div ref={menuRef} onMouseDown={(event) => event.stopPropagation()} style={{ position: "fixed", right: menuPosition.right, top: menuPosition.top, zIndex: 10000, width: 182, background: "#fff", border: "1px solid #dbe1e8", borderRadius: 6, boxShadow: "0 10px 26px rgba(15,23,42,.16)", padding: 4 }}>
-      <MenuOption icon="changes" label="Change Records" hint="Coming soon" disabled onClick={() => undefined}/>
+      <MenuOption icon="changes" label="Change Records" hint="View & edit" disabled={!project} onClick={() => { setOpen(false); setChangeOpen(true); }}/>
       <MenuOption icon="actual" label="Actual Cost" hint="View & edit" disabled={!project} onClick={() => { setOpen(false); setMode("actual"); }}/>
       <MenuOption icon="ctc" label="Cost to Complete" hint="View & edit" disabled={!project} onClick={() => { setOpen(false); setMode("ctc"); }}/>
     </div>, document.body,
@@ -191,6 +193,7 @@ export function CostCodeActionsCell({ costCode, project, onEdit }: { costCode: C
   const workspace = typeof document !== "undefined" && project && mode ? createPortal(
     <RelatedRecordsWorkspace project={project} costCode={costCode} mode={mode} onClose={() => setMode(null)}/>, document.body,
   ) : null;
+  const changeWorkspace = typeof document !== "undefined" && project && changeOpen ? createPortal(\n    <CostCodeChangeRecordsWorkspace project={project} costCode={costCode} onClose={() => setChangeOpen(false)}/>, document.body,\n  ) : null;
 
   return <>
     <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 4, width: "100%", height: "100%" }} onMouseDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>
@@ -199,6 +202,7 @@ export function CostCodeActionsCell({ costCode, project, onEdit }: { costCode: C
     </div>
     {menu}
     {workspace}
+    {changeWorkspace}
   </>;
 }
 
