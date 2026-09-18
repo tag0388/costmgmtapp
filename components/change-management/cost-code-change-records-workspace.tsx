@@ -67,6 +67,10 @@ function excelAttributeValues(row: ExcelRow, attributes: ActiveAttribute[]) {
   return Object.fromEntries(attributes.map((a) => [a.field, (row[a.columnName] ?? "").trim() || null])) as ChangeAttributeValues;
 }
 
+function changeAttributePatch(field: ChangeAttributeField, value: string | null): Parameters<typeof updateChangeRecord>[1] {
+  return { [field]: value } as Parameters<typeof updateChangeRecord>[1];
+}
+
 export default function CostCodeChangeRecordsWorkspace({ project, costCode, onClose }: { project: Project; costCode: CostCode; onClose: () => void }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [orders, setOrders] = useState<ChangeOrder[]>([]);
@@ -298,7 +302,7 @@ export default function CostCodeChangeRecordsWorkspace({ project, costCode, onCl
                   <td><input defaultValue={row.description ?? ""} disabled={saving} onBlur={(event) => { const value = event.target.value.trim() || null; if (value !== row.description) void patchRecord(row.id, { description: value }); }}/></td>
                   <td style={{ textAlign: "right" }}><input type="number" step="any" defaultValue={row.change_to_budget} disabled={saving} onBlur={(event) => { const value = Number(event.target.value); if (Number.isFinite(value) && value !== Number(row.change_to_budget)) void patchRecord(row.id, { change_to_budget: value }); }}/><div style={{ fontSize: 10, color: "#64748b" }}>{numberFormat(row.change_to_budget)}</div></td>
                   <td style={{ textAlign: "right" }}><input type="number" step="any" defaultValue={row.change_to_eac} disabled={saving} onBlur={(event) => { const value = Number(event.target.value); if (Number.isFinite(value) && value !== Number(row.change_to_eac)) void patchRecord(row.id, { change_to_eac: value }); }}/><div style={{ fontSize: 10, color: "#64748b" }}>{numberFormat(row.change_to_eac)}</div></td>
-                  {attributes.map((a) => <td key={a.field}><select value={row[a.field] ?? ""} disabled={saving} onChange={(event) => void patchRecord(row.id, { [a.field]: event.target.value || null } as ChangeAttributeValues)}><option value=""></option>{a.definition.attribute_values.filter((v) => v.is_active || v.value_id === row[a.field]).map((v) => <option key={v.id} value={v.value_id}>{v.value_name}</option>)}</select></td>)}
+                  {attributes.map((a) => <td key={a.field}><select value={row[a.field] ?? ""} disabled={saving} onChange={(event) => void patchRecord(row.id, changeAttributePatch(a.field, event.target.value || null))}><option value=""></option>{a.definition.attribute_values.filter((v) => v.is_active || v.value_id === row[a.field]).map((v) => <option key={v.id} value={v.value_id}>{v.value_name}</option>)}</select></td>)}
                   <td><button className="button secondary compact" disabled={saving} onClick={() => void removeRow(row.id)}>Delete</button></td>
                 </tr>;
               })}
