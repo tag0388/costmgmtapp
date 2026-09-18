@@ -1,9 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import { AgGridProvider, AgGridReact } from "ag-grid-react";
-import type { CellValueChangedEvent, ColDef, ColGroupDef, GridApi, SelectionChangedEvent } from "ag-grid-community";
+import type { CellValueChangedEvent, ColDef, GridApi } from "ag-grid-community";
 import { AllEnterpriseModule } from "ag-grid-enterprise";
 import { themeQuartz } from "ag-grid-community";
 import ExcelImportDialog from "@/components/shared/excel-import-dialog";
@@ -133,7 +132,7 @@ export default function CostCodeChangeRecordsWorkspace({ project, costCode, onCl
     valueFormatter: (params: { value: string | null }) => valueName(definition, params.value),
   }), []);
 
-  const columnDefs = useMemo<Array<ColDef<GridRow> | ColGroupDef<GridRow>>>(() => {
+  const columnDefs = useMemo(() => {
     const general: ColDef<GridRow>[] = [
       { field: "change_order_ref", headerName: "Change Order ID", pinned: "left", minWidth: 145, editable: true, cellEditor: "agSelectCellEditor", cellEditorParams: { values: orderRefs }, filter: true },
       { field: "change_order_status", headerName: "Status", minWidth: 105, editable: false, filter: "agSetColumnFilter" },
@@ -309,7 +308,7 @@ export default function CostCodeChangeRecordsWorkspace({ project, costCode, onCl
                 selectionColumnDef={{ pinned: "left", width: 42, maxWidth: 42, suppressHeaderMenuButton: true }}
                 getRowId={(p) => p.data.id}
                 onGridReady={(e) => setGridApi(e.api)}
-                onSelectionChanged={(e: SelectionChangedEvent<GridRow>) => setSelectedCount(e.api.getSelectedRows().length)}
+                onSelectionChanged={(e) => setSelectedCount(e.api.getSelectedRows().length)}
                 onCellValueChanged={(e) => void changed(e)}
                 rowGroupPanelShow="always"
                 groupDisplayType="multipleColumns"
@@ -326,5 +325,5 @@ export default function CostCodeChangeRecordsWorkspace({ project, costCode, onCl
     </div>
   </div>;
 
-  return typeof document !== "undefined" ? createPortal(panel, document.body) : null;
+  return panel;
 }
