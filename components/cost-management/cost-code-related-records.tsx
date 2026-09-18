@@ -218,7 +218,7 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
   const periodByExcel = useMemo(() => new Map(periods.map((period) => [periodExcel(period).toUpperCase(), period])), [periods]);
   const periodById = useMemo(() => new Map(periods.map((period) => [period.id, period])), [periods]);
   const currentPeriod = useMemo(() => periods.find((period) => period.status === "Current") ?? null, [periods]);
-  const ctcPeriods = useMemo(() => currentPeriod ? periods.filter((period) => period.period_number > currentPeriod.period_number) : periods.filter((period) => period.status === "Future"), [currentPeriod, periods]);
+  const ctcPeriods = useMemo(() => currentPeriod ? periods.filter((period) => period.status === "Future" && period.period_number > currentPeriod.period_number) : periods.filter((period) => period.status === "Future"), [currentPeriod, periods]);
   const activeEnterpriseResources = useMemo(() => enterpriseResources.filter((row) => row.is_active), [enterpriseResources]);
   const activeProjectResources = useMemo(() => projectResources.filter((row) => row.is_active), [projectResources]);
   const enterpriseResourceIds = useMemo(() => new Set(activeEnterpriseResources.map((row) => row.resource_id.toLowerCase())), [activeEnterpriseResources]);
