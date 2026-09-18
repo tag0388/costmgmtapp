@@ -6,9 +6,16 @@ export type CtcEnterpriseAttributeField = `e_attribute_${"01"|"02"|"03"|"04"|"05
 export type CtcAttributeField = CtcProjectAttributeField | CtcEnterpriseAttributeField;
 export type CtcAttributeValues = Partial<Record<CtcAttributeField, string | null>>;
 export type CtcResourceSource = "ERes" | "PRes" | null;
+export type CtcUserNumberField = `user_number_${"01"|"02"|"03"|"04"|"05"}`;
+export type CtcUserTextField = `user_text_${"01"|"02"|"03"|"04"|"05"}`;
+export type CtcUserField = CtcUserNumberField | CtcUserTextField;
+export type CtcUserValues = Partial<Record<CtcUserNumberField, number | null>> & Partial<Record<CtcUserTextField, string | null>>;
 
 export const CTC_PROJECT_ATTRIBUTE_FIELDS = Array.from({ length: 20 }, (_, index) => `p_attribute_${String(index + 1).padStart(2, "0")}`) as CtcProjectAttributeField[];
 export const CTC_ENTERPRISE_ATTRIBUTE_FIELDS = Array.from({ length: 20 }, (_, index) => `e_attribute_${String(index + 1).padStart(2, "0")}`) as CtcEnterpriseAttributeField[];
+export const CTC_USER_NUMBER_FIELDS = Array.from({ length: 5 }, (_, index) => `user_number_${String(index + 1).padStart(2, "0")}`) as CtcUserNumberField[];
+export const CTC_USER_TEXT_FIELDS = Array.from({ length: 5 }, (_, index) => `user_text_${String(index + 1).padStart(2, "0")}`) as CtcUserTextField[];
+export const CTC_USER_FIELDS = [...CTC_USER_NUMBER_FIELDS, ...CTC_USER_TEXT_FIELDS] as CtcUserField[];
 
 export type CostToCompleteDetail = {
   id: string;
@@ -23,7 +30,7 @@ export type CostToCompleteDetail = {
   row_order: number | null;
   created_at: string;
   updated_at: string;
-} & CtcAttributeValues;
+} & CtcAttributeValues & CtcUserValues;
 
 export type CostToCompletePeriodQty = {
   id: string;
@@ -42,12 +49,13 @@ export type CostToCompleteImportRow = Omit<CostToCompleteDetail, "id" | "project
 
 export type CostToCompleteEditablePatch = Partial<Pick<CostToCompleteDetail,
   "item" | "description" | "unit" | "rate" | "category" | "resource_source"
->> & CtcAttributeValues;
+>> & CtcAttributeValues & CtcUserValues;
 
 const detailSelect = [
   "id", "project_id", "cost_code_id", "item", "description", "unit", "rate", "category", "resource_source", "row_order", "created_at", "updated_at",
   ...CTC_ENTERPRISE_ATTRIBUTE_FIELDS,
   ...CTC_PROJECT_ATTRIBUTE_FIELDS,
+  ...CTC_USER_FIELDS,
 ].join(",");
 
 async function listLedger(projectId: string, costCodeId?: string): Promise<CostToCompleteLedgerRow[]> {
@@ -73,7 +81,13 @@ async function listLedger(projectId: string, costCodeId?: string): Promise<CostT
     values[row.cost_period_id] = Number(row.qty);
     byDetail.set(row.cost_to_complete_detail_id, values);
   });
-  return details.map((row) => ({ ...row, rate: Number(row.rate), row_order: row.row_order == null ? null : Number(row.row_order), period_qty: byDetail.get(row.id) ?? {} }));
+  return details.map((row) => ({
+    ...row,
+    rate: Number(row.rate),
+    row_order: row.row_order == null ? null : Number(row.row_order),
+    ...Object.fromEntries(CTC_USER_NUMBER_FIELDS.map((field) => [field, row[field] == null ? null : Number(row[field])])),
+    period_qty: byDetail.get(row.id) ?? {},
+  }));
 }
 
 export function listCostToCompleteLedger(projectId: string) {
@@ -91,7 +105,7 @@ export async function createCostToCompleteDetail(projectId: string, row: Omit<Co
     headers: { Prefer: "return=representation" },
     body: JSON.stringify(body),
   });
-  return { ...rows[0], rate: Number(rows[0].rate), period_qty: {} } as CostToCompleteLedgerRow;
+  return { ...rows[0], rate: Number(rows[0].rate), ...Object.fromEntries(CTC_USER_NUMBER_FIELDS.map((field) => [field, rows[0][field] == null ? null : Number(rows[0][field])])), period_qty: {} } as CostToCompleteLedgerRow;
 }
 
 export async function createCostToCompleteDetails(projectId: string, inputRows: (Omit<CostToCompleteImportRow, "period_qty"> & { row_order?: number | null })[]) {
@@ -102,7 +116,7 @@ export async function createCostToCompleteDetails(projectId: string, inputRows: 
     headers: { Prefer: "return=representation" },
     body: JSON.stringify(body),
   });
-  return rows.map((row) => ({ ...row, rate: Number(row.rate), row_order: row.row_order == null ? null : Number(row.row_order), period_qty: {} })) as CostToCompleteLedgerRow[];
+  return rows.map((row) => ({ ...row, rate: Number(row.rate), row_order: row.row_order == null ? null : Number(row.row_order), ...Object.fromEntries(CTC_USER_NUMBER_FIELDS.map((field) => [field, row[field] == null ? null : Number(row[field])])), period_qty: {} })) as CostToCompleteLedgerRow[];
 }
 
 export async function updateCostToCompleteDetail(id: string, patch: CostToCompleteEditablePatch) {
