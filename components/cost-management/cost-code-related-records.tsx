@@ -360,13 +360,13 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
     const formulaCellStyle = { backgroundColor: "#eef0f3", color: "#374151", fontWeight: 600 };
     const generalInfo: ColDef<CtcGridRow>[] = [
       { field: "resource_source_label", colId: "resource_source_label", headerName: "Resource Source", editable: false, filter: "agSetColumnFilter", minWidth: 105, maxWidth: 125 },
-      { field: "item", headerName: "Item", editable: (params) => !params.node.rowPinned && !params.data?.resource_source, filter: true, cellStyle: resourceCellStyle },
-      { field: "description", headerName: "Description", editable: (params) => !params.node.rowPinned && !params.data?.resource_source, filter: true, minWidth: 180, cellStyle: (params) => params.node.rowPinned ? { backgroundColor: "#f8fafc", color: "#475569", fontSize: 10, fontWeight: 700 } : resourceCellStyle(params) },
-      { colId: "qty", headerName: "Qty", editable: false, type: "numericColumn", aggFunc: "sum", enableValue: true, cellStyle: formulaCellStyle, valueGetter: (params) => params.node.rowPinned ? null : ctcQtyForRow(params.data, futurePeriods), valueFormatter: (params) => params.value == null ? "" : numberFormat(params.value, 4) },
-      { field: "unit", headerName: "Unit", editable: (params) => !params.node.rowPinned && !params.data?.resource_source, filter: "agSetColumnFilter", cellStyle: resourceCellStyle },
-      { field: "rate", headerName: "Rate", editable: (params) => !params.node.rowPinned && !params.data?.resource_source, type: "numericColumn", valueParser: (params) => Number(params.newValue), valueFormatter: (params) => params.node.rowPinned ? "" : numberFormat(params.value, 4), cellStyle: resourceCellStyle },
-      { colId: "total", headerName: "Total", editable: false, type: "numericColumn", aggFunc: "sum", enableValue: true, cellStyle: formulaCellStyle, valueGetter: (params) => params.node.rowPinned ? null : ctcTotalForRow(params.data, futurePeriods), valueFormatter: (params) => params.value == null ? "" : numberFormat(params.value, 2) },
-      { field: "category", headerName: "Category", editable: (params) => !params.node.rowPinned, cellEditor: "agSelectCellEditor", cellEditorParams: { values: ["", ...RESOURCE_CATEGORIES] }, filter: "agSetColumnFilter", valueFormatter: (params) => params.value ?? "" },
+      { field: "item", headerName: "Item", editable: (params) => !params.node?.rowPinned && !params.data?.resource_source, filter: true, cellStyle: resourceCellStyle },
+      { field: "description", headerName: "Description", editable: (params) => !params.node?.rowPinned && !params.data?.resource_source, filter: true, minWidth: 180, cellStyle: (params) => params.node?.rowPinned ? { backgroundColor: "#f8fafc", color: "#475569", fontSize: 10, fontWeight: 700 } : resourceCellStyle(params) },
+      { colId: "qty", headerName: "Qty", editable: false, type: "numericColumn", aggFunc: "sum", enableValue: true, cellStyle: formulaCellStyle, valueGetter: (params) => params.node?.rowPinned ? null : ctcQtyForRow(params.data, futurePeriods), valueFormatter: (params) => params.value == null ? "" : numberFormat(params.value, 4) },
+      { field: "unit", headerName: "Unit", editable: (params) => !params.node?.rowPinned && !params.data?.resource_source, filter: "agSetColumnFilter", cellStyle: resourceCellStyle },
+      { field: "rate", headerName: "Rate", editable: (params) => !params.node?.rowPinned && !params.data?.resource_source, type: "numericColumn", valueParser: (params) => Number(params.newValue), valueFormatter: (params) => params.node?.rowPinned ? "" : numberFormat(params.value, 4), cellStyle: resourceCellStyle },
+      { colId: "total", headerName: "Total", editable: false, type: "numericColumn", aggFunc: "sum", enableValue: true, cellStyle: formulaCellStyle, valueGetter: (params) => params.node?.rowPinned ? null : ctcTotalForRow(params.data, futurePeriods), valueFormatter: (params) => params.value == null ? "" : numberFormat(params.value, 2) },
+      { field: "category", headerName: "Category", editable: (params) => !params.node?.rowPinned, cellEditor: "agSelectCellEditor", cellEditorParams: { values: ["", ...RESOURCE_CATEGORIES] }, filter: "agSetColumnFilter", valueFormatter: (params) => params.value ?? "" },
     ];
     const enterpriseColumns = ctcAttributes.filter((attribute) => attribute.prefix === "E").map((attribute, index): ColDef<CtcGridRow> => ({ field: attribute.field as keyof CtcGridRow & string, headerName: attribute.columnName, editable: true, filter: "agSetColumnFilter", columnGroupShow: index === 0 ? undefined : "open", ...attributeEditor(attribute.definition) }));
     const projectColumns = ctcAttributes.filter((attribute) => attribute.prefix === "P").map((attribute, index): ColDef<CtcGridRow> => ({ field: attribute.field as keyof CtcGridRow & string, headerName: attribute.columnName, editable: true, filter: "agSetColumnFilter", columnGroupShow: index === 0 ? undefined : "open", ...attributeEditor(attribute.definition) }));
@@ -374,7 +374,7 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
     const phasingColumns = futurePeriods.map((period, index): ColDef<CtcGridRow> => ({
       colId: `period:${period.id}`,
       headerName: periodColumnLabel(period),
-      editable: (params) => !params.node.rowPinned,
+      editable: (params) => !params.node?.rowPinned,
       type: "numericColumn",
       aggFunc: "sum",
       enableValue: true,
@@ -383,10 +383,10 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
       maxWidth: 92,
       wrapHeaderText: true,
       autoHeaderHeight: true,
-      cellStyle: (params) => params.node.rowPinned ? { backgroundColor: "#f1f5f9", color: "#334155", fontSize: 10, fontWeight: 700 } : undefined,
-      valueGetter: (params) => params.node.rowPinned ? (periodForecastTotals.get(period.id) ?? 0) : Number(params.data?.period_qty[period.id] ?? 0),
+      cellStyle: (params) => params.node?.rowPinned ? { backgroundColor: "#f1f5f9", color: "#334155", fontSize: 10, fontWeight: 700 } : undefined,
+      valueGetter: (params) => params.node?.rowPinned ? (periodForecastTotals.get(period.id) ?? 0) : Number(params.data?.period_qty[period.id] ?? 0),
       valueSetter: (params) => { if (!params.data) return false; const parsed = Number(params.newValue); if (!Number.isFinite(parsed) || parsed < 0) return false; params.data.period_qty = { ...params.data.period_qty, [period.id]: parsed }; return true; },
-      valueFormatter: (params) => params.node.rowPinned ? numberFormat(params.value, 2) : numberFormat(params.value, 4),
+      valueFormatter: (params) => params.node?.rowPinned ? numberFormat(params.value, 2) : numberFormat(params.value, 4),
       columnGroupShow: index === 0 ? undefined : "open",
     }));
     const groups: Array<ColGroupDef<CtcGridRow>> = [
@@ -723,7 +723,7 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
             rowSelection={{ mode: "multiRow" }}
             selectionColumnDef={{ pinned: "left", width: 42, maxWidth: 42, suppressHeaderMenuButton: true }}
             getRowId={(params) => params.data.id}
-            getRowHeight={(params) => params.node.rowPinned ? 22 : undefined}
+            getRowHeight={(params) => params.node?.rowPinned ? 22 : undefined}
             onGridReady={(event) => { setGridApi(event.api); syncGroupState(event.api); }}
             onSelectionChanged={selectionChanged}
             onCellFocused={(event) => { const node = event.rowIndex == null ? null : event.api.getDisplayedRowAtIndex(event.rowIndex); if (node?.data) setInsertAfterId(node.data.id); }}
