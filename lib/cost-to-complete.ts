@@ -122,6 +122,19 @@ export async function deleteCostToCompleteDetails(ids: string[]) {
   });
 }
 
+export async function deleteCostToCompletePeriodQtyForPeriods(detailIds: string[], periodIds: string[]) {
+  if (!detailIds.length || !periodIds.length) return;
+  const details = detailIds.map(encodeURIComponent).join(",");
+  const periods = periodIds.map(encodeURIComponent).join(",");
+  await supabaseRequest(
+    `cost_to_complete_detail_periods?cost_to_complete_detail_id=in.(${details})&cost_period_id=in.(${periods})`,
+    {
+      method: "DELETE",
+      headers: { Prefer: "return=minimal" },
+    },
+  );
+}
+
 export async function setCostToCompletePeriodQty(detailId: string, costPeriodId: string, qty: number) {
   const detail = encodeURIComponent(detailId);
   const period = encodeURIComponent(costPeriodId);
