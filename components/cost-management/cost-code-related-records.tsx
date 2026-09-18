@@ -545,8 +545,8 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
     setSaving(true); setError("");
     try {
       if (mode === "actual") {
-        const period = periods.find((p) => p.status === "Current") ?? periods.find((p) => p.status !== "Closed") ?? periods[0];
-        if (!period) throw new Error("Create a Cost Reporting Period before adding Actual Cost.");
+        const period = actualPeriods.find((p) => p.status === "Current") ?? [...actualPeriods].filter((p) => p.status === "Closed").sort((a, b) => b.period_number - a.period_number)[0];
+        if (!period) throw new Error("A Current or Closed Cost Reporting Period is required before adding Actual Cost.");
         const input = orders.map((rowOrder) => ({ cost_period_id: period.id, cost_code_id: costCode.id, transaction_date: period.end_date, transaction_id: null, description: "", amount: 0, transaction_type: "MAN" as TransactionType, row_order: rowOrder, ...Object.fromEntries(actualAttributes.map((a) => [a.field, null])) }));
         const created = await createActualCostTransactions(project.id, input);
         setActualRows((current) => [...current, ...created]);
@@ -832,7 +832,7 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
     <div className="enterprise-toolbar" style={{ flexWrap: "wrap", padding: "8px 12px", background: "#fff", borderBottom: "1px solid #e5e7eb" }}>
       <label className="enterprise-search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={`Search ${title.toLowerCase()}…`}/></label>
       <span style={{ display: "inline-flex", alignItems: "stretch" }}>
-        <button className="button primary" style={{ borderTopRightRadius: 0, borderBottomRightRadius: 0 }} disabled={loading || saving || (mode === "actual" && periods.length === 0)} onClick={() => void addRows()}>+ Add Row{addCount === 1 ? "" : "s"}</button>
+        <button className="button primary" style={{ borderTopRightRadius: 0, borderBottomRightRadius: 0 }} disabled={loading || saving || (mode === "actual" && actualPeriods.length === 0)} onClick={() => void addRows()}>+ Add Row{addCount === 1 ? "" : "s"}</button>
         <input aria-label="Number of rows to add" title="Rows to add (1–100)" type="number" min={1} max={100} value={addCount} onChange={(event) => setAddCount(Math.max(1, Math.min(100, Number(event.target.value) || 1)))} style={{ width: 54, border: "1px solid #cbd5e1", borderLeft: 0, borderRadius: "0 6px 6px 0", padding: "0 6px", fontSize: 12, textAlign: "center" }}/>
       </span>
       {mode === "ctc" && <button className="button secondary" aria-label="Add resources" title="Add Resources from Enterprise or Project Resource Rates" disabled={loading || saving} onClick={() => { setResourcePaneOpen(true); setResourceSearch(""); setSelectedResourceIds([]); }} style={{ width: 34, paddingInline: 0, display: "grid", placeItems: "center" }}><SvgIcon type="resource"/></button>}
