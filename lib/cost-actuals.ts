@@ -7,7 +7,15 @@ export type ActualProjectAttributeField = `p_attribute_${"01"|"02"|"03"|"04"|"05
 export type ActualEnterpriseAttributeField = `e_attribute_${"01"|"02"|"03"|"04"|"05"|"06"|"07"|"08"|"09"|"10"|"11"|"12"|"13"|"14"|"15"|"16"|"17"|"18"|"19"|"20"}`;
 export type ActualAttributeField = ActualProjectAttributeField | ActualEnterpriseAttributeField;
 export type ActualAttributeValues = Partial<Record<ActualAttributeField, string | null>>;
+export type ActualUserNumberField = `user_number_${"01"|"02"|"03"|"04"|"05"}`;
+export type ActualUserTextField = `user_text_${"01"|"02"|"03"|"04"|"05"}`;
+export type ActualUserField = ActualUserNumberField | ActualUserTextField;
+export type ActualUserValues = Partial<Record<ActualUserNumberField, number | null>> & Partial<Record<ActualUserTextField, string | null>>;
 export type TransactionType = "FIN" | "MAN" | "ACC" | "REV";
+
+export const ACTUAL_USER_NUMBER_FIELDS = Array.from({ length: 5 }, (_, index) => `user_number_${String(index + 1).padStart(2, "0")}`) as ActualUserNumberField[];
+export const ACTUAL_USER_TEXT_FIELDS = Array.from({ length: 5 }, (_, index) => `user_text_${String(index + 1).padStart(2, "0")}`) as ActualUserTextField[];
+export const ACTUAL_USER_FIELDS = [...ACTUAL_USER_NUMBER_FIELDS, ...ACTUAL_USER_TEXT_FIELDS] as ActualUserField[];
 
 export type ActualCostTransaction = {
   id: string;
@@ -23,7 +31,7 @@ export type ActualCostTransaction = {
   row_order: number | null;
   created_at: string;
   updated_at: string;
-} & ActualAttributeValues;
+} & ActualAttributeValues & ActualUserValues;
 
 export type ActualCostImportRow = {
   cost_period_id: string;
@@ -34,16 +42,18 @@ export type ActualCostImportRow = {
   amount: number;
   transaction_type: TransactionType;
   row_order?: number | null;
-} & ActualAttributeValues;
+} & ActualAttributeValues & ActualUserValues;
 
 export type ActualCostEditablePatch = Partial<Pick<ActualCostImportRow,
   "cost_period_id" | "transaction_date" | "transaction_id" | "description" | "amount" | "transaction_type"
->> & ActualAttributeValues;
+>> & ActualAttributeValues & ActualUserValues;
 
 const ATTRIBUTE_FIELDS = [...ACTUAL_ENTERPRISE_ATTRIBUTE_FIELDS, ...ACTUAL_PROJECT_ATTRIBUTE_FIELDS];
+const USER_FIELDS = [...ACTUAL_USER_FIELDS];
 const select = [
   "id", "project_id", "cost_period_id", "cost_code_id", "transaction_date", "transaction_id", "description", "amount", "transaction_type", "reversal_of_transaction_id", "row_order", "created_at", "updated_at",
   ...ATTRIBUTE_FIELDS,
+  ...USER_FIELDS,
 ].join(",");
 
 export function listActualCostTransactions(projectId: string) {
@@ -71,6 +81,7 @@ async function insertRow(projectId: string, row: ActualCostImportRow) {
     reversal_of_transaction_id: null,
     row_order: row.row_order ?? null,
     ...Object.fromEntries(ATTRIBUTE_FIELDS.map((field) => [field, row[field] ?? null])),
+    ...Object.fromEntries(USER_FIELDS.map((field) => [field, row[field] ?? null])),
   };
   await supabaseRequest("actual_cost_transactions", {
     method: "POST", headers: { Prefer: "return=minimal" }, body: JSON.stringify(body),
@@ -90,6 +101,7 @@ export async function createActualCostTransaction(projectId: string, row: Actual
     reversal_of_transaction_id: null,
     row_order: row.row_order ?? null,
     ...Object.fromEntries(ATTRIBUTE_FIELDS.map((field) => [field, row[field] ?? null])),
+    ...Object.fromEntries(USER_FIELDS.map((field) => [field, row[field] ?? null])),
   };
   const rows = await supabaseRequest<ActualCostTransaction[]>(`actual_cost_transactions?select=${encodeURIComponent(select)}`, {
     method: "POST",
@@ -113,6 +125,7 @@ export async function createActualCostTransactions(projectId: string, inputRows:
     reversal_of_transaction_id: null,
     row_order: row.row_order ?? null,
     ...Object.fromEntries(ATTRIBUTE_FIELDS.map((field) => [field, row[field] ?? null])),
+    ...Object.fromEntries(USER_FIELDS.map((field) => [field, row[field] ?? null])),
   }));
   return supabaseRequest<ActualCostTransaction[]>(`actual_cost_transactions?select=${encodeURIComponent(select)}`, {
     method: "POST",
@@ -159,7 +172,7 @@ export async function importActualCostTransactions(projectId: string, rows: Actu
 export function actualCostErrorMessage(error: unknown) {
   if (error instanceof SupabaseRequestError) {
     if (error.code === "23503") return "Check that the Cost Code and Cost Reporting Period still exist in this project.";
-    if (error.code === "23514") return "The Actual Cost row was rejected by a database rule.";
+    if (error.code === "23514") return "Actual Cost can only be assigned to the Current or a Closed Cost Reporting Period. Future periods are not allowed.";
     if (error.code === "22P02") return "Transaction Type must be FIN, MAN, ACC or REV.";
     if (error.code === "22001") return "One or more text values are longer than the database limit.";
     return [error.message, error.details, error.hint].filter(Boolean).join(" ");
