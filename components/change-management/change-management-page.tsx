@@ -53,7 +53,7 @@ function buildAttributes(enterprise:EnterpriseAttributeDefinition[],project:Proj
 }
 function validateHeaders(rows:ExcelRow[],expected:string[]){if(!rows.length)return [] as string[];const actual=Object.keys(rows[0]);const errors:string[]=[];const missing=expected.filter(c=>!actual.includes(c));const extra=actual.filter(c=>!expected.includes(c));if(missing.length)errors.push(`Missing required columns: ${missing.join(", ")}.`);if(extra.length)errors.push(`Unexpected columns: ${extra.join(", ")}.`);return errors;}
 
-export default function ChangeManagementPage({projectPublicId}:{projectPublicId:string}){
+export default function ChangeManagementPage({projectPublicId,bulkOnly=false}:{projectPublicId:string;bulkOnly?:boolean}){
  const fileRef=useRef<HTMLInputElement>(null);
  const [project,setProject]=useState<Project|null>(null);
  const [orders,setOrders]=useState<ChangeOrder[]>([]);
@@ -87,7 +87,7 @@ export default function ChangeManagementPage({projectPublicId}:{projectPublicId:
  const codeByRef=useMemo(()=>new Map(costCodes.map(x=>[x.cost_code_id.toLowerCase(),x])),[costCodes]);
  const orderByRef=useMemo(()=>new Map(orders.map(x=>[x.change_order_id.toLowerCase(),x])),[orders]);
  const selectedOrder=selectedOrderId?orderById.get(selectedOrderId)??null:null;
- const selectedRecords=useMemo<RecordGridRow[]>(()=>records.filter(r=>r.change_order_id===selectedOrderId).map(r=>({...r,cost_code_ref:codeById.get(r.cost_code_id)?.cost_code_id??"",change_order_ref:orderById.get(r.change_order_id)?.change_order_id??""})),[records,selectedOrderId,codeById,orderById]);
+ const selectedRecords=useMemo<RecordGridRow[]>(()=>(bulkOnly?records:records.filter(r=>r.change_order_id===selectedOrderId)).map(r=>({...r,cost_code_ref:codeById.get(r.cost_code_id)?.cost_code_id??"",change_order_ref:orderById.get(r.change_order_id)?.change_order_id??""})),[records,selectedOrderId,codeById,orderById,bulkOnly]);
  const budgetTotal=selectedRecords.reduce((s,r)=>s+Number(r.change_to_budget||0),0);
  const eacTotal=selectedRecords.reduce((s,r)=>s+Number(r.change_to_eac||0),0);
 
@@ -110,6 +110,7 @@ export default function ChangeManagementPage({projectPublicId}:{projectPublicId:
   const projectCols=attributes.filter(a=>a.prefix==="P").map((a,index):ColDef<RecordGridRow>=>({field:a.field as keyof RecordGridRow&string,headerName:a.columnName,editable:true,filter:"agSetColumnFilter",columnGroupShow:index===0?undefined:"open",...attrEditor(a.definition)}));
   return [
    {groupId:"cr-general",headerName:"General Info",marryChildren:true,children:[
+    ...(bulkOnly?[{field:"change_order_ref" as keyof RecordGridRow&string,headerName:"Change Order ID",pinned:"left" as const,minWidth:140,editable:true,cellEditor:"agSelectCellEditor",cellEditorParams:{values:orders.map(o=>o.change_order_id)},filter:"agSetColumnFilter"}]:[]),
     {field:"cost_code_ref",headerName:"Cost Code ID",pinned:"left",minWidth:125,editable:true,cellEditor:"agSelectCellEditor",cellEditorParams:{values:costCodes.map(c=>c.cost_code_id)},filter:"agSetColumnFilter"},
     {field:"item",headerName:"Item",minWidth:120,editable:true,filter:true},
     {field:"description",headerName:"Description",minWidth:220,editable:true,filter:true},
@@ -119,7 +120,7 @@ export default function ChangeManagementPage({projectPublicId}:{projectPublicId:
    ...(enterprise.length?[{groupId:"cr-enterprise",headerName:"Enterprise Change Attributes",marryChildren:true,openByDefault:true,children:enterprise}]:[]),
    ...(projectCols.length?[{groupId:"cr-project",headerName:"Project Change Attributes",marryChildren:true,openByDefault:true,children:projectCols}]:[]),
   ];
- },[attributes,attrEditor,costCodes]);
+ },[attributes,attrEditor,costCodes,orders,bulkOnly]);
 
  async function orderChanged(event:CellValueChangedEvent<ChangeOrder>){
   if(!event.data||event.newValue===event.oldValue)return;setSaving(true);setError("");
@@ -134,7 +135,8 @@ export default function ChangeManagementPage({projectPublicId}:{projectPublicId:
  async function recordChanged(event:CellValueChangedEvent<RecordGridRow>){
   if(!event.data||event.newValue===event.oldValue)return;setSaving(true);setError("");
   try{const col=event.column.getColId();let patch:Partial<ChangeRecordInput>={};
-   if(col==="cost_code_ref"){const code=codeByRef.get(String(event.newValue).toLowerCase());if(!code)throw new Error("Select a valid active Cost Code.");patch.cost_code_id=code.id;}
+   if(col==="change_order_ref"){const order=orderByRef.get(String(event.newValue).toLowerCase());if(!order)throw new Error("Select a valid Change Order.");patch.change_order_id=order.id;}
+   else if(col==="cost_code_ref"){const code=codeByRef.get(String(event.newValue).toLowerCase());if(!code)throw new Error("Select a valid active Cost Code.");patch.cost_code_id=code.id;}
    else if(col==="item")patch.item=String(event.newValue??"").trim();
    else if(col==="description")patch.description=String(event.newValue??"").trim()||null;
    else if(col==="change_to_budget"||col==="change_to_eac"){const n=number(event.newValue);if(!Number.isFinite(n))throw new Error("Change amount must be a valid number.");patch[col]=n;}
@@ -186,14 +188,14 @@ export default function ChangeManagementPage({projectPublicId}:{projectPublicId:
  }
 
  return <div className="enterprise-admin-page">
-  <div className="enterprise-page-title"><div><h2>Change Management</h2><p>Manage Change Orders and allocate Change Records to project Cost Codes.</p></div><div style={{display:"flex",gap:8}}><button className="button secondary" onClick={exportRecords}>⇩ Export Records</button><button className="button secondary" onClick={()=>fileRef.current?.click()}>⇧ Import Records</button><input ref={fileRef} hidden type="file" accept=".xlsx,.xls" onChange={e=>void chooseImport(e.target.files?.[0])}/><button className="button primary" onClick={()=>setOrderDialog(true)}>+ Change Order</button></div></div>
+  <div className="enterprise-page-title"><div><h2>{bulkOnly?"Bulk Change Records":"Change Management"}</h2><p>{bulkOnly?"View, edit, import and export Change Records across all Change Orders and Cost Codes.":"Manage Change Orders and allocate Change Records to project Cost Codes."}</p></div><div style={{display:"flex",gap:8}}><button className="button secondary" onClick={exportRecords}>⇩ Export Records</button><button className="button secondary" onClick={()=>fileRef.current?.click()}>⇧ Import Records</button><input ref={fileRef} hidden type="file" accept=".xlsx,.xls" onChange={e=>void chooseImport(e.target.files?.[0])}/><button className="button primary" onClick={()=>setOrderDialog(true)}>+ Change Order</button></div></div>
   {error&&<div className="data-message error"><strong>Change Management</strong><span>{error}</span></div>}
-  <section className="enterprise-grid-card" style={{height:"38vh",minHeight:280,display:"flex",flexDirection:"column"}}>
+  {!bulkOnly&&<section className="enterprise-grid-card" style={{height:"38vh",minHeight:280,display:"flex",flexDirection:"column"}}>
    <div className="enterprise-toolbar"><strong>Change Orders</strong><span style={{color:"#64748b",fontSize:12}}>{orders.length} orders</span><button className="button secondary compact" style={{marginLeft:"auto"}} disabled={!selectedOrder||saving} onClick={()=>void deleteOrder()}>Delete Order</button><button className="button secondary compact" onClick={()=>void refresh()} disabled={loading}>↻ Refresh</button></div>
    <div style={{flex:1,minHeight:0}}><AgGridProvider modules={[AllEnterpriseModule]} licenseKey={process.env.NEXT_PUBLIC_AG_GRID_LICENSE_KEY??""}><AgGridReact<ChangeOrder> theme={gridTheme} rowData={orders} columnDefs={orderColumns} defaultColDef={{sortable:true,resizable:true,filter:true,minWidth:90}} rowSelection={{mode:"singleRow"}} getRowId={p=>p.data.id} onRowClicked={(e:RowClickedEvent<ChangeOrder>)=>setSelectedOrderId(e.data?.id??null)} onCellValueChanged={e=>void orderChanged(e)}/></AgGridProvider></div>
-  </section>
-  <section className="enterprise-grid-card" style={{height:"44vh",minHeight:320,display:"flex",flexDirection:"column",marginTop:10}}>
-   <div className="enterprise-toolbar" style={{gap:12}}><strong>{selectedOrder?`${selectedOrder.change_order_id} · Change Records`:"Change Records"}</strong><span style={{fontSize:12,color:"#64748b"}}>Budget Δ <b>{fmt(budgetTotal)}</b> · EAC Δ <b>{fmt(eacTotal)}</b></span><button className="button primary compact" style={{marginLeft:"auto"}} disabled={!selectedOrder} onClick={()=>setRecordDialog(true)}>+ Record</button></div>
+  </section>}
+  <section className="enterprise-grid-card" style={{height:bulkOnly?"72vh":"44vh",minHeight:320,display:"flex",flexDirection:"column",marginTop:bulkOnly?0:10}}>
+   <div className="enterprise-toolbar" style={{gap:12}}><strong>{bulkOnly?"All Change Records":selectedOrder?`${selectedOrder.change_order_id} · Change Records`:"Change Records"}</strong><span style={{fontSize:12,color:"#64748b"}}>Budget Δ <b>{fmt(budgetTotal)}</b> · EAC Δ <b>{fmt(eacTotal)}</b></span>{!bulkOnly&&<button className="button primary compact" style={{marginLeft:"auto"}} disabled={!selectedOrder} onClick={()=>setRecordDialog(true)}>+ Record</button>}</div>
    <RecordGrid rows={selectedRecords} columns={recordColumns} onChanged={recordChanged} onDelete={deleteSelectedRecords}/>
   </section>
   {orderDialog&&<Dialog title="Add Change Order" onClose={()=>setOrderDialog(false)}><label>Change Order ID<input value={orderDraft.change_order_id} onChange={e=>setOrderDraft({...orderDraft,change_order_id:e.target.value})}/></label><label>Description<input value={orderDraft.description} onChange={e=>setOrderDraft({...orderDraft,description:e.target.value})}/></label><label>Status<select value={orderDraft.status} onChange={e=>setOrderDraft({...orderDraft,status:e.target.value as ChangeOrderStatus})}>{STATUSES.map(s=><option key={s}>{s}</option>)}</select></label><div className="confirm-actions"><button className="button secondary" onClick={()=>setOrderDialog(false)}>Cancel</button><button className="button primary" disabled={saving} onClick={()=>void addOrder()}>Create</button></div></Dialog>}
