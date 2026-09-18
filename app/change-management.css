@@ -1,0 +1,15 @@
+.form-field select {
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid #dce2ea;
+  border-radius: 6px;
+  background: #fff;
+  color: #303b4e;
+  font-size: 10px;
+  outline: 0;
+}
+
+.form-field select:focus {
+  border-color: #758bd4;
+  box-shadow: 0 0 0 2px #3157c812;
+}
