@@ -55,7 +55,7 @@ type RelatedMode = "actual" | "ctc";
 type AttributeDefinition = EnterpriseAttributeDefinition | ProjectAttributeDefinition;
 type ActiveAttribute<TField extends string> = { prefix: "E" | "P"; field: TField; definition: AttributeDefinition; columnName: string };
 type ActualGridRow = ActualCostTransaction & { period_label: string };
-type CtcGridRow = CostToCompleteLedgerRow & { resource_source_label: string };
+type CtcGridRow = CostToCompleteLedgerRow & { resource_source_label: string; _forecast_row?: boolean };
 type RelatedGridRow = ActualGridRow | CtcGridRow;
 type BulkChoice = { id: string; label: string; kind: "text" | "number" | "select" | "attribute" | "periodQty"; values?: string[]; definition?: AttributeDefinition };
 
@@ -332,17 +332,14 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
     category: null,
     resource_source: null,
     resource_source_label: "FORECAST COST",
+    _forecast_row: true,
     row_order: null,
     created_at: "",
     updated_at: "",
     period_qty: Object.fromEntries(futurePeriods.map((period) => [period.id, periodForecastTotals.get(period.id) ?? 0])),
   }), [costCode.id, futurePeriods, periodForecastTotals, project.id]);
 
-  useEffect(() => {
-    if (!gridApi || mode !== "ctc") return;
-    gridApi.setGridOption("pinnedTopRowData", [forecastSubtotalRow as RelatedGridRow]);
-    gridApi.refreshCells({ force: true });
-  }, [forecastSubtotalRow, gridApi, mode]);
+  const gridRows: RelatedGridRow[] = mode === "ctc" ? [forecastSubtotalRow, ...ctcGridRows] : actualGridRows;
 
   function rowOrderAt(index: number) {
     if (index < 0 || index >= rows.length) return 0;
@@ -361,7 +358,7 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
   function showNotice(message: string) { setNotice(message); window.setTimeout(() => setNotice(""), 3000); }
   function syncGroupState(api: GridApi<RelatedGridRow> | null = gridApi) { setHasGroups((api?.getRowGroupColumns().length ?? 0) > 0); }
   function selectionChanged(event: SelectionChangedEvent<RelatedGridRow>) {
-    const nodes = event.api.getSelectedNodes().filter((node) => node.data);
+    const nodes = event.api.getSelectedNodes().filter((node) => node.data && !(node.data as CtcGridRow)._forecast_row);
     setSelectedCount(nodes.length);
     if (nodes.length) {
       const last = [...nodes].sort((a, b) => (a.rowIndex ?? -1) - (b.rowIndex ?? -1)).at(-1);
@@ -383,14 +380,14 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
     const resourceCellStyle = (params: { data?: CtcGridRow }) => params.data?.resource_source ? { backgroundColor: "#f8fafc", color: "#475569" } : undefined;
     const formulaCellStyle = { backgroundColor: "#eef0f3", color: "#374151", fontWeight: 600 };
     const generalInfo: ColDef<CtcGridRow>[] = [
-      { field: "resource_source_label", colId: "resource_source_label", headerName: "Resource Source", editable: false, filter: "agSetColumnFilter", minWidth: 105, maxWidth: 125, cellStyle: (params) => params.node?.rowPinned ? { backgroundColor: "#e2e8f0", color: "#0f172a", fontSize: 10, fontWeight: 800 } : undefined },
-      { field: "item", headerName: "Item", editable: (params) => !params.node?.rowPinned && !params.data?.resource_source, filter: true, cellStyle: resourceCellStyle },
-      { field: "description", headerName: "Description", editable: (params) => !params.node?.rowPinned && !params.data?.resource_source, filter: true, minWidth: 180, cellStyle: (params) => params.node?.rowPinned ? { backgroundColor: "#f8fafc", color: "#475569", fontSize: 10, fontWeight: 700 } : resourceCellStyle(params) },
-      { colId: "qty", headerName: "Qty", editable: false, type: "numericColumn", aggFunc: "sum", enableValue: true, cellStyle: formulaCellStyle, valueGetter: (params) => params.node?.rowPinned ? null : ctcQtyForRow(params.data, futurePeriods), valueFormatter: (params) => params.value == null ? "" : numberFormat(params.value, 4) },
-      { field: "unit", headerName: "Unit", editable: (params) => !params.node?.rowPinned && !params.data?.resource_source, filter: "agSetColumnFilter", cellStyle: resourceCellStyle },
-      { field: "rate", headerName: "Rate", editable: (params) => !params.node?.rowPinned && !params.data?.resource_source, type: "numericColumn", valueParser: (params) => Number(params.newValue), valueFormatter: (params) => params.node?.rowPinned ? "" : numberFormat(params.value, 4), cellStyle: resourceCellStyle },
-      { colId: "total", headerName: "Total", editable: false, type: "numericColumn", aggFunc: "sum", enableValue: true, cellStyle: formulaCellStyle, valueGetter: (params) => params.node?.rowPinned ? null : ctcTotalForRow(params.data, futurePeriods), valueFormatter: (params) => params.value == null ? "" : numberFormat(params.value, 2) },
-      { field: "category", headerName: "Category", editable: (params) => !params.node?.rowPinned, cellEditor: "agSelectCellEditor", cellEditorParams: { values: ["", ...RESOURCE_CATEGORIES] }, filter: "agSetColumnFilter", valueFormatter: (params) => params.value ?? "" },
+      { field: "resource_source_label", colId: "resource_source_label", headerName: "Resource Source", editable: false, filter: "agSetColumnFilter", minWidth: 105, maxWidth: 125, cellStyle: (params) => params.data?._forecast_row ? { backgroundColor: "#e2e8f0", color: "#0f172a", fontSize: 10, fontWeight: 800 } : undefined },
+      { field: "item", headerName: "Item", editable: (params) => !params.data?._forecast_row && !params.data?.resource_source, filter: true, cellStyle: resourceCellStyle },
+      { field: "description", headerName: "Description", editable: (params) => !params.data?._forecast_row && !params.data?.resource_source, filter: true, minWidth: 180, cellStyle: (params) => params.data?._forecast_row ? { backgroundColor: "#f8fafc", color: "#475569", fontSize: 10, fontWeight: 700 } : resourceCellStyle(params) },
+      { colId: "qty", headerName: "Qty", editable: false, type: "numericColumn", aggFunc: "sum", enableValue: true, cellStyle: formulaCellStyle, valueGetter: (params) => params.data?._forecast_row ? null : ctcQtyForRow(params.data, futurePeriods), valueFormatter: (params) => params.value == null ? "" : numberFormat(params.value, 4) },
+      { field: "unit", headerName: "Unit", editable: (params) => !params.data?._forecast_row && !params.data?.resource_source, filter: "agSetColumnFilter", cellStyle: resourceCellStyle },
+      { field: "rate", headerName: "Rate", editable: (params) => !params.data?._forecast_row && !params.data?.resource_source, type: "numericColumn", valueParser: (params) => Number(params.newValue), valueFormatter: (params) => params.data?._forecast_row ? "" : numberFormat(params.value, 4), cellStyle: resourceCellStyle },
+      { colId: "total", headerName: "Total", editable: false, type: "numericColumn", aggFunc: "sum", enableValue: true, cellStyle: formulaCellStyle, valueGetter: (params) => params.data?._forecast_row ? null : ctcTotalForRow(params.data, futurePeriods), valueFormatter: (params) => params.value == null ? "" : numberFormat(params.value, 2) },
+      { field: "category", headerName: "Category", editable: (params) => !params.data?._forecast_row, cellEditor: "agSelectCellEditor", cellEditorParams: { values: ["", ...RESOURCE_CATEGORIES] }, filter: "agSetColumnFilter", valueFormatter: (params) => params.value ?? "" },
     ];
     const enterpriseColumns = ctcAttributes.filter((attribute) => attribute.prefix === "E").map((attribute, index): ColDef<CtcGridRow> => ({ field: attribute.field as keyof CtcGridRow & string, headerName: attribute.columnName, editable: true, filter: "agSetColumnFilter", columnGroupShow: index === 0 ? undefined : "open", ...attributeEditor(attribute.definition) }));
     const projectColumns = ctcAttributes.filter((attribute) => attribute.prefix === "P").map((attribute, index): ColDef<CtcGridRow> => ({ field: attribute.field as keyof CtcGridRow & string, headerName: attribute.columnName, editable: true, filter: "agSetColumnFilter", columnGroupShow: index === 0 ? undefined : "open", ...attributeEditor(attribute.definition) }));
@@ -398,7 +395,7 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
       ...CTC_USER_NUMBER_COLUMNS.map(({ field, label }, index): ColDef<CtcGridRow> => ({
         field: field as keyof CtcGridRow & string,
         headerName: label,
-        editable: (params) => !params.node?.rowPinned,
+        editable: (params) => !params.data?._forecast_row,
         type: "numericColumn",
         filter: "agNumberColumnFilter",
         valueParser: (params) => String(params.newValue ?? "").trim() === "" ? null : Number(params.newValue),
@@ -408,7 +405,7 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
       ...CTC_USER_TEXT_COLUMNS.map(({ field, label }): ColDef<CtcGridRow> => ({
         field: field as keyof CtcGridRow & string,
         headerName: label,
-        editable: (params) => !params.node?.rowPinned,
+        editable: (params) => !params.data?._forecast_row,
         filter: true,
         columnGroupShow: "open",
       })),
@@ -417,7 +414,7 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
     const phasingColumns = futurePeriods.map((period, index): ColDef<CtcGridRow> => ({
       colId: `period:${period.id}`,
       headerName: periodColumnLabel(period),
-      editable: (params) => !params.node?.rowPinned,
+      editable: (params) => !params.data?._forecast_row,
       type: "numericColumn",
       aggFunc: "sum",
       enableValue: true,
@@ -426,10 +423,10 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
       maxWidth: 92,
       wrapHeaderText: true,
       autoHeaderHeight: true,
-      cellStyle: (params) => params.node?.rowPinned ? { backgroundColor: "#f1f5f9", color: "#334155", fontSize: 10, fontWeight: 700 } : undefined,
+      cellStyle: (params) => params.data?._forecast_row ? { backgroundColor: "#f1f5f9", color: "#334155", fontSize: 10, fontWeight: 700 } : undefined,
       valueGetter: (params) => Number(params.data?.period_qty[period.id] ?? 0),
       valueSetter: (params) => { if (!params.data) return false; const parsed = Number(params.newValue); if (!Number.isFinite(parsed) || parsed < 0) return false; params.data.period_qty = { ...params.data.period_qty, [period.id]: parsed }; return true; },
-      valueFormatter: (params) => params.node?.rowPinned ? numberFormat(params.value, 2) : numberFormat(params.value, 4),
+      valueFormatter: (params) => params.data?._forecast_row ? numberFormat(params.value, 2) : numberFormat(params.value, 4),
       columnGroupShow: index === 0 ? undefined : "open",
     }));
     const groups: Array<ColGroupDef<CtcGridRow>> = [
@@ -458,7 +455,7 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
   }
 
   async function ctcChanged(event: CellValueChangedEvent<CtcGridRow>) {
-    if (!event.data || event.newValue === event.oldValue) return;
+    if (!event.data || event.data._forecast_row || event.newValue === event.oldValue) return;
     setSaving(true); setError("");
     try {
       const colId = event.column.getColId();
@@ -807,19 +804,24 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
         <div className="enterprise-grid-card" style={{ height: "100%", width: "100%", overflow: "hidden" }}>
           <AgGridReact<RelatedGridRow>
             theme={gridTheme}
-            rowData={rows}
-            pinnedTopRowData={mode === "ctc" ? [forecastSubtotalRow as RelatedGridRow] : undefined}
+            rowData={gridRows}
             columnDefs={columns}
             defaultColDef={{ sortable: true, resizable: true, filter: true, minWidth: 80, enableRowGroup: true }}
             quickFilterText={search}
             rowSelection={{ mode: "multiRow" }}
             selectionColumnDef={{ pinned: "left", width: 42, maxWidth: 42, suppressHeaderMenuButton: true }}
             getRowId={(params) => params.data.id}
-            getRowHeight={(params) => params.node?.rowPinned ? 26 : undefined}
-            getRowStyle={(params) => params.node?.rowPinned ? { backgroundColor: "#e8eef7", borderBottom: "2px solid #94a3b8", borderTop: "1px solid #94a3b8" } : undefined}
+            getRowHeight={(params) => (params.data as CtcGridRow | undefined)?._forecast_row ? 26 : undefined}
+            getRowStyle={(params) => (params.data as CtcGridRow | undefined)?._forecast_row ? { backgroundColor: "#e8eef7", borderBottom: "2px solid #94a3b8", borderTop: "1px solid #94a3b8", fontWeight: 700 } : undefined}
+            isRowSelectable={(node) => !(node.data as CtcGridRow | undefined)?._forecast_row}
+            postSortRows={(params) => {
+              if (mode !== "ctc") return;
+              const index = params.nodes.findIndex((node) => (node.data as CtcGridRow | undefined)?._forecast_row);
+              if (index > 0) params.nodes.unshift(params.nodes.splice(index, 1)[0]);
+            }}
             onGridReady={(event) => { setGridApi(event.api); syncGroupState(event.api); }}
             onSelectionChanged={selectionChanged}
-            onCellFocused={(event) => { const node = event.rowIndex == null ? null : event.api.getDisplayedRowAtIndex(event.rowIndex); if (node?.data) setInsertAfterId(node.data.id); }}
+            onCellFocused={(event) => { const node = event.rowIndex == null ? null : event.api.getDisplayedRowAtIndex(event.rowIndex); if (node?.data && !(node.data as CtcGridRow)._forecast_row) setInsertAfterId(node.data.id); }}
             onColumnRowGroupChanged={(event) => syncGroupState(event.api)}
             onCellValueChanged={(event) => mode === "actual" ? void actualChanged(event as CellValueChangedEvent<ActualGridRow>) : void ctcChanged(event as CellValueChangedEvent<CtcGridRow>)}
             rowGroupPanelShow="always"
