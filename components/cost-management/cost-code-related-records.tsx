@@ -219,7 +219,7 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
   const actualAttributes = useMemo(() => buildAttributes(enterpriseAttributes, projectAttributes, actualEField, actualPField), [enterpriseAttributes, projectAttributes]);
   const ctcAttributes = useMemo(() => buildAttributes(enterpriseAttributes, projectAttributes, ctcEField, ctcPField), [enterpriseAttributes, projectAttributes]);
   const currentPeriod = useMemo(() => periods.find((period) => period.status === "Current") ?? null, [periods]);
-  const futurePeriods = useMemo(() => periods.filter((period) => period.status === "Future"), [periods]);
+  const futurePeriods = useMemo(() => periods.filter((period) => period.status === "Future" && (!currentPeriod || period.period_number > currentPeriod.period_number)), [currentPeriod, periods]);
   const futurePeriodIds = useMemo(() => new Set(futurePeriods.map((period) => period.id)), [futurePeriods]);
   const enterpriseCtcAttributes = useMemo(() => ctcAttributes.filter((attribute) => attribute.prefix === "E"), [ctcAttributes]);
   const projectCtcAttributes = useMemo(() => ctcAttributes.filter((attribute) => attribute.prefix === "P"), [ctcAttributes]);
@@ -261,7 +261,10 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
           listProjectResourceRates(project.id),
           getCostCodeFinancialSummary(project.id, costCode.id),
         ]);
-        const nonFuturePeriodIds = reportingPeriods.filter((period) => period.status !== "Future").map((period) => period.id);
+        const currentReportingPeriod = reportingPeriods.find((period) => period.status === "Current") ?? null;
+        const nonFuturePeriodIds = reportingPeriods
+          .filter((period) => currentReportingPeriod ? period.period_number <= currentReportingPeriod.period_number : period.status !== "Future")
+          .map((period) => period.id);
         if (nonFuturePeriodIds.length && initialRows.length) {
           await deleteCostToCompletePeriodQtyForPeriods(initialRows.map((row) => row.id), nonFuturePeriodIds);
         }
