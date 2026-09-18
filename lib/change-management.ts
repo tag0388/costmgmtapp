@@ -74,7 +74,9 @@ export function updateChangeOrder(id: string, patch: Partial<ChangeOrderInput>) 
 
 export async function deleteChangeOrders(ids: string[]) {
   if (!ids.length) return;
-  await supabaseRequest(`change_orders?id=in.(${ids.map(encodeURIComponent).join(",")})`, { method: "DELETE" });
+  const encoded = ids.map(encodeURIComponent).join(",");
+  await supabaseRequest(`change_records?change_order_id=in.(${encoded})`, { method: "DELETE" });
+  await supabaseRequest(`change_orders?id=in.(${encoded})`, { method: "DELETE" });
 }
 
 export function listChangeRecords(projectId: string) {
