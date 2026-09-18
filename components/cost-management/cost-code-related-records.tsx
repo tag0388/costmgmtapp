@@ -397,9 +397,9 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
     try {
       const colId = event.column.getColId();
       if (event.data.resource_source && ["resource_source_label", "item", "description", "unit", "rate"].includes(colId)) throw new Error("Item, Description, Unit and Rate are controlled by the resource library for resource-backed rows.");
-      if (colId.startsWith("period:")) { const periodId = colId.slice(7); const qty = Number(event.data.period_qty[periodId] ?? 0); if (!Number.isFinite(qty) || qty < 0) throw new Error("Period quantity must be zero or greater."); await setCostToCompletePeriodQty(event.data.id, periodId, qty); event.api.refreshCells({ rowNodes: [event.node], columns: ["qty", "total"], force: true }); }
+      if (colId.startsWith("period:")) { const periodId = colId.slice(7); if (!futurePeriodIds.has(periodId)) throw new Error("Only future Cost Reporting Periods can contain Cost to Complete."); const qty = Number(event.data.period_qty[periodId] ?? 0); if (!Number.isFinite(qty) || qty < 0) throw new Error("Period quantity must be zero or greater."); await setCostToCompletePeriodQty(event.data.id, periodId, qty); setCtcRows((current) => current.map((row) => row.id === event.data!.id ? { ...row, period_qty: { ...row.period_qty, [periodId]: qty } } : row)); event.api.refreshCells({ rowNodes: [event.node], columns: ["qty", "total"], force: true }); }
       else if (colId === "item") { const item = event.newValue ? String(event.newValue).trim() : null; const source = event.data.resource_source; const validIds = source === "ERes" ? enterpriseResourceIds : source === "PRes" ? projectResourceIds : null; if (source && (!item || !validIds?.has(item.toLowerCase()))) throw new Error(`Item must be an active ${source === "ERes" ? "Enterprise" : "Project"} Resource ID.`); await updateCostToCompleteDetail(event.data.id, { item }); }
-      else if (colId === "rate") { const rate = Number(event.newValue); if (!Number.isFinite(rate) || rate < 0) throw new Error("Rate must be zero or greater."); await updateCostToCompleteDetail(event.data.id, { rate }); event.api.refreshCells({ rowNodes: [event.node], columns: ["total"], force: true }); }
+      else if (colId === "rate") { const rate = Number(event.newValue); if (!Number.isFinite(rate) || rate < 0) throw new Error("Rate must be zero or greater."); await updateCostToCompleteDetail(event.data.id, { rate }); setCtcRows((current) => current.map((row) => row.id === event.data!.id ? { ...row, rate } : row)); event.api.refreshCells({ rowNodes: [event.node], columns: ["total"], force: true }); }
       else if (colId === "description") await updateCostToCompleteDetail(event.data.id, { description: event.newValue ? String(event.newValue) : null });
       else if (colId === "unit") await updateCostToCompleteDetail(event.data.id, { unit: event.newValue ? String(event.newValue) : null });
       else if (colId === "category") await updateCostToCompleteDetail(event.data.id, { category: event.newValue ? event.newValue as ResourceCategory : null });
@@ -477,8 +477,8 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
   const excelColumns = useMemo(() => mode === "actual" ? [
     "Item", "Description", "Transaction Type", "Amount", "Cost Reporting Period", ...actualAttributes.map((a) => a.columnName),
   ] : [
-    "Resource Source", "Item", "Description", "Unit", "Rate", "Category", ...ctcAttributes.map((a) => a.columnName), ...periods.map(periodExcel),
-  ], [actualAttributes, ctcAttributes, mode, periods]);
+    "Resource Source", "Item", "Description", "Unit", "Rate", "Category", ...ctcAttributes.map((a) => a.columnName), ...futurePeriods.map(periodExcel),
+  ], [actualAttributes, ctcAttributes, futurePeriods, mode]);
 
   function exportRows() {
     const data: ExcelRow[] = mode === "actual" ? actualGridRows.map((row) => ({
@@ -487,7 +487,7 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
     })) : ctcGridRows.map((row) => ({
       "Resource Source": row.resource_source ?? "", Item: row.item ?? "", Description: row.description ?? "", Unit: row.unit ?? "", Rate: String(row.rate), Category: row.category ?? "",
       ...Object.fromEntries(ctcAttributes.map((a) => [a.columnName, row[a.field] ?? ""])),
-      ...Object.fromEntries(periods.map((period) => [periodExcel(period), String(row.period_qty[period.id] ?? 0)])),
+      ...Object.fromEntries(futurePeriods.map((period) => [periodExcel(period), String(row.period_qty[period.id] ?? 0)])),
     }));
     const template = Object.fromEntries(excelColumns.map((column) => [column, ""])) as ExcelRow;
     exportExcel(`${project.project_code}-${costCode.cost_code_id}-${mode === "actual" ? "actual-cost" : "cost-to-complete"}`, mode === "actual" ? "Actual Cost" : "Cost to Complete", data.length ? data : [template]);
@@ -521,7 +521,7 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
           }
           const category = (row.Category ?? "").trim(); if (category && !RESOURCE_CATEGORIES.includes(category as ResourceCategory)) errors.push(`Row ${line}: Category is invalid.`);
           ctcAttributes.forEach((a) => { const value = (row[a.columnName] ?? "").trim(); if (value && !a.definition.attribute_values.some((v) => v.is_active && v.value_id.toLowerCase() === value.toLowerCase())) errors.push(`Row ${line}: ${a.columnName} must contain an active Value ID.`); });
-          periods.forEach((period) => { const qty = parseNumber(row[periodExcel(period)]); if (Number.isNaN(qty) || qty < 0) errors.push(`Row ${line}: ${periodExcel(period)} must be zero or greater.`); });
+          futurePeriods.forEach((period) => { const qty = parseNumber(row[periodExcel(period)]); if (Number.isNaN(qty) || qty < 0) errors.push(`Row ${line}: ${periodExcel(period)} must be zero or greater.`); });
         }
       });
       setImportRows(incoming); setImportErrors(errors); setReplace(false); setProgress(0);
@@ -547,7 +547,7 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
           const item = (row.Item ?? "").trim();
           const sourceResource = sourceText === "ERes" ? enterpriseResourceById.get(item.toLowerCase()) : sourceText === "PRes" ? projectResourceById.get(item.toLowerCase()) : null;
           await createCostToCompleteDetail(project.id, { cost_code_id: costCode.id, resource_source: sourceText === "ERes" || sourceText === "PRes" ? sourceText : null, item: sourceResource?.resource_id ?? (item || null), description: sourceResource?.resource_name ?? ((row.Description ?? "").trim() || null), unit: sourceResource?.unit ?? ((row.Unit ?? "").trim() || null), rate: sourceResource ? Number(sourceResource.rate) : parseNumber(row.Rate), category: (row.Category ?? "").trim() ? row.Category as ResourceCategory : null, ...Object.fromEntries(ctcAttributes.map((a) => [a.field, (row[a.columnName] ?? "").trim() || null])) }).then(async (created) => {
-            for (const period of periods) { const qty = parseNumber(row[periodExcel(period)]); if (qty !== 0) await setCostToCompletePeriodQty(created.id, period.id, qty); }
+            for (const period of futurePeriods) { const qty = parseNumber(row[periodExcel(period)]); if (qty !== 0) await setCostToCompletePeriodQty(created.id, period.id, qty); }
           });
         }
         setProgress(((index + 1) / Math.max(importRows.length, 1)) * 100);
@@ -563,8 +563,8 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
   ] : [
     { id: "description", label: "Description", kind: "text" }, { id: "unit", label: "Unit", kind: "text" }, { id: "rate", label: "Rate", kind: "number" }, { id: "category", label: "Category", kind: "select", values: ["", ...RESOURCE_CATEGORIES] },
     ...ctcAttributes.map((a) => ({ id: a.field, label: a.columnName, kind: "attribute" as const, values: ["", ...a.definition.attribute_values.filter((v) => v.is_active).map((v) => v.value_id)], definition: a.definition })),
-    ...periods.map((period) => ({ id: `period:${period.id}`, label: periodLabel(period), kind: "periodQty" as const })),
-  ], [actualAttributes, ctcAttributes, mode, periods]);
+    ...futurePeriods.map((period) => ({ id: `period:${period.id}`, label: periodLabel(period), kind: "periodQty" as const })),
+  ], [actualAttributes, ctcAttributes, futurePeriods, mode, periods]);
 
   async function applyBulkEdit() {
     const selected = gridApi?.getSelectedRows() ?? [];
@@ -620,7 +620,7 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
   }
 
   const title = mode === "actual" ? "Actual Cost" : "Cost to Complete";
-  const columns = (mode === "actual" ? actualColumnDefs : ctcColumnDefs) as ColDef<RelatedGridRow>[];
+  const columns = (mode === "actual" ? actualColumnDefs : ctcColumnDefs) as (ColDef<RelatedGridRow> | ColGroupDef<RelatedGridRow>)[];
   const chosenBulk = bulkChoices.find((choice) => choice.id === bulkField);
 
   return <div style={{ position: "fixed", inset: 0, zIndex: 12000, background: "#f5f7fa", display: "flex", flexDirection: "column" }}>
