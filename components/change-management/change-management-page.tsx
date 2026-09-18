@@ -150,7 +150,17 @@ export default function ChangeManagementPage({projectPublicId}:{projectPublicId:
   setSaving(true);setError("");try{const created=await createChangeRecord(project.id,{change_order_id:selectedOrder.id,cost_code_id:code.id,item:recordDraft.item.trim(),description:recordDraft.description.trim()||null,change_to_budget:b,change_to_eac:e});setRecords(current=>[...current,created]);setRecordDialog(false);setRecordDraft({cost_code_id:"",item:"",description:"",change_to_budget:"0",change_to_eac:"0"});showNotice("Change Record created.");}catch(err){setError(changeManagementErrorMessage(err));}finally{setSaving(false);}
  }
  async function deleteOrder(){
-  if(!selectedOrder||!window.confirm(`Delete Change Order ${selectedOrder.change_order_id} and its related records?`))return;setSaving(true);try{await deleteChangeOrders([selectedOrder.id]);setOrders(current=>current.filter(x=>x.id!==selectedOrder.id));setRecords(current=>current.filter(x=>x.change_order_id!==selectedOrder.id));setSelectedOrderId(null);showNotice("Change Order deleted.");}catch(err){setError(changeManagementErrorMessage(err));}finally{setSaving(false);}
+  if(!selectedOrder||!window.confirm(`Delete Change Order ${selectedOrder.change_order_id} and its related records?`))return;
+  setSaving(true);
+  try{
+   const relatedIds=records.filter(x=>x.change_order_id===selectedOrder.id).map(x=>x.id);
+   if(relatedIds.length) await deleteChangeRecords(relatedIds);
+   await deleteChangeOrders([selectedOrder.id]);
+   setOrders(current=>current.filter(x=>x.id!==selectedOrder.id));
+   setRecords(current=>current.filter(x=>x.change_order_id!==selectedOrder.id));
+   setSelectedOrderId(null);
+   showNotice("Change Order deleted.");
+  }catch(err){setError(changeManagementErrorMessage(err));}finally{setSaving(false);}
  }
  async function deleteSelectedRecords(ids:string[]){if(!ids.length||!window.confirm(`Delete ${ids.length} selected Change Record${ids.length===1?"":"s"}?`))return;setSaving(true);try{await deleteChangeRecords(ids);setRecords(current=>current.filter(x=>!ids.includes(x.id)));showNotice("Change Records deleted.");}catch(err){setError(changeManagementErrorMessage(err));}finally{setSaving(false);}}
  function showNotice(message:string){setNotice(message);window.setTimeout(()=>setNotice(""),3000);}
