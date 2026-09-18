@@ -48,7 +48,7 @@ type RelatedMode = "actual" | "ctc";
 type AttributeDefinition = EnterpriseAttributeDefinition | ProjectAttributeDefinition;
 type ActiveAttribute<TField extends string> = { prefix: "E" | "P"; field: TField; definition: AttributeDefinition; columnName: string };
 type ActualGridRow = ActualCostTransaction & { period_label: string };
-type CtcGridRow = CostToCompleteLedgerRow & { resource_source_label: "User" | "ERes" | "PRes" };
+type CtcGridRow = CostToCompleteLedgerRow & { resource_source_label: "User" | "ERes" | "PRes"; is_forecast_summary?: boolean };
 type RelatedGridRow = ActualGridRow | CtcGridRow;
 type BulkChoice = { id: string; label: string; kind: "text" | "number" | "select" | "attribute" | "periodQty"; values?: string[]; definition?: AttributeDefinition };
 
@@ -191,7 +191,14 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
   const [projectResources, setProjectResources] = useState<ProjectResourceRate[]>([]);
   const [actualRows, setActualRows] = useState<ActualCostTransaction[]>([]);
   const [ctcRows, setCtcRows] = useState<CostToCompleteLedgerRow[]>([]);
-  const [financialSummary, setFinancialSummary] = useState<CostCodeFinancialSummary>({ baseline_budget: 0, budget_changes: 0, actual_cost_to_date: 0 });
+  const [financialSummary, setFinancialSummary] = useState<CostCodeFinancialSummary>({
+    baseline_budget: 0,
+    budget_changes: 0,
+    actual_cost_to_date: 0,
+    actual_cost_in_period: 0,
+    previous_budget: null,
+    previous_eac: null,
+  });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -259,13 +266,16 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
         setActualRows(await listActualCostTransactionsForCostCode(project.id, costCode.id));
         setCtcRows([]); setEnterpriseResources([]); setProjectResources([]);
       } else {
+        const current = reportingPeriods.find((period) => period.status === "Current") ?? null;
+        const previousClosed = reportingPeriods
+          .filter((period) => period.status === "Closed" && (!current || period.period_number < current.period_number))
+          .sort((a, b) => b.period_number - a.period_number)[0] ?? null;
         const [rows, eResources, pResources, summary] = await Promise.all([
           listCostToCompleteLedgerForCostCode(project.id, costCode.id),
           listResourceRates(project.enterprise_id),
           listProjectResourceRates(project.id),
-          getCostCodeFinancialSummary(project.id, costCode.id),
+          getCostCodeFinancialSummary(project.id, costCode.id, current?.id ?? null, previousClosed?.id ?? null),
         ]);
-        const current = reportingPeriods.find((period) => period.status === "Current") ?? null;
         const allowedIds = new Set(
           (current ? reportingPeriods.filter((period) => period.period_number > current.period_number) : reportingPeriods.filter((period) => period.status === "Future"))
             .map((period) => period.id),
@@ -292,8 +302,33 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
   const rows: RelatedGridRow[] = mode === "actual" ? actualGridRows : ctcGridRows;
   const ctcTotal = useMemo(() => ctcGridRows.reduce((sum, row) => sum + ctcTotalForRow(row, futurePeriods), 0), [ctcGridRows, futurePeriods]);
   const currentBudget = financialSummary.baseline_budget + financialSummary.budget_changes;
+  const budgetMovement = financialSummary.previous_budget == null ? null : currentBudget - financialSummary.previous_budget;
   const eac = financialSummary.actual_cost_to_date + ctcTotal;
+  const eacMovement = financialSummary.previous_eac == null ? null : eac - financialSummary.previous_eac;
   const variance = currentBudget - eac;
+  const periodForecastTotals = useMemo(() => new Map(
+    futurePeriods.map((period) => [
+      period.id,
+      ctcGridRows.reduce((sum, row) => sum + Number(row.period_qty[period.id] ?? 0) * Number(row.rate ?? 0), 0),
+    ]),
+  ), [ctcGridRows, futurePeriods]);
+  const forecastSummaryRow = useMemo<CtcGridRow>(() => ({
+    id: "__forecast_summary__",
+    project_id: project.id,
+    cost_code_id: costCode.id,
+    item: "Forecast Cost",
+    description: null,
+    unit: null,
+    rate: 0,
+    category: null,
+    resource_source: null,
+    row_order: null,
+    created_at: "",
+    updated_at: "",
+    period_qty: {},
+    resource_source_label: "User",
+    is_forecast_summary: true,
+  }), [costCode.id, project.id]);
 
   function rowOrderAt(index: number) {
     if (index < 0 || index >= rows.length) return 0;
@@ -334,14 +369,14 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
     const resourceCellStyle = (params: { data?: CtcGridRow }) => params.data?.resource_source ? { backgroundColor: "#f8fafc", color: "#475569" } : undefined;
     const formulaCellStyle = { backgroundColor: "#eef0f3", color: "#374151", fontWeight: 600 };
     const generalInfo: ColDef<CtcGridRow>[] = [
-      { field: "resource_source_label", colId: "resource_source_label", headerName: "Resource Source", editable: false, filter: "agSetColumnFilter", minWidth: 105, maxWidth: 125 },
-      { field: "item", headerName: "Item", editable: (params) => !params.data?.resource_source, filter: true, cellStyle: resourceCellStyle },
-      { field: "description", headerName: "Description", editable: (params) => !params.data?.resource_source, filter: true, minWidth: 180, cellStyle: resourceCellStyle },
-      { colId: "qty", headerName: "Qty", editable: false, type: "numericColumn", aggFunc: "sum", enableValue: true, cellStyle: formulaCellStyle, valueGetter: (params) => ctcQtyForRow(params.data, futurePeriods), valueFormatter: (params) => numberFormat(params.value, 4) },
-      { field: "unit", headerName: "Unit", editable: (params) => !params.data?.resource_source, filter: "agSetColumnFilter", cellStyle: resourceCellStyle },
-      { field: "rate", headerName: "Rate", editable: (params) => !params.data?.resource_source, type: "numericColumn", valueParser: (params) => Number(params.newValue), valueFormatter: (params) => numberFormat(params.value, 4), cellStyle: resourceCellStyle },
-      { colId: "total", headerName: "Total", editable: false, type: "numericColumn", aggFunc: "sum", enableValue: true, cellStyle: formulaCellStyle, valueGetter: (params) => ctcTotalForRow(params.data, futurePeriods), valueFormatter: (params) => numberFormat(params.value, 2) },
-      { field: "category", headerName: "Category", editable: true, cellEditor: "agSelectCellEditor", cellEditorParams: { values: ["", ...RESOURCE_CATEGORIES] }, filter: "agSetColumnFilter", valueFormatter: (params) => params.value ?? "" },
+      { field: "resource_source_label", colId: "resource_source_label", headerName: "Resource Source", editable: false, filter: "agSetColumnFilter", minWidth: 105, maxWidth: 125, valueFormatter: (params) => params.data?.is_forecast_summary ? "" : String(params.value ?? "") },
+      { field: "item", headerName: "Item", editable: (params) => !params.data?.is_forecast_summary && !params.data?.resource_source, filter: true, cellStyle: (params) => params.data?.is_forecast_summary ? { fontWeight: 700, backgroundColor: "#f1f5f9" } : resourceCellStyle(params) },
+      { field: "description", headerName: "Description", editable: (params) => !params.data?.is_forecast_summary && !params.data?.resource_source, filter: true, minWidth: 180, cellStyle: resourceCellStyle },
+      { colId: "qty", headerName: "Qty", editable: false, type: "numericColumn", aggFunc: "sum", enableValue: true, cellStyle: formulaCellStyle, valueGetter: (params) => params.data?.is_forecast_summary ? null : ctcQtyForRow(params.data, futurePeriods), valueFormatter: (params) => params.value == null ? "" : numberFormat(params.value, 4) },
+      { field: "unit", headerName: "Unit", editable: (params) => !params.data?.is_forecast_summary && !params.data?.resource_source, filter: "agSetColumnFilter", cellStyle: resourceCellStyle },
+      { field: "rate", headerName: "Rate", editable: (params) => !params.data?.is_forecast_summary && !params.data?.resource_source, type: "numericColumn", valueParser: (params) => Number(params.newValue), valueFormatter: (params) => params.data?.is_forecast_summary ? "" : numberFormat(params.value, 4), cellStyle: resourceCellStyle },
+      { colId: "total", headerName: "Total", editable: false, type: "numericColumn", aggFunc: "sum", enableValue: true, cellStyle: formulaCellStyle, valueGetter: (params) => params.data?.is_forecast_summary ? ctcTotal : ctcTotalForRow(params.data, futurePeriods), valueFormatter: (params) => numberFormat(params.value, 2) },
+      { field: "category", headerName: "Category", editable: (params) => !params.data?.is_forecast_summary, cellEditor: "agSelectCellEditor", cellEditorParams: { values: ["", ...RESOURCE_CATEGORIES] }, filter: "agSetColumnFilter", valueFormatter: (params) => params.value ?? "" },
     ];
     const enterpriseColumns = ctcAttributes.filter((attribute) => attribute.prefix === "E").map((attribute, index): ColDef<CtcGridRow> => ({ field: attribute.field as keyof CtcGridRow & string, headerName: attribute.columnName, editable: true, filter: "agSetColumnFilter", columnGroupShow: index === 0 ? undefined : "open", ...attributeEditor(attribute.definition) }));
     const projectColumns = ctcAttributes.filter((attribute) => attribute.prefix === "P").map((attribute, index): ColDef<CtcGridRow> => ({ field: attribute.field as keyof CtcGridRow & string, headerName: attribute.columnName, editable: true, filter: "agSetColumnFilter", columnGroupShow: index === 0 ? undefined : "open", ...attributeEditor(attribute.definition) }));
@@ -358,9 +393,9 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
       maxWidth: 92,
       wrapHeaderText: true,
       autoHeaderHeight: true,
-      valueGetter: (params) => Number(params.data?.period_qty[period.id] ?? 0),
-      valueSetter: (params) => { if (!params.data) return false; const parsed = Number(params.newValue); if (!Number.isFinite(parsed) || parsed < 0) return false; params.data.period_qty = { ...params.data.period_qty, [period.id]: parsed }; return true; },
-      valueFormatter: (params) => numberFormat(params.value, 4),
+      valueGetter: (params) => params.data?.is_forecast_summary ? (periodForecastTotals.get(period.id) ?? 0) : Number(params.data?.period_qty[period.id] ?? 0),
+      valueSetter: (params) => { if (!params.data || params.data.is_forecast_summary) return false; const parsed = Number(params.newValue); if (!Number.isFinite(parsed) || parsed < 0) return false; params.data.period_qty = { ...params.data.period_qty, [period.id]: parsed }; return true; },
+      valueFormatter: (params) => params.data?.is_forecast_summary ? numberFormat(params.value, 2) : numberFormat(params.value, 4),
       columnGroupShow: index === 0 ? undefined : "open",
     }));
     const groups: Array<ColGroupDef<CtcGridRow>> = [
@@ -370,7 +405,7 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
       { groupId: "ctc-phasing", headerName: "Phasing", marryChildren: true, openByDefault: true, children: phasingColumns },
     ];
     return groups;
-  }, [attributeEditor, ctcAttributes, futurePeriods]);
+  }, [attributeEditor, ctcAttributes, ctcTotal, futurePeriods, periodForecastTotals]);
 
   async function actualChanged(event: CellValueChangedEvent<ActualGridRow>) {
     if (!event.data || event.newValue === event.oldValue) return;
@@ -643,14 +678,19 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
           {[
             ["Baseline Budget", financialSummary.baseline_budget],
             ["Budget Changes", financialSummary.budget_changes],
+            ["Previous Budget", financialSummary.previous_budget],
             ["Current Budget", currentBudget],
-            ["Actual Cost", financialSummary.actual_cost_to_date],
+            ["Budget Movement", budgetMovement],
+            ["Actual Cost In Period", financialSummary.actual_cost_in_period],
+            ["Actual Cost To Date", financialSummary.actual_cost_to_date],
             ["Cost to Complete", ctcTotal],
+            ["EAC Previous", financialSummary.previous_eac],
             ["EAC", eac],
+            ["EAC Movement", eacMovement],
             ["Variance", variance],
           ].map(([label, value], index) => <div key={String(label)} style={{ minWidth: 102, padding: "5px 8px", borderLeft: index ? "1px solid #e5e7eb" : 0, textAlign: "right" }}>
             <div style={{ fontSize: 9, color: "#64748b", whiteSpace: "nowrap", lineHeight: "11px" }}>{label}</div>
-            <div style={{ fontSize: 11.5, fontWeight: 700, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{numberFormat(Number(value), 2)}</div>
+            <div style={{ fontSize: 11.5, fontWeight: 700, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{value == null ? "—" : numberFormat(Number(value), 2)}</div>
           </div>)}
         </div>
       </>}
@@ -685,6 +725,7 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
           <AgGridReact<RelatedGridRow>
             theme={gridTheme}
             rowData={rows}
+            pinnedBottomRowData={mode === "ctc" ? [forecastSummaryRow as RelatedGridRow] : undefined}
             columnDefs={columns}
             defaultColDef={{ sortable: true, resizable: true, filter: true, minWidth: 80, enableRowGroup: true }}
             quickFilterText={search}
@@ -699,7 +740,8 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
             rowGroupPanelShow="always"
             groupDisplayType="multipleColumns"
             groupTotalRow="bottom"
-            grandTotalRow="pinnedBottom"
+            grandTotalRow={mode === "ctc" ? undefined : "pinnedBottom"}
+            getRowHeight={(params) => params.node.rowPinned ? 22 : 30}
             groupSuppressBlankHeader
             animateRows
           />
