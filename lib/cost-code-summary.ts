@@ -14,17 +14,25 @@ function sum(rows: NumericRow[], field: "total" | "amount" | "change_to_budget")
 }
 
 export async function getCostCodeFinancialSummary(projectId: string, costCodeId: string): Promise<CostCodeFinancialSummary> {
-  const [baselineRows, actualRows, approvedOrders] = await Promise.all([
+  const [baselineRows, approvedOrders, toDatePeriods] = await Promise.all([
     supabaseRequest<NumericRow[]>(
       `baseline_details?project_id=eq.${encodeURIComponent(projectId)}&cost_code_id=eq.${encodeURIComponent(costCodeId)}&select=total`,
-    ),
-    supabaseRequest<NumericRow[]>(
-      `actual_cost_transactions?project_id=eq.${encodeURIComponent(projectId)}&cost_code_id=eq.${encodeURIComponent(costCodeId)}&select=amount`,
     ),
     supabaseRequest<IdRow[]>(
       `change_orders?project_id=eq.${encodeURIComponent(projectId)}&status=eq.Approved&select=id`,
     ),
+    supabaseRequest<IdRow[]>(
+      `cost_reporting_periods?project_id=eq.${encodeURIComponent(projectId)}&status=in.(Current,Closed)&select=id`,
+    ),
   ]);
+
+  let actualRows: NumericRow[] = [];
+  if (toDatePeriods.length) {
+    const periodIds = toDatePeriods.map((row) => row.id).join(",");
+    actualRows = await supabaseRequest<NumericRow[]>(
+      `actual_cost_transactions?project_id=eq.${encodeURIComponent(projectId)}&cost_code_id=eq.${encodeURIComponent(costCodeId)}&cost_period_id=in.(${periodIds})&select=amount`,
+    );
+  }
 
   let budgetChanges = 0;
   if (approvedOrders.length) {
