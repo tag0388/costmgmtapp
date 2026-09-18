@@ -1,10 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgGridProvider, AgGridReact } from "ag-grid-react";
 import type { CellValueChangedEvent, ColDef, RowClickedEvent, SelectionChangedEvent } from "ag-grid-community";
 import { AllEnterpriseModule } from "ag-grid-enterprise";
 import { themeQuartz } from "ag-grid-community";
+import ExcelImportDialog from "@/components/shared/excel-import-dialog";
+import { type ExcelRow, exportExcel, readExcel } from "@/lib/excel";
 import { getProjectByPublicId, type Project } from "@/lib/projects";
 import { listCostCodes, type CostCode } from "@/lib/cost-codes";
 import { listEnterpriseAttributes, type EnterpriseAttributeDefinition } from "@/lib/enterprise-attributes";
@@ -41,6 +43,7 @@ type ChangeRecordGridRow = ChangeRecord & {
 };
 type AttributeDefinition = EnterpriseAttributeDefinition | ProjectAttributeDefinition;
 type ActiveAttribute = { prefix: "E" | "P"; field: ChangeAttributeField; definition: AttributeDefinition; columnName: string };
+type ImportMode = "orders" | "records" | null;
 
 function attributeField(prefix: "E" | "P", slot: number) {
   return `${prefix.toLowerCase()}_attribute_${String(slot).padStart(2, "0")}` as ChangeAttributeField;
@@ -68,6 +71,32 @@ function buildAttributes(enterprise: EnterpriseAttributeDefinition[], project: P
   });
 }
 
+function validateHeaders(rows: ExcelRow[], expected: string[]) {
+  if (!rows.length) return [] as string[];
+  const actual = Object.keys(rows[0]);
+  const missing = expected.filter((column) => !actual.includes(column));
+  const extra = actual.filter((column) => !expected.includes(column));
+  const errors: string[] = [];
+  if (missing.length) errors.push(`Missing required column${missing.length === 1 ? "" : "s"}: ${missing.join(", ")}.`);
+  if (extra.length) errors.push(`Unexpected column${extra.length === 1 ? "" : "s"}: ${extra.join(", ")}.`);
+  return errors;
+}
+
+function excelAttributeValues(row: ExcelRow, attributes: ActiveAttribute[]): ChangeAttributeValues {
+  const values: ChangeAttributeValues = {};
+  attributes.forEach((attribute) => {
+    values[attribute.field] = (row[attribute.columnName] ?? "").trim() || null;
+  });
+  return values;
+}
+
+function parseNumber(value: unknown) {
+  const text = String(value ?? "").trim();
+  if (!text) return 0;
+  const parsed = Number(text.replace(/,/g, ""));
+  return Number.isFinite(parsed) ? parsed : Number.NaN;
+}
+
 function numberFormat(value: unknown) {
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed)
@@ -76,6 +105,8 @@ function numberFormat(value: unknown) {
 }
 
 export default function ChangeManagementPage({ projectPublicId }: { projectPublicId: string }) {
+  const orderFileRef = useRef<HTMLInputElement>(null);
+  const recordFileRef = useRef<HTMLInputElement>(null);
   const [project, setProject] = useState<Project | null>(null);
   const [costCodes, setCostCodes] = useState<CostCode[]>([]);
   const [orders, setOrders] = useState<ChangeOrder[]>([]);
@@ -91,6 +122,11 @@ export default function ChangeManagementPage({ projectPublicId }: { projectPubli
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [importMode, setImportMode] = useState<ImportMode>(null);
+  const [importRows, setImportRows] = useState<ExcelRow[] | null>(null);
+  const [importErrors, setImportErrors] = useState<string[]>([]);
+  const [importing, setImporting] = useState(false);
+  const [progress, setProgress] = useState(0);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -134,6 +170,7 @@ export default function ChangeManagementPage({ projectPublicId }: { projectPubli
   const codeById = useMemo(() => new Map(costCodes.map((code) => [code.id, code])), [costCodes]);
   const codeByRef = useMemo(() => new Map(costCodes.map((code) => [code.cost_code_id.toLowerCase(), code])), [costCodes]);
   const orderById = useMemo(() => new Map(orders.map((order) => [order.id, order])), [orders]);
+  const orderByRef = useMemo(() => new Map(orders.map((order) => [order.change_order_id.toLowerCase(), order])), [orders]);
 
   const orderRows = useMemo<ChangeOrderGridRow[]>(() => orders.map((order) => {
     const related = records.filter((record) => record.change_order_id === order.id);
@@ -362,6 +399,133 @@ export default function ChangeManagementPage({ projectPublicId }: { projectPubli
     }
   }
 
+  const orderExcelColumns = useMemo(
+    () => ["Change Order ID", "Description", "Status", ...attributes.map((attribute) => attribute.columnName)],
+    [attributes],
+  );
+  const recordExcelColumns = useMemo(
+    () => ["Change Order ID", "Cost Code ID", "Item", "Description", "Change to Budget", "Change to EAC", ...attributes.map((attribute) => attribute.columnName)],
+    [attributes],
+  );
+
+  function exportOrders() {
+    const data: ExcelRow[] = orderRows.map((row) => ({
+      "Change Order ID": row.change_order_id,
+      Description: row.description,
+      Status: row.status,
+      ...Object.fromEntries(attributes.map((attribute) => [attribute.columnName, row[attribute.field] ?? ""])),
+    }));
+    const template = Object.fromEntries(orderExcelColumns.map((column) => [column, ""])) as ExcelRow;
+    exportExcel(`${project?.project_code ?? "project"}-change-orders`, "Change Orders", data.length ? data : [template]);
+  }
+
+  function exportRecords() {
+    const data: ExcelRow[] = records.map((row) => ({
+      "Change Order ID": orderById.get(row.change_order_id)?.change_order_id ?? "",
+      "Cost Code ID": codeById.get(row.cost_code_id)?.cost_code_id ?? "",
+      Item: row.item,
+      Description: row.description ?? "",
+      "Change to Budget": String(row.change_to_budget ?? 0),
+      "Change to EAC": String(row.change_to_eac ?? 0),
+      ...Object.fromEntries(attributes.map((attribute) => [attribute.columnName, row[attribute.field] ?? ""])),
+    }));
+    const template = Object.fromEntries(recordExcelColumns.map((column) => [column, ""])) as ExcelRow;
+    exportExcel(`${project?.project_code ?? "project"}-change-records`, "Change Records", data.length ? data : [template]);
+  }
+
+  async function chooseImport(file: File | undefined, mode: Exclude<ImportMode, null>) {
+    if (!file) return;
+    try {
+      const incoming = await readExcel(file);
+      const expected = mode === "orders" ? orderExcelColumns : recordExcelColumns;
+      const errors = validateHeaders(incoming, expected);
+      if (!incoming.length) errors.push("The file does not contain any rows.");
+
+      incoming.forEach((row, index) => {
+        const line = index + 2;
+        if (mode === "orders") {
+          const id = (row["Change Order ID"] ?? "").trim();
+          const description = (row.Description ?? "").trim();
+          const status = (row.Status ?? "").trim() as ChangeOrderStatus;
+          if (!id) errors.push(`Row ${line}: Change Order ID is required.`);
+          if (!description) errors.push(`Row ${line}: Description is required.`);
+          if (!CHANGE_ORDER_STATUSES.includes(status)) errors.push(`Row ${line}: Status must be ${CHANGE_ORDER_STATUSES.join(", ")}.`);
+        } else {
+          const order = orderByRef.get((row["Change Order ID"] ?? "").trim().toLowerCase());
+          const code = codeByRef.get((row["Cost Code ID"] ?? "").trim().toLowerCase());
+          if (!order) errors.push(`Row ${line}: Change Order ID must match an existing Change Order.`);
+          if (!code) errors.push(`Row ${line}: Cost Code ID must match an active Cost Code.`);
+          if (!(row.Item ?? "").trim()) errors.push(`Row ${line}: Item is required.`);
+          if (Number.isNaN(parseNumber(row["Change to Budget"]))) errors.push(`Row ${line}: Change to Budget must be a valid number.`);
+          if (Number.isNaN(parseNumber(row["Change to EAC"]))) errors.push(`Row ${line}: Change to EAC must be a valid number.`);
+        }
+
+        attributes.forEach((attribute) => {
+          const value = (row[attribute.columnName] ?? "").trim();
+          if (value && !attribute.definition.attribute_values.some((option) => option.is_active && option.value_id.toLowerCase() === value.toLowerCase())) {
+            errors.push(`Row ${line}: ${attribute.columnName} must contain an active Value ID.`);
+          }
+        });
+      });
+
+      setImportMode(mode);
+      setImportRows(incoming);
+      setImportErrors(errors);
+      setProgress(0);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unable to read the Excel file.");
+    } finally {
+      if (mode === "orders" && orderFileRef.current) orderFileRef.current.value = "";
+      if (mode === "records" && recordFileRef.current) recordFileRef.current.value = "";
+    }
+  }
+
+  async function runImport() {
+    if (!project || !importMode || !importRows || importErrors.length) return;
+    setImporting(true);
+    setProgress(0);
+
+    try {
+      for (let index = 0; index < importRows.length; index += 1) {
+        const row = importRows[index];
+        if (importMode === "orders") {
+          const input = {
+            change_order_id: row["Change Order ID"].trim(),
+            description: row.Description.trim(),
+            status: row.Status.trim() as ChangeOrderStatus,
+            ...excelAttributeValues(row, attributes),
+          };
+          const existing = orderByRef.get(input.change_order_id.toLowerCase());
+          if (existing) await updateChangeOrder(existing.id, input);
+          else await createChangeOrder(project.id, input);
+        } else {
+          const order = orderByRef.get(row["Change Order ID"].trim().toLowerCase());
+          const code = codeByRef.get(row["Cost Code ID"].trim().toLowerCase());
+          if (!order || !code) throw new Error("Import references an invalid Change Order or Cost Code.");
+          await createChangeRecord(project.id, {
+            change_order_id: order.id,
+            cost_code_id: code.id,
+            item: row.Item.trim(),
+            description: row.Description.trim() || null,
+            change_to_budget: parseNumber(row["Change to Budget"]),
+            change_to_eac: parseNumber(row["Change to EAC"]),
+            ...excelAttributeValues(row, attributes),
+          });
+        }
+        setProgress(((index + 1) / Math.max(importRows.length, 1)) * 100);
+      }
+
+      setImportRows(null);
+      setImportMode(null);
+      await refresh();
+      showNotice("Import completed.");
+    } catch (requestError) {
+      setImportErrors([changeManagementErrorMessage(requestError)]);
+    } finally {
+      setImporting(false);
+    }
+  }
+
   function orderSelection(event: SelectionChangedEvent<ChangeOrderGridRow>) {
     setSelectedOrderRows(event.api.getSelectedRows().map((row) => row.id));
   }
@@ -398,6 +562,9 @@ export default function ChangeManagementPage({ projectPublicId }: { projectPubli
         <label className="enterprise-search"><span>⌕</span><input value={orderSearch} onChange={(event) => setOrderSearch(event.target.value)} placeholder="Search Change Orders…"/></label>
         <button className="button primary" disabled={saving} onClick={() => void addOrder()}>＋ Add Change Order</button>
         <button className="button secondary" disabled={!selectedOrderRows.length || saving} onClick={() => void removeOrders()}>Delete</button>
+        <button className="button secondary" onClick={exportOrders}>⇩ Export</button>
+        <button className="button secondary" onClick={() => orderFileRef.current?.click()}>⇧ Import</button>
+        <input ref={orderFileRef} hidden type="file" accept=".xlsx,.xls" onChange={(event) => void chooseImport(event.target.files?.[0], "orders")}/>
         <button className="button secondary" disabled={saving} onClick={() => void refresh()}>↻ Refresh</button>
       </div>
       <div style={{ flex: 1, minHeight: 0 }}>
@@ -433,6 +600,9 @@ export default function ChangeManagementPage({ projectPublicId }: { projectPubli
         <label className="enterprise-search"><span>⌕</span><input value={recordSearch} onChange={(event) => setRecordSearch(event.target.value)} placeholder="Search Change Records…"/></label>
         <button className="button primary" disabled={!selectedOrder || !costCodes.length || saving} onClick={() => void addRecord()}>＋ Add Change Record</button>
         <button className="button secondary" disabled={!selectedRecordRows.length || saving} onClick={() => void removeRecords()}>Delete</button>
+        <button className="button secondary" onClick={exportRecords}>⇩ Export All</button>
+        <button className="button secondary" onClick={() => recordFileRef.current?.click()}>⇧ Import</button>
+        <input ref={recordFileRef} hidden type="file" accept=".xlsx,.xls" onChange={(event) => void chooseImport(event.target.files?.[0], "records")}/>
       </div>
       <div style={{ flex: 1, minHeight: 0 }}>
         <AgGridProvider modules={[AllEnterpriseModule]} licenseKey={process.env.NEXT_PUBLIC_AG_GRID_LICENSE_KEY ?? ""}>
@@ -456,5 +626,22 @@ export default function ChangeManagementPage({ projectPublicId }: { projectPubli
     </section>
 
     {notice && <div className="admin-toast">✓ {notice}</div>}
+    {importRows && importMode && <ExcelImportDialog
+      title={importMode === "orders" ? "Import Change Orders" : "Import Change Records"}
+      rows={importRows}
+      columns={importMode === "orders" ? orderExcelColumns : recordExcelColumns}
+      errors={importErrors}
+      replace={false}
+      setReplace={() => undefined}
+      importing={importing}
+      progress={progress}
+      onCancel={() => {
+        if (!importing) {
+          setImportRows(null);
+          setImportMode(null);
+        }
+      }}
+      onImport={() => void runImport()}
+    />}
   </div>;
 }
