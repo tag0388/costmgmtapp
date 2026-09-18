@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgGridProvider, AgGridReact } from "ag-grid-react";
-import type { ColDef, GridApi, GridReadyEvent } from "ag-grid-community";
+import type { ColDef, ColGroupDef, GridApi, GridReadyEvent } from "ag-grid-community";
 import { themeQuartz } from "ag-grid-community";
 import { AllEnterpriseModule } from "ag-grid-enterprise";
 import ExcelImportDialog from "@/components/shared/excel-import-dialog";
@@ -16,6 +16,8 @@ import { CostReportingPeriod, listCostReportingPeriods } from "@/lib/cost-report
 import { listResourceRates, RESOURCE_CATEGORIES, ResourceCategory, ResourceRate } from "@/lib/resource-rates";
 import { listProjectResourceRates, ProjectResourceRate } from "@/lib/project-resource-rates";
 import {
+  CTC_USER_NUMBER_FIELDS,
+  CTC_USER_TEXT_FIELDS,
   CtcAttributeField,
   CtcResourceSource,
   CostToCompleteImportRow,
@@ -27,6 +29,8 @@ import {
 
 const GRID_KEY = "cost-to-complete";
 const gridTheme = themeQuartz.withParams({ spacing: 4, rowHeight: 30, headerHeight: 34, fontSize: 12 });
+const CTC_USER_NUMBER_COLUMNS = CTC_USER_NUMBER_FIELDS.map((field, index) => ({ field, label: `User Number ${index + 1}` }));
+const CTC_USER_TEXT_COLUMNS = CTC_USER_TEXT_FIELDS.map((field, index) => ({ field, label: `User Text ${index + 1}` }));
 
 type ActiveAttribute = {
   prefix: "E" | "P";
@@ -155,6 +159,8 @@ export default function CostToCompletePage({ projectPublicId }: { projectPublicI
   const excelColumns = useMemo(() => [
     "Cost Code ID", "Resource Source", "Item", "Description", "Unit", "Rate", "Category",
     ...activeAttributes.map((attribute) => attribute.columnName),
+    ...CTC_USER_NUMBER_COLUMNS.map((column) => column.label),
+    ...CTC_USER_TEXT_COLUMNS.map((column) => column.label),
     ...periods.map(periodColumn),
   ], [activeAttributes, periods]);
 
@@ -164,8 +170,8 @@ export default function CostToCompletePage({ projectPublicId }: { projectPublicI
   })), [periods, rows]);
   const chartMax = useMemo(() => Math.max(0, ...chartData.map((item) => item.total)), [chartData]);
 
-  const columnDefs = useMemo<ColDef<GridRow>[]>(() => {
-    const attributeCols = activeAttributes.map((attribute): ColDef<GridRow> => ({
+  const columnDefs = useMemo<Array<ColDef<GridRow> | ColGroupDef<GridRow>>>(() => {
+    const enterpriseAttributeCols = activeAttributes.filter((attribute) => attribute.prefix === "E").map((attribute): ColDef<GridRow> => ({
       field: attribute.field as keyof GridRow & string,
       colId: attribute.field,
       headerName: attribute.columnName,
@@ -175,6 +181,34 @@ export default function CostToCompletePage({ projectPublicId }: { projectPublicI
       filter: "agSetColumnFilter",
       valueFormatter: (params) => valueName(attribute.definition, params.value as string | null),
     }));
+    const projectAttributeCols = activeAttributes.filter((attribute) => attribute.prefix === "P").map((attribute): ColDef<GridRow> => ({
+      field: attribute.field as keyof GridRow & string,
+      colId: attribute.field,
+      headerName: attribute.columnName,
+      headerTooltip: `${attribute.prefix}${String(attribute.definition.attribute_number).padStart(2, "0")} · ${attribute.definition.name}`,
+      minWidth: 135,
+      enableRowGroup: true,
+      filter: "agSetColumnFilter",
+      valueFormatter: (params) => valueName(attribute.definition, params.value as string | null),
+    }));
+    const userCols: ColDef<GridRow>[] = [
+      ...CTC_USER_NUMBER_COLUMNS.map(({ field, label }, index): ColDef<GridRow> => ({
+        field: field as keyof GridRow & string,
+        headerName: label,
+        minWidth: 110,
+        type: "numericColumn",
+        filter: "agNumberColumnFilter",
+        valueFormatter: (params) => params.value == null ? "" : numberFormat(params.value, 4),
+        columnGroupShow: index === 0 ? undefined : "open",
+      })),
+      ...CTC_USER_TEXT_COLUMNS.map(({ field, label }): ColDef<GridRow> => ({
+        field: field as keyof GridRow & string,
+        headerName: label,
+        minWidth: 125,
+        filter: true,
+        columnGroupShow: "open",
+      })),
+    ];
     const periodCols = periods.map((period): ColDef<GridRow> => ({
       colId: `period:${period.id}`,
       headerName: periodColumn(period),
@@ -186,7 +220,7 @@ export default function CostToCompletePage({ projectPublicId }: { projectPublicI
       valueGetter: (params) => Number(params.data?.period_qty[period.id] ?? 0),
       valueFormatter: (params) => numberFormat(params.value, 4),
     }));
-    return [
+    const generalInfo: ColDef<GridRow>[] = [
       { field: "cost_code_ref", headerName: "Cost Code ID", pinned: "left", minWidth: 130, enableRowGroup: true, filter: true },
       { field: "resource_source", headerName: "Resource Source", minWidth: 120, enableRowGroup: true, filter: "agSetColumnFilter", valueFormatter: (params) => params.value || "User" },
       { field: "item", headerName: "Item", pinned: "left", minWidth: 115, filter: true },
@@ -196,8 +230,13 @@ export default function CostToCompletePage({ projectPublicId }: { projectPublicI
       { field: "rate", headerName: "Rate", minWidth: 100, type: "numericColumn", valueFormatter: (params) => numberFormat(params.value, 4) },
       { colId: "total", headerName: "Total", minWidth: 115, type: "numericColumn", aggFunc: "sum", enableValue: true, valueGetter: (params) => Object.values(params.data?.period_qty ?? {}).reduce((sum, value) => sum + Number(value || 0), 0) * Number(params.data?.rate ?? 0), valueFormatter: (params) => numberFormat(params.value, 2) },
       { field: "category", headerName: "Category", minWidth: 110, enableRowGroup: true, filter: "agSetColumnFilter", valueFormatter: (params) => params.value || "" },
-      ...attributeCols,
-      ...periodCols,
+    ];
+    return [
+      { groupId: "ctc-bulk-general", headerName: "General Info", marryChildren: true, children: generalInfo },
+      ...(enterpriseAttributeCols.length ? [{ groupId: "ctc-bulk-enterprise", headerName: "Enterprise Line-Item Attributes", marryChildren: true, children: enterpriseAttributeCols }] : []),
+      ...(projectAttributeCols.length ? [{ groupId: "ctc-bulk-project", headerName: "Project Line-Item Attributes", marryChildren: true, children: projectAttributeCols }] : []),
+      { groupId: "ctc-bulk-user", headerName: "User Columns", marryChildren: true, openByDefault: false, children: userCols },
+      { groupId: "ctc-bulk-phasing", headerName: "Phasing", marryChildren: true, children: periodCols },
     ];
   }, [activeAttributes, periods]);
 
@@ -216,6 +255,8 @@ export default function CostToCompletePage({ projectPublicId }: { projectPublicI
       Rate: String(row.rate ?? 0),
       Category: row.category ?? "",
       ...Object.fromEntries(activeAttributes.map((attribute) => [attribute.columnName, row[attribute.field] ?? ""])),
+      ...Object.fromEntries(CTC_USER_NUMBER_COLUMNS.map(({ field, label }) => [label, row[field] == null ? "" : String(row[field])])),
+      ...Object.fromEntries(CTC_USER_TEXT_COLUMNS.map(({ field, label }) => [label, row[field] ?? ""])),
       ...Object.fromEntries(periods.map((period) => [periodColumn(period), String(row.period_qty[period.id] ?? 0)])),
     }));
     const template = Object.fromEntries(excelColumns.map((column) => [column, ""])) as ExcelRow;
@@ -255,6 +296,10 @@ export default function CostToCompletePage({ projectPublicId }: { projectPublicI
           if (valueId.length > 50) errors.push(`Row ${line}: ${attribute.columnName} is longer than 50 characters.`);
           if (!attribute.definition.attribute_values.some((value) => value.is_active && value.value_id.toLowerCase() === valueId.toLowerCase())) errors.push(`Row ${line}: ${attribute.columnName} must contain an active Value ID.`);
         });
+        CTC_USER_NUMBER_COLUMNS.forEach(({ label }) => {
+          const raw = (row[label] ?? "").trim();
+          if (raw && Number.isNaN(parseNumber(raw))) errors.push(`Row ${line}: ${label} must be a valid number or blank.`);
+        });
         periods.forEach((period) => {
           const qty = parseNumber(row[periodColumn(period)]);
           if (!Number.isFinite(qty) || qty < 0) errors.push(`Row ${line}: ${periodColumn(period)} must be zero or greater.`);
@@ -286,6 +331,8 @@ export default function CostToCompletePage({ projectPublicId }: { projectPublicI
           rate: parseNumber(row.Rate),
           category: categoryText ? categoryText as ResourceCategory : null,
           ...attributes,
+          ...Object.fromEntries(CTC_USER_NUMBER_COLUMNS.map(({ field, label }) => { const raw = (row[label] ?? "").trim(); return [field, raw ? parseNumber(raw) : null]; })),
+          ...Object.fromEntries(CTC_USER_TEXT_COLUMNS.map(({ field, label }) => [field, (row[label] ?? "").trim() || null])),
           period_qty,
         } as CostToCompleteImportRow;
       });
