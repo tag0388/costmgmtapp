@@ -631,6 +631,29 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
       <button className="button secondary compact" onClick={onClose} aria-label="Close workspace">✕</button>
     </header>
 
+    {mode === "ctc" && !loading && <section style={{ background: "#fff", borderBottom: "1px solid #e5e7eb", padding: "8px 12px 9px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 7 }}>
+        <strong style={{ fontSize: 12 }}>Cost Summary</strong>
+        <span style={{ marginLeft: "auto", fontSize: 11, color: "#475569", background: "#f1f5f9", border: "1px solid #dbe1e8", borderRadius: 999, padding: "3px 8px", whiteSpace: "nowrap" }}>
+          Current Cost Reporting Period: <strong>{currentPeriod ? periodExcel(currentPeriod) : "Not set"}</strong>
+        </span>
+      </div>
+      <div style={{ overflowX: "auto", border: "1px solid #e5e7eb", borderRadius: 6 }}>
+        <table style={{ width: "100%", minWidth: 910, borderCollapse: "collapse", tableLayout: "fixed", fontSize: 11 }}>
+          <thead>
+            <tr style={{ background: "#f8fafc", color: "#64748b" }}>
+              {["Baseline Budget", "Budget Changes", "Current Budget", "Actual Cost to Date", "Cost to Complete", "EAC", "Variance"].map((label) => <th key={label} style={{ padding: "5px 8px", textAlign: "right", borderRight: "1px solid #e5e7eb", fontWeight: 600 }}>{label}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              {[financialSummary.baseline_budget, financialSummary.budget_changes, currentBudget, financialSummary.actual_cost_to_date, costToCompleteTotal, eac, variance].map((value, index) => <td key={index} style={{ padding: "6px 8px", textAlign: "right", borderTop: "1px solid #e5e7eb", borderRight: "1px solid #e5e7eb", fontWeight: index >= 4 ? 700 : 600, fontVariantNumeric: "tabular-nums" }}>{moneyFormat(value)}</td>)}
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>}
+
     <div className="enterprise-toolbar" style={{ flexWrap: "wrap", padding: "8px 12px", background: "#fff", borderBottom: "1px solid #e5e7eb" }}>
       <label className="enterprise-search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={`Search ${title.toLowerCase()}…`}/></label>
       <span style={{ display: "inline-flex", alignItems: "stretch" }}>
