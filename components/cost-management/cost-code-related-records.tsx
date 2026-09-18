@@ -48,7 +48,7 @@ type RelatedMode = "actual" | "ctc";
 type AttributeDefinition = EnterpriseAttributeDefinition | ProjectAttributeDefinition;
 type ActiveAttribute<TField extends string> = { prefix: "E" | "P"; field: TField; definition: AttributeDefinition; columnName: string };
 type ActualGridRow = ActualCostTransaction & { period_label: string };
-type CtcGridRow = CostToCompleteLedgerRow & { resource_source_label: "User" | "ERes" | "PRes" };
+type CtcGridRow = CostToCompleteLedgerRow & { resource_source_label: string };
 type RelatedGridRow = ActualGridRow | CtcGridRow;
 type BulkChoice = { id: string; label: string; kind: "text" | "number" | "select" | "attribute" | "periodQty"; values?: string[]; definition?: AttributeDefinition };
 
@@ -313,7 +313,7 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
     rate: 0,
     category: null,
     resource_source: null,
-    resource_source_label: "User",
+    resource_source_label: "Forecast Cost",
     row_order: null,
     created_at: "",
     updated_at: "",
@@ -359,7 +359,7 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
     const resourceCellStyle = (params: { data?: CtcGridRow }) => params.data?.resource_source ? { backgroundColor: "#f8fafc", color: "#475569" } : undefined;
     const formulaCellStyle = { backgroundColor: "#eef0f3", color: "#374151", fontWeight: 600 };
     const generalInfo: ColDef<CtcGridRow>[] = [
-      { field: "resource_source_label", colId: "resource_source_label", headerName: "Resource Source", editable: false, filter: "agSetColumnFilter", minWidth: 105, maxWidth: 125 },
+      { field: "resource_source_label", colId: "resource_source_label", headerName: "Resource Source", editable: false, filter: "agSetColumnFilter", minWidth: 105, maxWidth: 125, cellStyle: (params) => params.node?.rowPinned ? { backgroundColor: "#e2e8f0", color: "#0f172a", fontSize: 10, fontWeight: 800 } : undefined },
       { field: "item", headerName: "Item", editable: (params) => !params.node?.rowPinned && !params.data?.resource_source, filter: true, cellStyle: resourceCellStyle },
       { field: "description", headerName: "Description", editable: (params) => !params.node?.rowPinned && !params.data?.resource_source, filter: true, minWidth: 180, cellStyle: (params) => params.node?.rowPinned ? { backgroundColor: "#f8fafc", color: "#475569", fontSize: 10, fontWeight: 700 } : resourceCellStyle(params) },
       { colId: "qty", headerName: "Qty", editable: false, type: "numericColumn", aggFunc: "sum", enableValue: true, cellStyle: formulaCellStyle, valueGetter: (params) => params.node?.rowPinned ? null : ctcQtyForRow(params.data, futurePeriods), valueFormatter: (params) => params.value == null ? "" : numberFormat(params.value, 4) },
@@ -419,9 +419,34 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
     try {
       const colId = event.column.getColId();
       if (event.data.resource_source && ["resource_source_label", "item", "description", "unit", "rate"].includes(colId)) throw new Error("Item, Description, Unit and Rate are controlled by the resource library for resource-backed rows.");
-      if (colId.startsWith("period:")) { const periodId = colId.slice(7); const qty = Number(event.data.period_qty[periodId] ?? 0); if (!Number.isFinite(qty) || qty < 0) throw new Error("Period quantity must be zero or greater."); await setCostToCompletePeriodQty(event.data.id, periodId, qty); event.api.refreshCells({ rowNodes: [event.node], columns: ["qty", "total"], force: true }); }
+      if (colId.startsWith("period:")) {
+        const periodId = colId.slice(7);
+        const qty = Number(event.data.period_qty[periodId] ?? 0);
+        const previousQty = Number(event.oldValue ?? 0);
+        if (!Number.isFinite(qty) || qty < 0) throw new Error("Period quantity must be zero or greater.");
+        setCtcRows((current) => current.map((row) => row.id === event.data.id ? { ...row, period_qty: { ...row.period_qty, [periodId]: qty } } : row));
+        try {
+          await setCostToCompletePeriodQty(event.data.id, periodId, qty);
+        } catch (requestError) {
+          setCtcRows((current) => current.map((row) => row.id === event.data.id ? { ...row, period_qty: { ...row.period_qty, [periodId]: previousQty } } : row));
+          throw requestError;
+        }
+        event.api.refreshCells({ rowNodes: [event.node], columns: ["qty", "total"], force: true });
+      }
       else if (colId === "item") { const item = event.newValue ? String(event.newValue).trim() : null; const source = event.data.resource_source; const validIds = source === "ERes" ? enterpriseResourceIds : source === "PRes" ? projectResourceIds : null; if (source && (!item || !validIds?.has(item.toLowerCase()))) throw new Error(`Item must be an active ${source === "ERes" ? "Enterprise" : "Project"} Resource ID.`); await updateCostToCompleteDetail(event.data.id, { item }); }
-      else if (colId === "rate") { const rate = Number(event.newValue); if (!Number.isFinite(rate) || rate < 0) throw new Error("Rate must be zero or greater."); await updateCostToCompleteDetail(event.data.id, { rate }); setCtcRows((current) => current.map((row) => row.id === event.data.id ? { ...row, rate } : row)); event.api.refreshCells({ rowNodes: [event.node], columns: ["total"], force: true }); }
+      else if (colId === "rate") {
+        const rate = Number(event.newValue);
+        const previousRate = Number(event.oldValue ?? 0);
+        if (!Number.isFinite(rate) || rate < 0) throw new Error("Rate must be zero or greater.");
+        setCtcRows((current) => current.map((row) => row.id === event.data.id ? { ...row, rate } : row));
+        try {
+          await updateCostToCompleteDetail(event.data.id, { rate });
+        } catch (requestError) {
+          setCtcRows((current) => current.map((row) => row.id === event.data.id ? { ...row, rate: previousRate } : row));
+          throw requestError;
+        }
+        event.api.refreshCells({ rowNodes: [event.node], columns: ["total"], force: true });
+      }
       else if (colId === "description") await updateCostToCompleteDetail(event.data.id, { description: event.newValue ? String(event.newValue) : null });
       else if (colId === "unit") await updateCostToCompleteDetail(event.data.id, { unit: event.newValue ? String(event.newValue) : null });
       else if (colId === "category") await updateCostToCompleteDetail(event.data.id, { category: event.newValue ? event.newValue as ResourceCategory : null });
@@ -723,7 +748,8 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
             rowSelection={{ mode: "multiRow" }}
             selectionColumnDef={{ pinned: "left", width: 42, maxWidth: 42, suppressHeaderMenuButton: true }}
             getRowId={(params) => params.data.id}
-            getRowHeight={(params) => params.node?.rowPinned ? 22 : undefined}
+            getRowHeight={(params) => params.node?.rowPinned ? 24 : undefined}
+            getRowStyle={(params) => params.node?.rowPinned ? { backgroundColor: "#f1f5f9", borderBottom: "1px solid #cbd5e1", borderTop: "1px solid #cbd5e1" } : undefined}
             onGridReady={(event) => { setGridApi(event.api); syncGroupState(event.api); }}
             onSelectionChanged={selectionChanged}
             onCellFocused={(event) => { const node = event.rowIndex == null ? null : event.api.getDisplayedRowAtIndex(event.rowIndex); if (node?.data) setInsertAfterId(node.data.id); }}
