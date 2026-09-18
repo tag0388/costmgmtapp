@@ -392,9 +392,9 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
     try {
       const colId = event.column.getColId();
       if (event.data.resource_source && ["resource_source_label", "item", "description", "unit", "rate"].includes(colId)) throw new Error("Item, Description, Unit and Rate are controlled by the resource library for resource-backed rows.");
-      if (colId.startsWith("period:")) { const periodId = colId.slice(7); const qty = Number(event.data.period_qty[periodId] ?? 0); if (!Number.isFinite(qty) || qty < 0) throw new Error("Period quantity must be zero or greater."); await setCostToCompletePeriodQty(event.data.id, periodId, qty); event.api.refreshCells({ rowNodes: [event.node], columns: ["qty", "total"], force: true }); }
+      if (colId.startsWith("period:")) { const periodId = colId.slice(7); const qty = Number(event.data.period_qty[periodId] ?? 0); if (!Number.isFinite(qty) || qty < 0) throw new Error("Period quantity must be zero or greater."); await setCostToCompletePeriodQty(event.data.id, periodId, qty); setCtcRows((current) => current.map((row) => row.id === event.data.id ? { ...row, period_qty: { ...row.period_qty, [periodId]: qty } } : row)); event.api.refreshCells({ rowNodes: [event.node], columns: ["qty", "total"], force: true }); }
       else if (colId === "item") { const item = event.newValue ? String(event.newValue).trim() : null; const source = event.data.resource_source; const validIds = source === "ERes" ? enterpriseResourceIds : source === "PRes" ? projectResourceIds : null; if (source && (!item || !validIds?.has(item.toLowerCase()))) throw new Error(`Item must be an active ${source === "ERes" ? "Enterprise" : "Project"} Resource ID.`); await updateCostToCompleteDetail(event.data.id, { item }); }
-      else if (colId === "rate") { const rate = Number(event.newValue); if (!Number.isFinite(rate) || rate < 0) throw new Error("Rate must be zero or greater."); await updateCostToCompleteDetail(event.data.id, { rate }); event.api.refreshCells({ rowNodes: [event.node], columns: ["total"], force: true }); }
+      else if (colId === "rate") { const rate = Number(event.newValue); if (!Number.isFinite(rate) || rate < 0) throw new Error("Rate must be zero or greater."); await updateCostToCompleteDetail(event.data.id, { rate }); setCtcRows((current) => current.map((row) => row.id === event.data.id ? { ...row, rate } : row)); event.api.refreshCells({ rowNodes: [event.node], columns: ["total"], force: true }); }
       else if (colId === "description") await updateCostToCompleteDetail(event.data.id, { description: event.newValue ? String(event.newValue) : null });
       else if (colId === "unit") await updateCostToCompleteDetail(event.data.id, { unit: event.newValue ? String(event.newValue) : null });
       else if (colId === "category") await updateCostToCompleteDetail(event.data.id, { category: event.newValue ? event.newValue as ResourceCategory : null });
@@ -614,6 +614,14 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
     catch (requestError) { setError(gridViewErrorMessage(requestError)); }
   }
 
+  const ctcTotal = useMemo(() => ctcRows.reduce((total, row) => {
+    const qty = ctcPeriods.reduce((sum, period) => sum + Number(row.period_qty[period.id] ?? 0), 0);
+    return total + qty * Number(row.rate ?? 0);
+  }, 0), [ctcPeriods, ctcRows]);
+  const eac = financialSummary.actualCostToDate + ctcTotal;
+  const variance = financialSummary.currentBudget - eac;
+  const currentPeriodText = currentPeriod ? `P${currentPeriod.period_number} | ${formatCompactPeriodDate(currentPeriod.end_date)}` : "Not set";
+
   const title = mode === "actual" ? "Actual Cost" : "Cost to Complete";
   const columns = (mode === "actual" ? actualColumnDefs : ctcColumnDefs) as (ColDef<RelatedGridRow> | ColGroupDef<RelatedGridRow>)[];
   const chosenBulk = bulkChoices.find((choice) => choice.id === bulkField);
@@ -625,6 +633,24 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
       <div style={{ marginLeft: "auto", fontSize: 11, color: saving ? "#2563eb" : "#68707d" }}>{saving ? "Saving…" : "Auto-save enabled"}</div>
       <button className="button secondary compact" onClick={onClose} aria-label="Close workspace">✕</button>
     </header>
+
+    {mode === "ctc" && <div style={{ background: "#fff", borderBottom: "1px solid #e5e7eb", padding: "8px 12px 7px", display: "grid", gap: 7 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11 }}>
+        <span style={{ color: "#64748b", fontWeight: 600 }}>Current Cost Reporting Period</span>
+        <strong style={{ padding: "3px 7px", border: "1px solid #cbd5e1", borderRadius: 5, background: "#f8fafc", fontSize: 12 }}>{currentPeriodText}</strong>
+        {currentPeriod && <span style={{ color: "#64748b" }}>CTC phasing starts from P{currentPeriod.period_number + 1}.</span>}
+      </div>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", minWidth: 900, borderCollapse: "collapse", tableLayout: "fixed", fontSize: 11 }}>
+          <thead><tr>
+            {["Baseline Budget", "Budget Changes", "Current Budget", "Actual Cost to Date", "Cost to Complete", "EAC", "Variance"].map((label) => <th key={label} style={{ padding: "4px 7px", textAlign: "right", color: "#64748b", fontWeight: 600, border: "1px solid #e2e8f0", background: "#f8fafc" }}>{label}</th>)}
+          </tr></thead>
+          <tbody><tr>
+            {[financialSummary.baselineBudget, financialSummary.budgetChanges, financialSummary.currentBudget, financialSummary.actualCostToDate, ctcTotal, eac, variance].map((value, index) => <td key={index} style={{ padding: "5px 7px", textAlign: "right", fontWeight: index >= 4 ? 700 : 600, border: "1px solid #e2e8f0", fontVariantNumeric: "tabular-nums", background: index >= 4 ? "#fbfcfd" : "#fff" }}>{numberFormat(value, 2)}</td>)}
+          </tr></tbody>
+        </table>
+      </div>
+    </div>}
 
     <div className="enterprise-toolbar" style={{ flexWrap: "wrap", padding: "8px 12px", background: "#fff", borderBottom: "1px solid #e5e7eb" }}>
       <label className="enterprise-search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={`Search ${title.toLowerCase()}…`}/></label>
