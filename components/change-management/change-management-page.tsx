@@ -7,7 +7,10 @@ import { AllEnterpriseModule } from "ag-grid-enterprise";
 import { themeQuartz } from "ag-grid-community";
 import { getProjectByPublicId, type Project } from "@/lib/projects";
 import { listCostCodes, type CostCode } from "@/lib/cost-codes";
+import { listEnterpriseAttributes, type EnterpriseAttributeDefinition } from "@/lib/enterprise-attributes";
+import { listProjectAttributes, type ProjectAttributeDefinition } from "@/lib/project-scope-attributes";
 import {
+  CHANGE_ATTRIBUTE_FIELDS,
   CHANGE_ORDER_STATUSES,
   changeManagementErrorMessage,
   createChangeOrder,
@@ -18,6 +21,8 @@ import {
   listChangeRecords,
   updateChangeOrder,
   updateChangeRecord,
+  type ChangeAttributeField,
+  type ChangeAttributeValues,
   type ChangeOrder,
   type ChangeOrderStatus,
   type ChangeRecord,
@@ -34,6 +39,34 @@ type ChangeOrderGridRow = ChangeOrder & {
 type ChangeRecordGridRow = ChangeRecord & {
   cost_code_ref: string;
 };
+type AttributeDefinition = EnterpriseAttributeDefinition | ProjectAttributeDefinition;
+type ActiveAttribute = { prefix: "E" | "P"; field: ChangeAttributeField; definition: AttributeDefinition; columnName: string };
+
+function attributeField(prefix: "E" | "P", slot: number) {
+  return `${prefix.toLowerCase()}_attribute_${String(slot).padStart(2, "0")}` as ChangeAttributeField;
+}
+
+function valueName(definition: AttributeDefinition, valueId: string | null | undefined) {
+  if (!valueId) return "";
+  return definition.attribute_values.find((value) => value.value_id.toLowerCase() === valueId.toLowerCase())?.value_name ?? valueId;
+}
+
+function buildAttributes(enterprise: EnterpriseAttributeDefinition[], project: ProjectAttributeDefinition[]): ActiveAttribute[] {
+  const active = [
+    ...enterprise.filter((definition) => definition.is_active).map((definition) => ({ prefix: "E" as const, field: attributeField("E", definition.attribute_number), definition })),
+    ...project.filter((definition) => definition.is_active).map((definition) => ({ prefix: "P" as const, field: attributeField("P", definition.attribute_number), definition })),
+  ].sort((a, b) => a.prefix.localeCompare(b.prefix) || a.definition.attribute_number - b.definition.attribute_number);
+  const counts = new Map<string, number>();
+  active.forEach((attribute) => {
+    const key = attribute.definition.name.trim().toLowerCase();
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  });
+  return active.map((attribute) => {
+    const name = attribute.definition.name.trim();
+    const duplicate = (counts.get(name.toLowerCase()) ?? 0) > 1;
+    return { ...attribute, columnName: duplicate ? `${name} (${attribute.prefix}${String(attribute.definition.attribute_number).padStart(2, "0")})` : name };
+  });
+}
 
 function numberFormat(value: unknown) {
   const parsed = Number(value ?? 0);
@@ -47,6 +80,8 @@ export default function ChangeManagementPage({ projectPublicId }: { projectPubli
   const [costCodes, setCostCodes] = useState<CostCode[]>([]);
   const [orders, setOrders] = useState<ChangeOrder[]>([]);
   const [records, setRecords] = useState<ChangeRecord[]>([]);
+  const [enterpriseAttributes, setEnterpriseAttributes] = useState<EnterpriseAttributeDefinition[]>([]);
+  const [projectAttributes, setProjectAttributes] = useState<ProjectAttributeDefinition[]>([]);
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [selectedOrderRows, setSelectedOrderRows] = useState<string[]>([]);
   const [selectedRecordRows, setSelectedRecordRows] = useState<string[]>([]);
@@ -68,15 +103,19 @@ export default function ChangeManagementPage({ projectPublicId }: { projectPubli
         return;
       }
 
-      const [codes, changeOrders, changeRecords] = await Promise.all([
+      const [codes, changeOrders, changeRecords, enterpriseDefs, projectDefs] = await Promise.all([
         listCostCodes(current.id),
         listChangeOrders(current.id),
         listChangeRecords(current.id),
+        listEnterpriseAttributes(current.enterprise_id, "Change"),
+        listProjectAttributes(current.id, "Change"),
       ]);
 
       setCostCodes(codes.filter((code) => code.is_active));
       setOrders(changeOrders);
       setRecords(changeRecords);
+      setEnterpriseAttributes(enterpriseDefs);
+      setProjectAttributes(projectDefs);
       setSelectedOrderId((currentId) =>
         currentId && changeOrders.some((order) => order.id === currentId)
           ? currentId
@@ -91,6 +130,7 @@ export default function ChangeManagementPage({ projectPublicId }: { projectPubli
 
   useEffect(() => { void refresh(); }, [refresh]);
 
+  const attributes = useMemo(() => buildAttributes(enterpriseAttributes, projectAttributes), [enterpriseAttributes, projectAttributes]);
   const codeById = useMemo(() => new Map(costCodes.map((code) => [code.id, code])), [costCodes]);
   const codeByRef = useMemo(() => new Map(costCodes.map((code) => [code.cost_code_id.toLowerCase(), code])), [costCodes]);
   const orderById = useMemo(() => new Map(orders.map((order) => [order.id, order])), [orders]);
@@ -125,7 +165,23 @@ export default function ChangeManagementPage({ projectPublicId }: { projectPubli
     { field: "record_count", headerName: "Records", editable: false, width: 90, type: "numericColumn" },
     { field: "budget_change", headerName: "Change to Budget", editable: false, minWidth: 140, type: "numericColumn", aggFunc: "sum", valueFormatter: (params) => numberFormat(params.value) },
     { field: "eac_change", headerName: "Change to EAC", editable: false, minWidth: 130, type: "numericColumn", aggFunc: "sum", valueFormatter: (params) => numberFormat(params.value) },
-  ], []);
+    ...attributes.map((attribute): ColDef<ChangeOrderGridRow> => ({
+      colId: attribute.field,
+      headerName: `${attribute.prefix} · ${attribute.columnName}`,
+      editable: true,
+      minWidth: 145,
+      filter: "agSetColumnFilter",
+      cellEditor: "agSelectCellEditor",
+      cellEditorParams: { values: ["", ...attribute.definition.attribute_values.filter((value) => value.is_active).map((value) => value.value_id)] },
+      valueGetter: (params) => params.data?.[attribute.field] ?? null,
+      valueSetter: (params) => {
+        if (!params.data) return false;
+        params.data[attribute.field] = params.newValue ? String(params.newValue) : null;
+        return true;
+      },
+      valueFormatter: (params) => valueName(attribute.definition, params.value as string | null | undefined),
+    })),
+  ], [attributes]);
 
   const recordColumns = useMemo<ColDef<ChangeRecordGridRow>[]>(() => [
     { field: "cost_code_ref", headerName: "Cost Code ID", pinned: "left", editable: true, minWidth: 130, filter: "agSetColumnFilter", cellEditor: "agSelectCellEditor", cellEditorParams: { values: costCodes.map((code) => code.cost_code_id) } },
@@ -133,7 +189,23 @@ export default function ChangeManagementPage({ projectPublicId }: { projectPubli
     { field: "description", headerName: "Description", editable: true, minWidth: 230, filter: true },
     { field: "change_to_budget", headerName: "Change to Budget", editable: true, minWidth: 140, type: "numericColumn", aggFunc: "sum", valueParser: (params) => Number(params.newValue), valueFormatter: (params) => numberFormat(params.value) },
     { field: "change_to_eac", headerName: "Change to EAC", editable: true, minWidth: 130, type: "numericColumn", aggFunc: "sum", valueParser: (params) => Number(params.newValue), valueFormatter: (params) => numberFormat(params.value) },
-  ], [costCodes]);
+    ...attributes.map((attribute): ColDef<ChangeRecordGridRow> => ({
+      colId: attribute.field,
+      headerName: `${attribute.prefix} · ${attribute.columnName}`,
+      editable: true,
+      minWidth: 145,
+      filter: "agSetColumnFilter",
+      cellEditor: "agSelectCellEditor",
+      cellEditorParams: { values: ["", ...attribute.definition.attribute_values.filter((value) => value.is_active).map((value) => value.value_id)] },
+      valueGetter: (params) => params.data?.[attribute.field] ?? null,
+      valueSetter: (params) => {
+        if (!params.data) return false;
+        params.data[attribute.field] = params.newValue ? String(params.newValue) : null;
+        return true;
+      },
+      valueFormatter: (params) => valueName(attribute.definition, params.value as string | null | undefined),
+    })),
+  ], [attributes, costCodes]);
 
   async function orderChanged(event: CellValueChangedEvent<ChangeOrderGridRow>) {
     if (!event.data || event.newValue === event.oldValue) return;
@@ -152,6 +224,10 @@ export default function ChangeManagementPage({ projectPublicId }: { projectPubli
         await updateChangeOrder(event.data.id, { description: value });
       } else if (field === "status") {
         await updateChangeOrder(event.data.id, { status: event.newValue as ChangeOrderStatus });
+      } else if (CHANGE_ATTRIBUTE_FIELDS.includes(field as ChangeAttributeField)) {
+        const patch: ChangeAttributeValues = {};
+        patch[field as ChangeAttributeField] = event.newValue ? String(event.newValue) : null;
+        await updateChangeOrder(event.data.id, patch);
       }
       await refresh();
     } catch (requestError) {
@@ -187,6 +263,10 @@ export default function ChangeManagementPage({ projectPublicId }: { projectPubli
         const value = Number(event.newValue);
         if (!Number.isFinite(value)) throw new Error("Change to EAC must be a valid number.");
         await updateChangeRecord(event.data.id, { change_to_eac: value });
+      } else if (CHANGE_ATTRIBUTE_FIELDS.includes(field as ChangeAttributeField)) {
+        const patch: ChangeAttributeValues = {};
+        patch[field as ChangeAttributeField] = event.newValue ? String(event.newValue) : null;
+        await updateChangeRecord(event.data.id, patch);
       }
       await refresh();
     } catch (requestError) {
