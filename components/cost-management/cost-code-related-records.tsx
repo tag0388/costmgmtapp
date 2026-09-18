@@ -338,6 +338,12 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
     period_qty: Object.fromEntries(futurePeriods.map((period) => [period.id, periodForecastTotals.get(period.id) ?? 0])),
   }), [costCode.id, futurePeriods, periodForecastTotals, project.id]);
 
+  useEffect(() => {
+    if (!gridApi || mode !== "ctc") return;
+    gridApi.setGridOption("pinnedTopRowData", [forecastSubtotalRow as RelatedGridRow]);
+    gridApi.refreshCells({ force: true });
+  }, [forecastSubtotalRow, gridApi, mode]);
+
   function rowOrderAt(index: number) {
     if (index < 0 || index >= rows.length) return 0;
     return rows[index].row_order ?? (index + 1) * 1000;
