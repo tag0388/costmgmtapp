@@ -433,7 +433,7 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
       { groupId: "ctc-general", headerName: "General Info", marryChildren: true, openByDefault: true, children: generalInfo },
       ...(enterpriseColumns.length ? [{ groupId: "ctc-enterprise-attrs", headerName: "Enterprise Line-Item Attributes", marryChildren: true, openByDefault: true, children: enterpriseColumns }] : []),
       ...(projectColumns.length ? [{ groupId: "ctc-project-attrs", headerName: "Project Line-Item Attributes", marryChildren: true, openByDefault: true, children: projectColumns }] : []),
-      { groupId: "ctc-user-columns", headerName: "User Columns", marryChildren: true, openByDefault: true, children: userColumns },
+      { groupId: "ctc-user-columns", headerName: "User Columns", marryChildren: true, openByDefault: false, children: userColumns },
       { groupId: "ctc-phasing", headerName: "Phasing", marryChildren: true, openByDefault: true, children: phasingColumns },
     ];
     return groups;
