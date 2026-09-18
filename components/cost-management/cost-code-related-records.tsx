@@ -324,36 +324,57 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
     ...actualAttributes.map((attribute): ColDef<ActualGridRow> => ({ field: attribute.field as keyof ActualGridRow & string, headerName: attribute.columnName, editable: true, filter: "agSetColumnFilter", ...attributeEditor(attribute.definition) })),
   ], [actualAttributes, attributeEditor, periods]);
 
-  const ctcColumnDefs = useMemo<ColDef<CtcGridRow>[]>(() => {
+  const ctcColumnDefs = useMemo<(ColDef<CtcGridRow> | ColGroupDef<CtcGridRow>)[]>(() => {
     const resourceCellStyle = (params: { data?: CtcGridRow }) => params.data?.resource_source ? { backgroundColor: "#f8fafc", color: "#475569" } : undefined;
-    return [
+    const formulaCellStyle = { backgroundColor: "#eef1f4", color: "#475569", fontWeight: 600 };
+    const generalInfo: ColDef<CtcGridRow>[] = [
       { field: "resource_source_label", colId: "resource_source_label", headerName: "Resource Source", editable: false, filter: "agSetColumnFilter", minWidth: 105, maxWidth: 125 },
       { field: "item", headerName: "Item", editable: (params) => !params.data?.resource_source, filter: true, cellStyle: resourceCellStyle },
       { field: "description", headerName: "Description", editable: (params) => !params.data?.resource_source, filter: true, minWidth: 180, cellStyle: resourceCellStyle },
-      { colId: "qty", headerName: "Qty", editable: false, type: "numericColumn", aggFunc: "sum", enableValue: true, valueGetter: (params) => Object.values(params.data?.period_qty ?? {}).reduce((sum, value) => sum + Number(value || 0), 0), valueFormatter: (params) => numberFormat(params.value, 4) },
+      { colId: "qty", headerName: "Qty", editable: false, type: "numericColumn", aggFunc: "sum", enableValue: true, cellStyle: formulaCellStyle, valueGetter: (params) => futurePeriods.reduce((sum, period) => sum + Number(params.data?.period_qty[period.id] ?? 0), 0), valueFormatter: (params) => numberFormat(params.value, 4) },
       { field: "unit", headerName: "Unit", editable: (params) => !params.data?.resource_source, filter: "agSetColumnFilter", cellStyle: resourceCellStyle },
       { field: "rate", headerName: "Rate", editable: (params) => !params.data?.resource_source, type: "numericColumn", valueParser: (params) => Number(params.newValue), valueFormatter: (params) => numberFormat(params.value, 4), cellStyle: resourceCellStyle },
-      { colId: "total", headerName: "Total", editable: false, type: "numericColumn", aggFunc: "sum", enableValue: true, valueGetter: (params) => Object.values(params.data?.period_qty ?? {}).reduce((sum, value) => sum + Number(value || 0), 0) * Number(params.data?.rate ?? 0), valueFormatter: (params) => numberFormat(params.value, 2) },
+      { colId: "total", headerName: "Total", editable: false, type: "numericColumn", aggFunc: "sum", enableValue: true, cellStyle: formulaCellStyle, valueGetter: (params) => futurePeriods.reduce((sum, period) => sum + Number(params.data?.period_qty[period.id] ?? 0), 0) * Number(params.data?.rate ?? 0), valueFormatter: (params) => numberFormat(params.value, 2) },
       { field: "category", headerName: "Category", editable: true, cellEditor: "agSelectCellEditor", cellEditorParams: { values: ["", ...RESOURCE_CATEGORIES] }, filter: "agSetColumnFilter", valueFormatter: (params) => params.value ?? "" },
-      ...ctcAttributes.map((attribute): ColDef<CtcGridRow> => ({ field: attribute.field as keyof CtcGridRow & string, headerName: attribute.columnName, editable: true, filter: "agSetColumnFilter", ...attributeEditor(attribute.definition) })),
-      ...periods.map((period): ColDef<CtcGridRow> => ({
-        colId: `period:${period.id}`,
-        headerName: periodColumnLabel(period),
-        editable: true,
-        type: "numericColumn",
-        aggFunc: "sum",
-        enableValue: true,
-        width: 82,
-        minWidth: 72,
-        maxWidth: 92,
-        wrapHeaderText: true,
-        autoHeaderHeight: true,
-        valueGetter: (params) => Number(params.data?.period_qty[period.id] ?? 0),
-        valueSetter: (params) => { if (!params.data) return false; const parsed = Number(params.newValue); if (!Number.isFinite(parsed) || parsed < 0) return false; params.data.period_qty = { ...params.data.period_qty, [period.id]: parsed }; return true; },
-        valueFormatter: (params) => numberFormat(params.value, 4),
-      })),
     ];
-  }, [attributeEditor, ctcAttributes, periods]);
+    const enterpriseColumns = enterpriseCtcAttributes.map((attribute): ColDef<CtcGridRow> => ({
+      field: attribute.field as keyof CtcGridRow & string,
+      headerName: attribute.columnName,
+      editable: true,
+      filter: "agSetColumnFilter",
+      ...attributeEditor(attribute.definition),
+    }));
+    const projectColumns = projectCtcAttributes.map((attribute): ColDef<CtcGridRow> => ({
+      field: attribute.field as keyof CtcGridRow & string,
+      headerName: attribute.columnName,
+      editable: true,
+      filter: "agSetColumnFilter",
+      ...attributeEditor(attribute.definition),
+    }));
+    const phasingColumns = futurePeriods.map((period): ColDef<CtcGridRow> => ({
+      colId: `period:${period.id}`,
+      headerName: periodColumnLabel(period),
+      editable: true,
+      type: "numericColumn",
+      aggFunc: "sum",
+      enableValue: true,
+      width: 82,
+      minWidth: 72,
+      maxWidth: 92,
+      wrapHeaderText: true,
+      autoHeaderHeight: true,
+      valueGetter: (params) => Number(params.data?.period_qty[period.id] ?? 0),
+      valueSetter: (params) => { if (!params.data) return false; const parsed = Number(params.newValue); if (!Number.isFinite(parsed) || parsed < 0) return false; params.data.period_qty = { ...params.data.period_qty, [period.id]: parsed }; return true; },
+      valueFormatter: (params) => numberFormat(params.value, 4),
+    }));
+    const groups: (ColDef<CtcGridRow> | ColGroupDef<CtcGridRow>)[] = [
+      { headerName: "General Info", marryChildren: true, children: generalInfo },
+    ];
+    if (enterpriseColumns.length) groups.push({ headerName: "Enterprise Line-Item Attributes", marryChildren: true, children: enterpriseColumns });
+    if (projectColumns.length) groups.push({ headerName: "Project Line-Item Attributes", marryChildren: true, children: projectColumns });
+    groups.push({ headerName: "Phasing", marryChildren: true, children: phasingColumns });
+    return groups;
+  }, [attributeEditor, enterpriseCtcAttributes, futurePeriods, projectCtcAttributes]);
 
   async function actualChanged(event: CellValueChangedEvent<ActualGridRow>) {
     if (!event.data || event.newValue === event.oldValue) return;
