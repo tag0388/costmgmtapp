@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AgGridProvider, AgGridReact } from "ag-grid-react";
-import type { CellValueChangedEvent, ColDef, ColumnState, GridApi, SelectionChangedEvent } from "ag-grid-community";
+import type { CellValueChangedEvent, ColDef, ColGroupDef, ColumnState, GridApi, SelectionChangedEvent } from "ag-grid-community";
 import { themeQuartz } from "ag-grid-community";
 import { AllEnterpriseModule } from "ag-grid-enterprise";
 import ExcelImportDialog from "@/components/shared/excel-import-dialog";
@@ -26,6 +26,7 @@ import {
   type TransactionType,
 } from "@/lib/cost-actuals";
 import {
+  clearCostToCompletePeriodQty,
   costToCompleteErrorMessage,
   createCostToCompleteDetail,
   createCostToCompleteDetails,
@@ -39,6 +40,7 @@ import {
 } from "@/lib/cost-to-complete";
 import { listResourceRates, RESOURCE_CATEGORIES, type ResourceCategory, type ResourceRate } from "@/lib/resource-rates";
 import { listProjectResourceRates, type ProjectResourceRate } from "@/lib/project-resource-rates";
+import { getCostCodeFinancialSummary, type CostCodeFinancialSummary } from "@/lib/cost-code-financial-summary";
 
 const gridTheme = themeQuartz.withParams({ spacing: 4, rowHeight: 30, headerHeight: 34, fontSize: 12 });
 const ACTUAL_TYPES: TransactionType[] = ["FIN", "MAN", "ACC", "REV"];
@@ -75,6 +77,13 @@ function orderedRows<T extends { id: string; row_order: number | null; created_a
   const byCreated = [...input].sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at) || a.id.localeCompare(b.id));
   const fallback = new Map(byCreated.map((row, index) => [row.id, (index + 1) * 1000]));
   return [...input].sort((a, b) => (a.row_order ?? fallback.get(a.id) ?? 0) - (b.row_order ?? fallback.get(b.id) ?? 0) || a.id.localeCompare(b.id));
+}
+function ctcQtyForRow(row: CostToCompleteLedgerRow | undefined, futurePeriods: CostReportingPeriod[]) {
+  if (!row) return 0;
+  return futurePeriods.reduce((sum, period) => sum + Number(row.period_qty[period.id] ?? 0), 0);
+}
+function ctcTotalForRow(row: CostToCompleteLedgerRow | undefined, futurePeriods: CostReportingPeriod[]) {
+  return ctcQtyForRow(row, futurePeriods) * Number(row?.rate ?? 0);
 }
 function numberFormat(value: unknown, decimals = 2) {
   const number = Number(value ?? 0);
@@ -182,6 +191,7 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
   const [projectResources, setProjectResources] = useState<ProjectResourceRate[]>([]);
   const [actualRows, setActualRows] = useState<ActualCostTransaction[]>([]);
   const [ctcRows, setCtcRows] = useState<CostToCompleteLedgerRow[]>([]);
+  const [financialSummary, setFinancialSummary] = useState<CostCodeFinancialSummary>({ baseline_budget: 0, budget_changes: 0, actual_cost_to_date: 0 });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -214,6 +224,12 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
   const periodByLabel = useMemo(() => new Map(periods.map((period) => [periodLabel(period), period])), [periods]);
   const periodByExcel = useMemo(() => new Map(periods.map((period) => [periodExcel(period).toUpperCase(), period])), [periods]);
   const periodById = useMemo(() => new Map(periods.map((period) => [period.id, period])), [periods]);
+  const currentPeriod = useMemo(() => periods.find((period) => period.status === "Current") ?? null, [periods]);
+  const futurePeriods = useMemo(
+    () => currentPeriod ? periods.filter((period) => period.period_number > currentPeriod.period_number) : periods.filter((period) => period.status === "Future"),
+    [currentPeriod, periods],
+  );
+  const futurePeriodIds = useMemo(() => new Set(futurePeriods.map((period) => period.id)), [futurePeriods]);
   const activeEnterpriseResources = useMemo(() => enterpriseResources.filter((row) => row.is_active), [enterpriseResources]);
   const activeProjectResources = useMemo(() => projectResources.filter((row) => row.is_active), [projectResources]);
   const enterpriseResourceIds = useMemo(() => new Set(activeEnterpriseResources.map((row) => row.resource_id.toLowerCase())), [activeEnterpriseResources]);
@@ -243,10 +259,26 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
         setActualRows(await listActualCostTransactionsForCostCode(project.id, costCode.id));
         setCtcRows([]); setEnterpriseResources([]); setProjectResources([]);
       } else {
-        const [rows, eResources, pResources] = await Promise.all([
-          listCostToCompleteLedgerForCostCode(project.id, costCode.id), listResourceRates(project.enterprise_id), listProjectResourceRates(project.id),
+        const [rows, eResources, pResources, summary] = await Promise.all([
+          listCostToCompleteLedgerForCostCode(project.id, costCode.id),
+          listResourceRates(project.enterprise_id),
+          listProjectResourceRates(project.id),
+          getCostCodeFinancialSummary(project.id, costCode.id),
         ]);
-        setCtcRows(rows); setActualRows([]); setEnterpriseResources(eResources); setProjectResources(pResources);
+        const current = reportingPeriods.find((period) => period.status === "Current") ?? null;
+        const allowedIds = new Set(
+          (current ? reportingPeriods.filter((period) => period.period_number > current.period_number) : reportingPeriods.filter((period) => period.status === "Future"))
+            .map((period) => period.id),
+        );
+        const blockedIds = reportingPeriods.filter((period) => !allowedIds.has(period.id)).map((period) => period.id);
+        const hasBlockedValues = rows.some((row) => blockedIds.some((periodId) => Number(row.period_qty[periodId] ?? 0) !== 0));
+        if (hasBlockedValues) await clearCostToCompletePeriodQty(rows.map((row) => row.id), blockedIds);
+        const sanitizedRows = rows.map((row) => ({
+          ...row,
+          period_qty: Object.fromEntries(Object.entries(row.period_qty).filter(([periodId]) => allowedIds.has(periodId))),
+        }));
+        setFinancialSummary(summary);
+        setCtcRows(sanitizedRows); setActualRows([]); setEnterpriseResources(eResources); setProjectResources(pResources);
       }
       setSelectedCount(0);
     } catch (requestError) { setError(mode === "actual" ? actualCostErrorMessage(requestError) : costToCompleteErrorMessage(requestError)); }
@@ -258,6 +290,10 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
   const actualGridRows = useMemo<ActualGridRow[]>(() => orderedRows(actualRows.map((row) => ({ ...row, period_label: periodById.get(row.cost_period_id) ? periodLabel(periodById.get(row.cost_period_id)!) : "" }))), [actualRows, periodById]);
   const ctcGridRows = useMemo<CtcGridRow[]>(() => orderedRows(ctcRows.map((row) => ({ ...row, resource_source_label: row.resource_source ?? "User" }))), [ctcRows]);
   const rows: RelatedGridRow[] = mode === "actual" ? actualGridRows : ctcGridRows;
+  const ctcTotal = useMemo(() => ctcGridRows.reduce((sum, row) => sum + ctcTotalForRow(row, futurePeriods), 0), [ctcGridRows, futurePeriods]);
+  const currentBudget = financialSummary.baseline_budget + financialSummary.budget_changes;
+  const eac = financialSummary.actual_cost_to_date + ctcTotal;
+  const variance = currentBudget - eac;
 
   function rowOrderAt(index: number) {
     if (index < 0 || index >= rows.length) return 0;
@@ -294,36 +330,47 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
     ...actualAttributes.map((attribute): ColDef<ActualGridRow> => ({ field: attribute.field as keyof ActualGridRow & string, headerName: attribute.columnName, editable: true, filter: "agSetColumnFilter", ...attributeEditor(attribute.definition) })),
   ], [actualAttributes, attributeEditor, periods]);
 
-  const ctcColumnDefs = useMemo<ColDef<CtcGridRow>[]>(() => {
+  const ctcColumnDefs = useMemo<Array<ColDef<CtcGridRow> | ColGroupDef<CtcGridRow>>>(() => {
     const resourceCellStyle = (params: { data?: CtcGridRow }) => params.data?.resource_source ? { backgroundColor: "#f8fafc", color: "#475569" } : undefined;
-    return [
+    const formulaCellStyle = { backgroundColor: "#eef0f3", color: "#374151", fontWeight: 600 };
+    const generalInfo: ColDef<CtcGridRow>[] = [
       { field: "resource_source_label", colId: "resource_source_label", headerName: "Resource Source", editable: false, filter: "agSetColumnFilter", minWidth: 105, maxWidth: 125 },
       { field: "item", headerName: "Item", editable: (params) => !params.data?.resource_source, filter: true, cellStyle: resourceCellStyle },
       { field: "description", headerName: "Description", editable: (params) => !params.data?.resource_source, filter: true, minWidth: 180, cellStyle: resourceCellStyle },
-      { colId: "qty", headerName: "Qty", editable: false, type: "numericColumn", aggFunc: "sum", enableValue: true, valueGetter: (params) => Object.values(params.data?.period_qty ?? {}).reduce((sum, value) => sum + Number(value || 0), 0), valueFormatter: (params) => numberFormat(params.value, 4) },
+      { colId: "qty", headerName: "Qty", editable: false, type: "numericColumn", aggFunc: "sum", enableValue: true, cellStyle: formulaCellStyle, valueGetter: (params) => ctcQtyForRow(params.data, futurePeriods), valueFormatter: (params) => numberFormat(params.value, 4) },
       { field: "unit", headerName: "Unit", editable: (params) => !params.data?.resource_source, filter: "agSetColumnFilter", cellStyle: resourceCellStyle },
       { field: "rate", headerName: "Rate", editable: (params) => !params.data?.resource_source, type: "numericColumn", valueParser: (params) => Number(params.newValue), valueFormatter: (params) => numberFormat(params.value, 4), cellStyle: resourceCellStyle },
-      { colId: "total", headerName: "Total", editable: false, type: "numericColumn", aggFunc: "sum", enableValue: true, valueGetter: (params) => Object.values(params.data?.period_qty ?? {}).reduce((sum, value) => sum + Number(value || 0), 0) * Number(params.data?.rate ?? 0), valueFormatter: (params) => numberFormat(params.value, 2) },
+      { colId: "total", headerName: "Total", editable: false, type: "numericColumn", aggFunc: "sum", enableValue: true, cellStyle: formulaCellStyle, valueGetter: (params) => ctcTotalForRow(params.data, futurePeriods), valueFormatter: (params) => numberFormat(params.value, 2) },
       { field: "category", headerName: "Category", editable: true, cellEditor: "agSelectCellEditor", cellEditorParams: { values: ["", ...RESOURCE_CATEGORIES] }, filter: "agSetColumnFilter", valueFormatter: (params) => params.value ?? "" },
-      ...ctcAttributes.map((attribute): ColDef<CtcGridRow> => ({ field: attribute.field as keyof CtcGridRow & string, headerName: attribute.columnName, editable: true, filter: "agSetColumnFilter", ...attributeEditor(attribute.definition) })),
-      ...periods.map((period): ColDef<CtcGridRow> => ({
-        colId: `period:${period.id}`,
-        headerName: periodColumnLabel(period),
-        editable: true,
-        type: "numericColumn",
-        aggFunc: "sum",
-        enableValue: true,
-        width: 82,
-        minWidth: 72,
-        maxWidth: 92,
-        wrapHeaderText: true,
-        autoHeaderHeight: true,
-        valueGetter: (params) => Number(params.data?.period_qty[period.id] ?? 0),
-        valueSetter: (params) => { if (!params.data) return false; const parsed = Number(params.newValue); if (!Number.isFinite(parsed) || parsed < 0) return false; params.data.period_qty = { ...params.data.period_qty, [period.id]: parsed }; return true; },
-        valueFormatter: (params) => numberFormat(params.value, 4),
-      })),
     ];
-  }, [attributeEditor, ctcAttributes, periods]);
+    const enterpriseColumns = ctcAttributes.filter((attribute) => attribute.prefix === "E").map((attribute, index): ColDef<CtcGridRow> => ({ field: attribute.field as keyof CtcGridRow & string, headerName: attribute.columnName, editable: true, filter: "agSetColumnFilter", columnGroupShow: index === 0 ? undefined : "open", ...attributeEditor(attribute.definition) }));
+    const projectColumns = ctcAttributes.filter((attribute) => attribute.prefix === "P").map((attribute, index): ColDef<CtcGridRow> => ({ field: attribute.field as keyof CtcGridRow & string, headerName: attribute.columnName, editable: true, filter: "agSetColumnFilter", columnGroupShow: index === 0 ? undefined : "open", ...attributeEditor(attribute.definition) }));
+    generalInfo.forEach((column, index) => { if (index > 0) column.columnGroupShow = "open"; });
+    const phasingColumns = futurePeriods.map((period, index): ColDef<CtcGridRow> => ({
+      colId: `period:${period.id}`,
+      headerName: periodColumnLabel(period),
+      editable: true,
+      type: "numericColumn",
+      aggFunc: "sum",
+      enableValue: true,
+      width: 82,
+      minWidth: 72,
+      maxWidth: 92,
+      wrapHeaderText: true,
+      autoHeaderHeight: true,
+      valueGetter: (params) => Number(params.data?.period_qty[period.id] ?? 0),
+      valueSetter: (params) => { if (!params.data) return false; const parsed = Number(params.newValue); if (!Number.isFinite(parsed) || parsed < 0) return false; params.data.period_qty = { ...params.data.period_qty, [period.id]: parsed }; return true; },
+      valueFormatter: (params) => numberFormat(params.value, 4),
+      columnGroupShow: index === 0 ? undefined : "open",
+    }));
+    const groups: Array<ColGroupDef<CtcGridRow>> = [
+      { groupId: "ctc-general", headerName: "General Info", marryChildren: true, openByDefault: true, children: generalInfo },
+      ...(enterpriseColumns.length ? [{ groupId: "ctc-enterprise-attrs", headerName: "Enterprise Line-Item Attributes", marryChildren: true, openByDefault: true, children: enterpriseColumns }] : []),
+      ...(projectColumns.length ? [{ groupId: "ctc-project-attrs", headerName: "Project Line-Item Attributes", marryChildren: true, openByDefault: true, children: projectColumns }] : []),
+      { groupId: "ctc-phasing", headerName: "Phasing", marryChildren: true, openByDefault: true, children: phasingColumns },
+    ];
+    return groups;
+  }, [attributeEditor, ctcAttributes, futurePeriods]);
 
   async function actualChanged(event: CellValueChangedEvent<ActualGridRow>) {
     if (!event.data || event.newValue === event.oldValue) return;
@@ -348,7 +395,7 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
       if (event.data.resource_source && ["resource_source_label", "item", "description", "unit", "rate"].includes(colId)) throw new Error("Item, Description, Unit and Rate are controlled by the resource library for resource-backed rows.");
       if (colId.startsWith("period:")) { const periodId = colId.slice(7); const qty = Number(event.data.period_qty[periodId] ?? 0); if (!Number.isFinite(qty) || qty < 0) throw new Error("Period quantity must be zero or greater."); await setCostToCompletePeriodQty(event.data.id, periodId, qty); event.api.refreshCells({ rowNodes: [event.node], columns: ["qty", "total"], force: true }); }
       else if (colId === "item") { const item = event.newValue ? String(event.newValue).trim() : null; const source = event.data.resource_source; const validIds = source === "ERes" ? enterpriseResourceIds : source === "PRes" ? projectResourceIds : null; if (source && (!item || !validIds?.has(item.toLowerCase()))) throw new Error(`Item must be an active ${source === "ERes" ? "Enterprise" : "Project"} Resource ID.`); await updateCostToCompleteDetail(event.data.id, { item }); }
-      else if (colId === "rate") { const rate = Number(event.newValue); if (!Number.isFinite(rate) || rate < 0) throw new Error("Rate must be zero or greater."); await updateCostToCompleteDetail(event.data.id, { rate }); event.api.refreshCells({ rowNodes: [event.node], columns: ["total"], force: true }); }
+      else if (colId === "rate") { const rate = Number(event.newValue); if (!Number.isFinite(rate) || rate < 0) throw new Error("Rate must be zero or greater."); await updateCostToCompleteDetail(event.data.id, { rate }); setCtcRows((current) => current.map((row) => row.id === event.data.id ? { ...row, rate } : row)); event.api.refreshCells({ rowNodes: [event.node], columns: ["total"], force: true }); }
       else if (colId === "description") await updateCostToCompleteDetail(event.data.id, { description: event.newValue ? String(event.newValue) : null });
       else if (colId === "unit") await updateCostToCompleteDetail(event.data.id, { unit: event.newValue ? String(event.newValue) : null });
       else if (colId === "category") await updateCostToCompleteDetail(event.data.id, { category: event.newValue ? event.newValue as ResourceCategory : null });
@@ -426,8 +473,8 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
   const excelColumns = useMemo(() => mode === "actual" ? [
     "Item", "Description", "Transaction Type", "Amount", "Cost Reporting Period", ...actualAttributes.map((a) => a.columnName),
   ] : [
-    "Resource Source", "Item", "Description", "Unit", "Rate", "Category", ...ctcAttributes.map((a) => a.columnName), ...periods.map(periodExcel),
-  ], [actualAttributes, ctcAttributes, mode, periods]);
+    "Resource Source", "Item", "Description", "Unit", "Rate", "Category", ...ctcAttributes.map((a) => a.columnName), ...futurePeriods.map(periodExcel),
+  ], [actualAttributes, ctcAttributes, futurePeriods, mode]);
 
   function exportRows() {
     const data: ExcelRow[] = mode === "actual" ? actualGridRows.map((row) => ({
@@ -436,7 +483,7 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
     })) : ctcGridRows.map((row) => ({
       "Resource Source": row.resource_source ?? "", Item: row.item ?? "", Description: row.description ?? "", Unit: row.unit ?? "", Rate: String(row.rate), Category: row.category ?? "",
       ...Object.fromEntries(ctcAttributes.map((a) => [a.columnName, row[a.field] ?? ""])),
-      ...Object.fromEntries(periods.map((period) => [periodExcel(period), String(row.period_qty[period.id] ?? 0)])),
+      ...Object.fromEntries(futurePeriods.map((period) => [periodExcel(period), String(row.period_qty[period.id] ?? 0)])),
     }));
     const template = Object.fromEntries(excelColumns.map((column) => [column, ""])) as ExcelRow;
     exportExcel(`${project.project_code}-${costCode.cost_code_id}-${mode === "actual" ? "actual-cost" : "cost-to-complete"}`, mode === "actual" ? "Actual Cost" : "Cost to Complete", data.length ? data : [template]);
@@ -470,7 +517,7 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
           }
           const category = (row.Category ?? "").trim(); if (category && !RESOURCE_CATEGORIES.includes(category as ResourceCategory)) errors.push(`Row ${line}: Category is invalid.`);
           ctcAttributes.forEach((a) => { const value = (row[a.columnName] ?? "").trim(); if (value && !a.definition.attribute_values.some((v) => v.is_active && v.value_id.toLowerCase() === value.toLowerCase())) errors.push(`Row ${line}: ${a.columnName} must contain an active Value ID.`); });
-          periods.forEach((period) => { const qty = parseNumber(row[periodExcel(period)]); if (Number.isNaN(qty) || qty < 0) errors.push(`Row ${line}: ${periodExcel(period)} must be zero or greater.`); });
+          futurePeriods.forEach((period) => { const qty = parseNumber(row[periodExcel(period)]); if (Number.isNaN(qty) || qty < 0) errors.push(`Row ${line}: ${periodExcel(period)} must be zero or greater.`); });
         }
       });
       setImportRows(incoming); setImportErrors(errors); setReplace(false); setProgress(0);
@@ -496,7 +543,7 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
           const item = (row.Item ?? "").trim();
           const sourceResource = sourceText === "ERes" ? enterpriseResourceById.get(item.toLowerCase()) : sourceText === "PRes" ? projectResourceById.get(item.toLowerCase()) : null;
           await createCostToCompleteDetail(project.id, { cost_code_id: costCode.id, resource_source: sourceText === "ERes" || sourceText === "PRes" ? sourceText : null, item: sourceResource?.resource_id ?? (item || null), description: sourceResource?.resource_name ?? ((row.Description ?? "").trim() || null), unit: sourceResource?.unit ?? ((row.Unit ?? "").trim() || null), rate: sourceResource ? Number(sourceResource.rate) : parseNumber(row.Rate), category: (row.Category ?? "").trim() ? row.Category as ResourceCategory : null, ...Object.fromEntries(ctcAttributes.map((a) => [a.field, (row[a.columnName] ?? "").trim() || null])) }).then(async (created) => {
-            for (const period of periods) { const qty = parseNumber(row[periodExcel(period)]); if (qty !== 0) await setCostToCompletePeriodQty(created.id, period.id, qty); }
+            for (const period of futurePeriods) { const qty = parseNumber(row[periodExcel(period)]); if (qty !== 0) await setCostToCompletePeriodQty(created.id, period.id, qty); }
           });
         }
         setProgress(((index + 1) / Math.max(importRows.length, 1)) * 100);
@@ -512,8 +559,8 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
   ] : [
     { id: "description", label: "Description", kind: "text" }, { id: "unit", label: "Unit", kind: "text" }, { id: "rate", label: "Rate", kind: "number" }, { id: "category", label: "Category", kind: "select", values: ["", ...RESOURCE_CATEGORIES] },
     ...ctcAttributes.map((a) => ({ id: a.field, label: a.columnName, kind: "attribute" as const, values: ["", ...a.definition.attribute_values.filter((v) => v.is_active).map((v) => v.value_id)], definition: a.definition })),
-    ...periods.map((period) => ({ id: `period:${period.id}`, label: periodLabel(period), kind: "periodQty" as const })),
-  ], [actualAttributes, ctcAttributes, mode, periods]);
+    ...futurePeriods.map((period) => ({ id: `period:${period.id}`, label: periodLabel(period), kind: "periodQty" as const })),
+  ], [actualAttributes, ctcAttributes, futurePeriods, mode, periods]);
 
   async function applyBulkEdit() {
     const selected = gridApi?.getSelectedRows() ?? [];
@@ -535,7 +582,7 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
           else await updateActualCostTransaction(row.id, { [bulkField]: bulkValue || null } as Partial<Record<ActualAttributeField, string | null>>);
         } else {
           const row = selectedRow as CtcGridRow;
-          if (bulkField.startsWith("period:")) { const qty = Number(bulkValue); if (!Number.isFinite(qty) || qty < 0) throw new Error("Period quantity must be zero or greater."); await setCostToCompletePeriodQty(row.id, bulkField.slice(7), qty); }
+          if (bulkField.startsWith("period:")) { const periodId = bulkField.slice(7); if (!futurePeriodIds.has(periodId)) throw new Error("Cost to Complete can only be phased into future reporting periods."); const qty = Number(bulkValue); if (!Number.isFinite(qty) || qty < 0) throw new Error("Period quantity must be zero or greater."); await setCostToCompletePeriodQty(row.id, periodId, qty); }
           else if (bulkField === "resource_source_label") { const source = bulkValue === "ERes" || bulkValue === "PRes" ? bulkValue as CtcResourceSource : null; await updateCostToCompleteDetail(row.id, { resource_source: source }); }
           else if (bulkField === "rate") { const rate = Number(bulkValue); if (!Number.isFinite(rate) || rate < 0) throw new Error("Rate must be zero or greater."); await updateCostToCompleteDetail(row.id, { rate }); }
           else if (bulkField === "description") await updateCostToCompleteDetail(row.id, { description: bulkValue || null });
@@ -568,15 +615,46 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
     catch (requestError) { setError(gridViewErrorMessage(requestError)); }
   }
 
+  function setAllGroupsOpen(open: boolean) {
+    if (!gridApi) return;
+    if (open) gridApi.expandAll(); else gridApi.collapseAll();
+    if (mode === "ctc") {
+      ["ctc-general", "ctc-enterprise-attrs", "ctc-project-attrs", "ctc-phasing"].forEach((groupId) => gridApi.setColumnGroupOpened(groupId, open));
+    }
+  }
+
   const title = mode === "actual" ? "Actual Cost" : "Cost to Complete";
-  const columns = (mode === "actual" ? actualColumnDefs : ctcColumnDefs) as ColDef<RelatedGridRow>[];
+  const columns = (mode === "actual" ? actualColumnDefs : ctcColumnDefs) as Array<ColDef<RelatedGridRow> | ColGroupDef<RelatedGridRow>>;
   const chosenBulk = bulkChoices.find((choice) => choice.id === bulkField);
 
   return <div style={{ position: "fixed", inset: 0, zIndex: 12000, background: "#f5f7fa", display: "flex", flexDirection: "column" }}>
-    <header style={{ minHeight: 58, background: "#fff", borderBottom: "1px solid #dfe4ea", display: "flex", alignItems: "center", gap: 14, padding: "8px 14px" }}>
+    <header style={{ minHeight: 58, background: "#fff", borderBottom: "1px solid #dfe4ea", display: "flex", alignItems: "center", gap: 12, padding: "7px 12px", overflowX: "auto" }}>
       <button className="button secondary compact" onClick={onClose}>← Back</button>
-      <div style={{ minWidth: 0 }}><div style={{ fontSize: 16, fontWeight: 700 }}>{title}</div><div style={{ fontSize: 12, color: "#68707d" }}><strong>{costCode.cost_code_id}</strong> · {costCode.name}</div></div>
-      <div style={{ marginLeft: "auto", fontSize: 11, color: saving ? "#2563eb" : "#68707d" }}>{saving ? "Saving…" : "Auto-save enabled"}</div>
+      <div style={{ minWidth: 155, flex: "0 0 auto" }}>
+        <div style={{ fontSize: 16, fontWeight: 700 }}>{title}</div>
+        <div style={{ fontSize: 12, color: "#68707d", whiteSpace: "nowrap" }}><strong>{costCode.cost_code_id}</strong> · {costCode.name}</div>
+      </div>
+      {mode === "ctc" && <>
+        <div style={{ flex: "0 0 auto", borderLeft: "1px solid #e5e7eb", paddingLeft: 10 }}>
+          <div style={{ fontSize: 9.5, color: "#64748b", lineHeight: "12px" }}>Current Period</div>
+          <div style={{ fontSize: 11.5, fontWeight: 700, whiteSpace: "nowrap" }}>{currentPeriod ? `P${currentPeriod.period_number} | ${formatCompactPeriodDate(currentPeriod.end_date)}` : "Not set"}</div>
+        </div>
+        <div style={{ display: "flex", alignItems: "stretch", flex: "0 0 auto", border: "1px solid #e5e7eb", borderRadius: 6, overflow: "hidden", background: "#fafafa" }}>
+          {[
+            ["Baseline Budget", financialSummary.baseline_budget],
+            ["Budget Changes", financialSummary.budget_changes],
+            ["Current Budget", currentBudget],
+            ["Actual Cost", financialSummary.actual_cost_to_date],
+            ["Cost to Complete", ctcTotal],
+            ["EAC", eac],
+            ["Variance", variance],
+          ].map(([label, value], index) => <div key={String(label)} style={{ minWidth: 102, padding: "5px 8px", borderLeft: index ? "1px solid #e5e7eb" : 0, textAlign: "right" }}>
+            <div style={{ fontSize: 9, color: "#64748b", whiteSpace: "nowrap", lineHeight: "11px" }}>{label}</div>
+            <div style={{ fontSize: 11.5, fontWeight: 700, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{numberFormat(Number(value), 2)}</div>
+          </div>)}
+        </div>
+      </>}
+      <div style={{ marginLeft: "auto", fontSize: 11, color: saving ? "#2563eb" : "#68707d", whiteSpace: "nowrap" }}>{saving ? "Saving…" : "Auto-save enabled"}</div>
       <button className="button secondary compact" onClick={onClose} aria-label="Close workspace">✕</button>
     </header>
 
@@ -589,8 +667,8 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
       {mode === "ctc" && <button className="button secondary" aria-label="Add resources" title="Add Resources from Enterprise or Project Resource Rates" disabled={loading || saving} onClick={() => { setResourcePaneOpen(true); setResourceSearch(""); setSelectedResourceIds([]); }} style={{ width: 34, paddingInline: 0, display: "grid", placeItems: "center" }}><SvgIcon type="resource"/></button>}
       <button className="button secondary" disabled={!selectedCount || saving} onClick={() => { setBulkOpen(true); setBulkField(""); setBulkValue(""); }}>Bulk Edit{selectedCount ? ` (${selectedCount})` : ""}</button>
       <button className="button danger" disabled={!selectedCount || saving} onClick={() => void deleteSelected()}>Delete{selectedCount ? ` (${selectedCount})` : ""}</button>
-      <button className="button secondary" disabled={!hasGroups} onClick={() => gridApi?.expandAll()}>Expand All</button>
-      <button className="button secondary" disabled={!hasGroups} onClick={() => gridApi?.collapseAll()}>Collapse All</button>
+      <button className="button secondary" disabled={mode !== "ctc" && !hasGroups} onClick={() => setAllGroupsOpen(true)}>Expand All</button>
+      <button className="button secondary" disabled={mode !== "ctc" && !hasGroups} onClick={() => setAllGroupsOpen(false)}>Collapse All</button>
       <button className="button secondary" onClick={exportRows}>⇩ Export</button>
       <button className="button secondary" onClick={() => fileRef.current?.click()}>⇧ Import</button>
       <input ref={fileRef} hidden type="file" accept=".xlsx,.xls" onChange={(event) => void chooseImport(event.target.files?.[0])}/>
@@ -628,7 +706,7 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
         </div>
       </AgGridProvider>}
     </div>
-    <footer className="grid-footer" style={{ padding: "6px 14px", background: "#fff", borderTop: "1px solid #e5e7eb" }}><span>{rows.length} related {title} row{rows.length === 1 ? "" : "s"} · {selectedCount} selected</span><span>{mode === "ctc" ? `${periods.length} phasing periods` : `${periods.length} reporting periods`} · Cost Code is fixed to {costCode.cost_code_id}</span></footer>
+    <footer className="grid-footer" style={{ padding: "6px 14px", background: "#fff", borderTop: "1px solid #e5e7eb" }}><span>{rows.length} related {title} row{rows.length === 1 ? "" : "s"} · {selectedCount} selected</span><span>{mode === "ctc" ? `${futurePeriods.length} future phasing periods` : `${periods.length} reporting periods`} · Cost Code is fixed to {costCode.cost_code_id}</span></footer>
 
     {importRows && <ExcelImportDialog title={`Import ${title} · ${costCode.cost_code_id}`} rows={importRows} columns={excelColumns} errors={importErrors} replace={replace} setReplace={setReplace} importing={importing} progress={progress} onCancel={() => !importing && setImportRows(null)} onImport={() => void runImport()}/>} 
 

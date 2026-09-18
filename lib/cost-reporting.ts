@@ -38,8 +38,18 @@ export function getCostReportingSettings(projectId: string) {
   return supabaseRequest<CostReportingSettings[]>(`cost_reporting_settings?project_id=eq.${encodeURIComponent(projectId)}&select=${encodeURIComponent(settingsSelect)}&limit=1`).then((rows) => rows[0] ?? null);
 }
 
-export function listCostReportingPeriods(projectId: string) {
-  return supabaseRequest<CostReportingPeriod[]>(`cost_reporting_periods?project_id=eq.${encodeURIComponent(projectId)}&select=${encodeURIComponent(periodSelect)}&order=period_number.asc`);
+export async function listCostReportingPeriods(projectId: string) {
+  const rows = await supabaseRequest<CostReportingPeriod[]>(`cost_reporting_periods?project_id=eq.${encodeURIComponent(projectId)}&select=${encodeURIComponent(periodSelect)}&order=period_number.asc`);
+  if (rows.length && !rows.some((period) => period.status === "Current") && !rows.some((period) => period.status === "Closed")) {
+    const first = rows.reduce((earliest, period) => period.period_number < earliest.period_number ? period : earliest, rows[0]);
+    const updated = await supabaseRequest<CostReportingPeriod[]>(`cost_reporting_periods?id=eq.${encodeURIComponent(first.id)}&select=${encodeURIComponent(periodSelect)}`, {
+      method: "PATCH",
+      headers: { Prefer: "return=representation" },
+      body: JSON.stringify({ status: "Current" }),
+    });
+    return rows.map((period) => period.id === first.id ? updated[0] : period);
+  }
+  return rows;
 }
 
 function normalizeSettingsInput(input: CostReportingSettingsInput): CostReportingSettingsInput {
@@ -99,7 +109,7 @@ export function buildReportingPeriods(projectId: string, input: CostReportingSet
       nextStart = new Date(Date.UTC(monthlyFirstStart.getUTCFullYear(), monthlyFirstStart.getUTCMonth() + index + 1, 1));
     }
     const end = new Date(nextStart.getTime() - 86400000);
-    return { project_id: projectId, period_number: index + 1, start_date: isoDate(start), end_date: isoDate(end), status: "Future" as CostPeriodStatus };
+    return { project_id: projectId, period_number: index + 1, start_date: isoDate(start), end_date: isoDate(end), status: (index === 0 ? "Current" : "Future") as CostPeriodStatus };
   });
 }
 
