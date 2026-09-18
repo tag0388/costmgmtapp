@@ -172,7 +172,7 @@ export async function importActualCostTransactions(projectId: string, rows: Actu
 export function actualCostErrorMessage(error: unknown) {
   if (error instanceof SupabaseRequestError) {
     if (error.code === "23503") return "Check that the Cost Code and Cost Reporting Period still exist in this project.";
-    if (error.code === "23514") return "The Actual Cost row was rejected by a database rule.";
+    if (error.code === "23514") return "Actual Cost can only be assigned to the Current or a Closed Cost Reporting Period. Future periods are not allowed.";
     if (error.code === "22P02") return "Transaction Type must be FIN, MAN, ACC or REV.";
     if (error.code === "22001") return "One or more text values are longer than the database limit.";
     return [error.message, error.details, error.hint].filter(Boolean).join(" ");
