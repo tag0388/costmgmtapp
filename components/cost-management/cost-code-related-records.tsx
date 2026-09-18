@@ -21,8 +21,12 @@ import {
   deleteActualCostTransactions,
   listActualCostTransactionsForCostCode,
   updateActualCostTransaction,
+  ACTUAL_USER_NUMBER_FIELDS,
+  ACTUAL_USER_TEXT_FIELDS,
   type ActualAttributeField,
   type ActualCostTransaction,
+  type ActualUserNumberField,
+  type ActualUserTextField,
   type TransactionType,
 } from "@/lib/cost-actuals";
 import {
@@ -48,6 +52,8 @@ import { getCostCodeFinancialSummary, type CostCodeFinancialSummary } from "@/li
 
 const gridTheme = themeQuartz.withParams({ spacing: 4, rowHeight: 30, headerHeight: 34, fontSize: 12 });
 const ACTUAL_TYPES: TransactionType[] = ["FIN", "MAN", "ACC", "REV"];
+const ACTUAL_USER_NUMBER_COLUMNS = ACTUAL_USER_NUMBER_FIELDS.map((field, index) => ({ field, label: `User Number ${index + 1}` }));
+const ACTUAL_USER_TEXT_COLUMNS = ACTUAL_USER_TEXT_FIELDS.map((field, index) => ({ field, label: `User Text ${index + 1}` }));
 const CTC_USER_NUMBER_COLUMNS = CTC_USER_NUMBER_FIELDS.map((field, index) => ({ field, label: `User Number ${index + 1}` }));
 const CTC_USER_TEXT_COLUMNS = CTC_USER_TEXT_FIELDS.map((field, index) => ({ field, label: `User Text ${index + 1}` }));
 const COST_CODE_MENU_EVENT = "costwise:open-cost-code-actions";
@@ -246,6 +252,9 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
   const periodByExcel = useMemo(() => new Map(periods.map((period) => [periodExcel(period).toUpperCase(), period])), [periods]);
   const periodById = useMemo(() => new Map(periods.map((period) => [period.id, period])), [periods]);
   const currentPeriod = useMemo(() => periods.find((period) => period.status === "Current") ?? null, [periods]);
+  const actualAllowedPeriods = useMemo(() => periods.filter((period) => period.status !== "Future"), [periods]);
+  const actualPeriodByLabel = useMemo(() => new Map(actualAllowedPeriods.map((period) => [periodLabel(period), period])), [actualAllowedPeriods]);
+  const actualPeriodByExcel = useMemo(() => new Map(actualAllowedPeriods.map((period) => [periodExcel(period).toUpperCase(), period])), [actualAllowedPeriods]);
   const futurePeriods = useMemo(
     () => currentPeriod ? periods.filter((period) => period.period_number > currentPeriod.period_number) : periods.filter((period) => period.status === "Future"),
     [currentPeriod, periods],
@@ -367,14 +376,36 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
   }
   const attributeEditor = useCallback((definition: AttributeDefinition) => ({ cellEditor: "agSelectCellEditor", cellEditorParams: { values: ["", ...definition.attribute_values.filter((value) => value.is_active).map((value) => value.value_id)] }, valueFormatter: (params: { value: string | null }) => valueName(definition, params.value) }), []);
 
-  const actualColumnDefs = useMemo<ColDef<ActualGridRow>[]>(() => [
-    { field: "transaction_id", headerName: "Item", editable: true, filter: true },
-    { field: "description", headerName: "Description", editable: true, filter: true, minWidth: 180 },
-    { field: "transaction_type", headerName: "Transaction Type", editable: true, cellEditor: "agSelectCellEditor", cellEditorParams: { values: ACTUAL_TYPES }, filter: "agSetColumnFilter" },
-    { field: "amount", headerName: "Amount", editable: true, type: "numericColumn", aggFunc: "sum", enableValue: true, valueParser: (params) => Number(params.newValue), valueFormatter: (params) => numberFormat(params.value, 2) },
-    { field: "period_label", colId: "period_label", headerName: "Cost Reporting Period", editable: true, cellEditor: "agSelectCellEditor", cellEditorParams: { values: periods.map(periodLabel) }, filter: "agSetColumnFilter", minWidth: 145 },
-    ...actualAttributes.map((attribute): ColDef<ActualGridRow> => ({ field: attribute.field as keyof ActualGridRow & string, headerName: attribute.columnName, editable: true, filter: "agSetColumnFilter", ...attributeEditor(attribute.definition) })),
-  ], [actualAttributes, attributeEditor, periods]);
+  const actualColumnDefs = useMemo<Array<ColDef<ActualGridRow> | ColGroupDef<ActualGridRow>>>(() => {
+    const userColumns: ColDef<ActualGridRow>[] = [
+      ...ACTUAL_USER_NUMBER_COLUMNS.map(({ field, label }, index): ColDef<ActualGridRow> => ({
+        field: field as keyof ActualGridRow & string,
+        headerName: label,
+        editable: true,
+        type: "numericColumn",
+        filter: "agNumberColumnFilter",
+        valueParser: (params) => String(params.newValue ?? "").trim() === "" ? null : Number(params.newValue),
+        valueFormatter: (params) => params.value == null ? "" : numberFormat(params.value, 4),
+        columnGroupShow: index === 0 ? undefined : "open",
+      })),
+      ...ACTUAL_USER_TEXT_COLUMNS.map(({ field, label }): ColDef<ActualGridRow> => ({
+        field: field as keyof ActualGridRow & string,
+        headerName: label,
+        editable: true,
+        filter: true,
+        columnGroupShow: "open",
+      })),
+    ];
+    return [
+      { field: "transaction_id", headerName: "Item", editable: true, filter: true },
+      { field: "description", headerName: "Description", editable: true, filter: true, minWidth: 180 },
+      { field: "transaction_type", headerName: "Transaction Type", editable: true, cellEditor: "agSelectCellEditor", cellEditorParams: { values: ACTUAL_TYPES }, filter: "agSetColumnFilter" },
+      { field: "amount", headerName: "Amount", editable: true, type: "numericColumn", aggFunc: "sum", enableValue: true, valueParser: (params) => Number(params.newValue), valueFormatter: (params) => numberFormat(params.value, 2) },
+      { field: "period_label", colId: "period_label", headerName: "Cost Reporting Period", editable: true, cellEditor: "agSelectCellEditor", cellEditorParams: { values: actualAllowedPeriods.map(periodLabel) }, filter: "agSetColumnFilter", minWidth: 145 },
+      ...actualAttributes.map((attribute): ColDef<ActualGridRow> => ({ field: attribute.field as keyof ActualGridRow & string, headerName: attribute.columnName, editable: true, filter: "agSetColumnFilter", ...attributeEditor(attribute.definition) })),
+      { groupId: "actual-user-columns", headerName: "User Columns", marryChildren: true, openByDefault: false, children: userColumns },
+    ];
+  }, [actualAllowedPeriods, actualAttributes, attributeEditor]);
 
   const ctcColumnDefs = useMemo<Array<ColDef<CtcGridRow> | ColGroupDef<CtcGridRow>>>(() => {
     const resourceCellStyle = (params: { data?: CtcGridRow }) => params.data?.resource_source ? { backgroundColor: "#f8fafc", color: "#475569" } : undefined;
@@ -444,11 +475,18 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
     setSaving(true); setError("");
     try {
       const colId = event.column.getColId();
-      if (colId === "period_label") { const period = periodByLabel.get(String(event.newValue)); if (!period) throw new Error("Select a valid Cost Reporting Period."); event.data.cost_period_id = period.id; event.data.transaction_date = period.end_date; await updateActualCostTransaction(event.data.id, { cost_period_id: period.id, transaction_date: period.end_date }); }
+      if (colId === "period_label") { const period = actualPeriodByLabel.get(String(event.newValue)); if (!period) throw new Error("Actual Cost can only be assigned to the Current or a Closed reporting period."); event.data.cost_period_id = period.id; event.data.transaction_date = period.end_date; await updateActualCostTransaction(event.data.id, { cost_period_id: period.id, transaction_date: period.end_date }); }
       else if (colId === "amount") { const amount = Number(event.newValue); if (!Number.isFinite(amount)) throw new Error("Amount must be a valid number."); await updateActualCostTransaction(event.data.id, { amount }); }
       else if (colId === "transaction_id") await updateActualCostTransaction(event.data.id, { transaction_id: event.newValue ? String(event.newValue) : null });
       else if (colId === "description") await updateActualCostTransaction(event.data.id, { description: String(event.newValue ?? "") });
       else if (colId === "transaction_type") await updateActualCostTransaction(event.data.id, { transaction_type: event.newValue as TransactionType });
+      else if (colId.startsWith("user_number_")) {
+        const raw = String(event.newValue ?? "").trim();
+        const value = raw === "" ? null : Number(event.newValue);
+        if (value !== null && !Number.isFinite(value)) throw new Error("User Number must be a valid number.");
+        await updateActualCostTransaction(event.data.id, { [colId]: value } as Partial<Record<ActualUserNumberField, number | null>>);
+      }
+      else if (colId.startsWith("user_text_")) await updateActualCostTransaction(event.data.id, { [colId]: String(event.newValue ?? "").trim() || null } as Partial<Record<ActualUserTextField, string | null>>);
       else if (colId.startsWith("e_attribute_") || colId.startsWith("p_attribute_")) await updateActualCostTransaction(event.data.id, { [colId]: event.newValue || null } as Partial<Record<ActualAttributeField, string | null>>);
     } catch (requestError) { event.node.setDataValue(event.column, event.oldValue); setError(actualCostErrorMessage(requestError)); }
     finally { setSaving(false); }
@@ -512,7 +550,7 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
     setSaving(true); setError("");
     try {
       if (mode === "actual") {
-        const period = periods.find((p) => p.status === "Current") ?? periods.find((p) => p.status !== "Closed") ?? periods[0];
+        const period = periods.find((p) => p.status === "Current") ?? [...periods].filter((p) => p.status === "Closed").sort((a, b) => b.period_number - a.period_number)[0];
         if (!period) throw new Error("Create a Cost Reporting Period before adding Actual Cost.");
         const input = orders.map((rowOrder) => ({ cost_period_id: period.id, cost_code_id: costCode.id, transaction_date: period.end_date, transaction_id: null, description: "", amount: 0, transaction_type: "MAN" as TransactionType, row_order: rowOrder, ...Object.fromEntries(actualAttributes.map((a) => [a.field, null])) }));
         const created = await createActualCostTransactions(project.id, input);
@@ -573,6 +611,8 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
 
   const excelColumns = useMemo(() => mode === "actual" ? [
     "Item", "Description", "Transaction Type", "Amount", "Cost Reporting Period", ...actualAttributes.map((a) => a.columnName),
+    ...ACTUAL_USER_NUMBER_COLUMNS.map((column) => column.label),
+    ...ACTUAL_USER_TEXT_COLUMNS.map((column) => column.label),
   ] : [
     "Resource Source", "Item", "Description", "Unit", "Rate", "Category", ...ctcAttributes.map((a) => a.columnName),
     ...CTC_USER_NUMBER_COLUMNS.map((column) => column.label),
@@ -584,6 +624,8 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
     const data: ExcelRow[] = mode === "actual" ? actualGridRows.map((row) => ({
       Item: row.transaction_id ?? "", Description: row.description, "Transaction Type": row.transaction_type, Amount: String(row.amount), "Cost Reporting Period": periodById.get(row.cost_period_id) ? periodExcel(periodById.get(row.cost_period_id)!) : "",
       ...Object.fromEntries(actualAttributes.map((a) => [a.columnName, row[a.field] ?? ""])),
+      ...Object.fromEntries(ACTUAL_USER_NUMBER_COLUMNS.map(({ field, label }) => [label, row[field] == null ? "" : String(row[field])])),
+      ...Object.fromEntries(ACTUAL_USER_TEXT_COLUMNS.map(({ field, label }) => [label, row[field] ?? ""])),
     })) : ctcGridRows.map((row) => ({
       "Resource Source": row.resource_source ?? "", Item: row.item ?? "", Description: row.description ?? "", Unit: row.unit ?? "", Rate: String(row.rate), Category: row.category ?? "",
       ...Object.fromEntries(ctcAttributes.map((a) => [a.columnName, row[a.field] ?? ""])),
@@ -606,8 +648,10 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
         if (mode === "actual") {
           if (!ACTUAL_TYPES.includes((row["Transaction Type"] ?? "") as TransactionType)) errors.push(`Row ${line}: Transaction Type must be FIN, MAN, ACC or REV.`);
           if (Number.isNaN(parseNumber(row.Amount))) errors.push(`Row ${line}: Amount must be a valid number.`);
-          if (!periodByExcel.has((row["Cost Reporting Period"] ?? "").trim().toUpperCase())) errors.push(`Row ${line}: Cost Reporting Period must be one of ${periods.map(periodExcel).join(", ")}.`);
+          const importedPeriodText = (row["Cost Reporting Period"] ?? "").trim().toUpperCase();
+          if (!actualPeriodByExcel.has(importedPeriodText)) errors.push(`Row ${line}: Cost Reporting Period must be Current or Closed. Future periods are not allowed. Valid values: ${actualAllowedPeriods.map(periodExcel).join(", ")}.`);
           actualAttributes.forEach((a) => { const value = (row[a.columnName] ?? "").trim(); if (value && !a.definition.attribute_values.some((v) => v.is_active && v.value_id.toLowerCase() === value.toLowerCase())) errors.push(`Row ${line}: ${a.columnName} must contain an active Value ID.`); });
+          ACTUAL_USER_NUMBER_COLUMNS.forEach(({ label }) => { const raw = (row[label] ?? "").trim(); if (raw && Number.isNaN(parseNumber(raw))) errors.push(`Row ${line}: ${label} must be a valid number or blank.`); });
         } else {
           const sourceText = (row["Resource Source"] ?? "").trim();
           const item = (row.Item ?? "").trim();
@@ -643,8 +687,12 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
       for (let index = 0; index < importRows.length; index += 1) {
         const row = importRows[index];
         if (mode === "actual") {
-          const period = periodByExcel.get((row["Cost Reporting Period"] ?? "").trim().toUpperCase())!;
-          await createActualCostTransaction(project.id, { cost_code_id: costCode.id, cost_period_id: period.id, transaction_date: period.end_date, transaction_id: (row.Item ?? "").trim() || null, description: (row.Description ?? "").trim(), transaction_type: row["Transaction Type"] as TransactionType, amount: parseNumber(row.Amount), ...Object.fromEntries(actualAttributes.map((a) => [a.field, (row[a.columnName] ?? "").trim() || null])) });
+          const period = actualPeriodByExcel.get((row["Cost Reporting Period"] ?? "").trim().toUpperCase())!;
+          await createActualCostTransaction(project.id, { cost_code_id: costCode.id, cost_period_id: period.id, transaction_date: period.end_date, transaction_id: (row.Item ?? "").trim() || null, description: (row.Description ?? "").trim(), transaction_type: row["Transaction Type"] as TransactionType, amount: parseNumber(row.Amount),
+            ...Object.fromEntries(actualAttributes.map((a) => [a.field, (row[a.columnName] ?? "").trim() || null])),
+            ...Object.fromEntries(ACTUAL_USER_NUMBER_COLUMNS.map(({ field, label }) => { const raw = (row[label] ?? "").trim(); return [field, raw ? parseNumber(raw) : null]; })),
+            ...Object.fromEntries(ACTUAL_USER_TEXT_COLUMNS.map(({ field, label }) => [field, (row[label] ?? "").trim() || null])),
+          });
         } else {
           const sourceText = (row["Resource Source"] ?? "").trim();
           const item = (row.Item ?? "").trim();
@@ -665,15 +713,17 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
   }
 
   const bulkChoices = useMemo<BulkChoice[]>(() => mode === "actual" ? [
-    { id: "transaction_id", label: "Item", kind: "text" }, { id: "description", label: "Description", kind: "text" }, { id: "transaction_type", label: "Transaction Type", kind: "select", values: ACTUAL_TYPES }, { id: "amount", label: "Amount", kind: "number" }, { id: "period_label", label: "Cost Reporting Period", kind: "select", values: periods.map(periodLabel) },
+    { id: "transaction_id", label: "Item", kind: "text" }, { id: "description", label: "Description", kind: "text" }, { id: "transaction_type", label: "Transaction Type", kind: "select", values: ACTUAL_TYPES }, { id: "amount", label: "Amount", kind: "number" }, { id: "period_label", label: "Cost Reporting Period", kind: "select", values: actualAllowedPeriods.map(periodLabel) },
     ...actualAttributes.map((a) => ({ id: a.field, label: a.columnName, kind: "attribute" as const, values: ["", ...a.definition.attribute_values.filter((v) => v.is_active).map((v) => v.value_id)], definition: a.definition })),
+    ...ACTUAL_USER_NUMBER_COLUMNS.map(({ field, label }) => ({ id: field, label, kind: "number" as const })),
+    ...ACTUAL_USER_TEXT_COLUMNS.map(({ field, label }) => ({ id: field, label, kind: "text" as const })),
   ] : [
     { id: "description", label: "Description", kind: "text" }, { id: "unit", label: "Unit", kind: "text" }, { id: "rate", label: "Rate", kind: "number" }, { id: "category", label: "Category", kind: "select", values: ["", ...RESOURCE_CATEGORIES] },
     ...ctcAttributes.map((a) => ({ id: a.field, label: a.columnName, kind: "attribute" as const, values: ["", ...a.definition.attribute_values.filter((v) => v.is_active).map((v) => v.value_id)], definition: a.definition })),
     ...CTC_USER_NUMBER_COLUMNS.map(({ field, label }) => ({ id: field, label, kind: "number" as const })),
     ...CTC_USER_TEXT_COLUMNS.map(({ field, label }) => ({ id: field, label, kind: "text" as const })),
     ...futurePeriods.map((period) => ({ id: `period:${period.id}`, label: periodLabel(period), kind: "periodQty" as const })),
-  ], [actualAttributes, ctcAttributes, futurePeriods, mode, periods]);
+  ], [actualAllowedPeriods, actualAttributes, ctcAttributes, futurePeriods, mode]);
 
   async function applyBulkEdit() {
     const selected = gridApi?.getSelectedRows() ?? [];
@@ -687,11 +737,13 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
       for (const selectedRow of selected) {
         if (mode === "actual") {
           const row = selectedRow as ActualGridRow;
-          if (bulkField === "period_label") { const period = periodByLabel.get(bulkValue); if (!period) throw new Error("Select a valid Cost Reporting Period."); await updateActualCostTransaction(row.id, { cost_period_id: period.id, transaction_date: period.end_date }); }
+          if (bulkField === "period_label") { const period = actualPeriodByLabel.get(bulkValue); if (!period) throw new Error("Actual Cost can only be assigned to the Current or a Closed reporting period."); await updateActualCostTransaction(row.id, { cost_period_id: period.id, transaction_date: period.end_date }); }
           else if (bulkField === "amount") { const value = Number(bulkValue); if (!Number.isFinite(value)) throw new Error("Amount must be a valid number."); await updateActualCostTransaction(row.id, { amount: value }); }
           else if (bulkField === "transaction_id") await updateActualCostTransaction(row.id, { transaction_id: bulkValue || null });
           else if (bulkField === "description") await updateActualCostTransaction(row.id, { description: bulkValue });
           else if (bulkField === "transaction_type") await updateActualCostTransaction(row.id, { transaction_type: bulkValue as TransactionType });
+          else if (bulkField.startsWith("user_number_")) { const value = bulkValue.trim() === "" ? null : Number(bulkValue); if (value !== null && !Number.isFinite(value)) throw new Error("User Number must be a valid number."); await updateActualCostTransaction(row.id, { [bulkField]: value } as Partial<Record<ActualUserNumberField, number | null>>); }
+          else if (bulkField.startsWith("user_text_")) await updateActualCostTransaction(row.id, { [bulkField]: bulkValue.trim() || null } as Partial<Record<ActualUserTextField, string | null>>);
           else await updateActualCostTransaction(row.id, { [bulkField]: bulkValue || null } as Partial<Record<ActualAttributeField, string | null>>);
         } else {
           const row = selectedRow as CtcGridRow;
