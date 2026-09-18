@@ -83,6 +83,10 @@ export function listChangeRecords(projectId: string) {
   return supabaseRequest<ChangeRecord[]>(`change_records?project_id=eq.${encodeURIComponent(projectId)}&select=${encodeURIComponent(recordSelect)}&order=created_at.asc`);
 }
 
+export function listChangeRecordsForCostCode(projectId: string, costCodeId: string) {
+  return supabaseRequest<ChangeRecord[]>(`change_records?project_id=eq.${encodeURIComponent(projectId)}&cost_code_id=eq.${encodeURIComponent(costCodeId)}&select=${encodeURIComponent(recordSelect)}&order=created_at.asc`);
+}
+
 export function createChangeRecord(projectId: string, input: ChangeRecordInput) {
   return supabaseRequest<ChangeRecord[]>(`change_records?select=${encodeURIComponent(recordSelect)}`, {
     method: "POST", headers: { Prefer: "return=representation" },
