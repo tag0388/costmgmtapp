@@ -73,6 +73,21 @@ function formatCompactPeriodDate(value: string) {
 function periodColumnLabel(period: CostReportingPeriod) { return `P${period.period_number}\n${formatCompactPeriodDate(period.end_date)}`; }
 function periodExcel(period: CostReportingPeriod) { return `P${period.period_number} | ${formatCompactPeriodDate(period.end_date)}`; }
 
+function localIsoDate() {
+  const date = new Date();
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+function effectiveCurrentPeriod(periods: CostReportingPeriod[]) {
+  const explicit = periods.find((period) => period.status === "Current");
+  if (explicit) return explicit;
+  const today = localIsoDate();
+  const byDate = periods.find((period) => period.start_date <= today && period.end_date >= today);
+  if (byDate) return byDate;
+  const closed = periods.filter((period) => period.status === "Closed").sort((a, b) => b.period_number - a.period_number)[0];
+  if (closed) return periods.find((period) => period.period_number === closed.period_number + 1) ?? closed;
+  return null;
+}
+
 function orderedRows<T extends { id: string; row_order: number | null; created_at: string }>(input: T[]) {
   const byCreated = [...input].sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at) || a.id.localeCompare(b.id));
   const fallback = new Map(byCreated.map((row, index) => [row.id, (index + 1) * 1000]));
@@ -218,7 +233,7 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
 
   const actualAttributes = useMemo(() => buildAttributes(enterpriseAttributes, projectAttributes, actualEField, actualPField), [enterpriseAttributes, projectAttributes]);
   const ctcAttributes = useMemo(() => buildAttributes(enterpriseAttributes, projectAttributes, ctcEField, ctcPField), [enterpriseAttributes, projectAttributes]);
-  const currentPeriod = useMemo(() => periods.find((period) => period.status === "Current") ?? null, [periods]);
+  const currentPeriod = useMemo(() => effectiveCurrentPeriod(periods), [periods]);
   const futurePeriods = useMemo(() => periods.filter((period) => period.status === "Future" && (!currentPeriod || period.period_number > currentPeriod.period_number)), [currentPeriod, periods]);
   const futurePeriodIds = useMemo(() => new Set(futurePeriods.map((period) => period.id)), [futurePeriods]);
   const enterpriseCtcAttributes = useMemo(() => ctcAttributes.filter((attribute) => attribute.prefix === "E"), [ctcAttributes]);
@@ -255,16 +270,17 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
         setActualRows(await listActualCostTransactionsForCostCode(project.id, costCode.id));
         setCtcRows([]); setEnterpriseResources([]); setProjectResources([]);
       } else {
+        const currentReportingPeriod = effectiveCurrentPeriod(reportingPeriods);
+        const toDatePeriodIds = currentReportingPeriod
+          ? reportingPeriods.filter((period) => period.period_number <= currentReportingPeriod.period_number).map((period) => period.id)
+          : reportingPeriods.filter((period) => period.status !== "Future").map((period) => period.id);
         const [initialRows, eResources, pResources, summary] = await Promise.all([
           listCostToCompleteLedgerForCostCode(project.id, costCode.id),
           listResourceRates(project.enterprise_id),
           listProjectResourceRates(project.id),
-          getCostCodeFinancialSummary(project.id, costCode.id),
+          getCostCodeFinancialSummary(project.id, costCode.id, toDatePeriodIds),
         ]);
-        const currentReportingPeriod = reportingPeriods.find((period) => period.status === "Current") ?? null;
-        const nonFuturePeriodIds = reportingPeriods
-          .filter((period) => currentReportingPeriod ? period.period_number <= currentReportingPeriod.period_number : period.status !== "Future")
-          .map((period) => period.id);
+        const nonFuturePeriodIds = toDatePeriodIds;
         if (nonFuturePeriodIds.length && initialRows.length) {
           await deleteCostToCompletePeriodQtyForPeriods(initialRows.map((row) => row.id), nonFuturePeriodIds);
         }
