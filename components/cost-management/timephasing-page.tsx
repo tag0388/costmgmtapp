@@ -221,14 +221,14 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
     const fixed: ColDef<GridRow>[] = [
       {
         colId: "costCodeId", headerName: "Cost Code ID", pinned: "left", width: 130, minWidth: 110,
-        rowSpan: (params) => params.data?.type === "Baseline Budget" ? 3 : 1,
-        valueGetter: (params: ValueGetterParams<GridRow>) => params.data?.type === "Baseline Budget" ? params.data.costCode.cost_code_id : "",
+        spanRows: true,
+        valueGetter: (params: ValueGetterParams<GridRow>) => params.data?.costCode.cost_code_id ?? "",
         cellStyle: { display: "flex", alignItems: "center", backgroundColor: "#fff", fontWeight: 600 },
       },
       {
         colId: "costCodeName", headerName: "Cost Code Name", pinned: "left", width: 190, minWidth: 150,
-        rowSpan: (params) => params.data?.type === "Baseline Budget" ? 3 : 1,
-        valueGetter: (params: ValueGetterParams<GridRow>) => params.data?.type === "Baseline Budget" ? params.data.costCode.name : "",
+        spanRows: true,
+        valueGetter: (params: ValueGetterParams<GridRow>) => params.data?.costCode.name ?? "",
         cellStyle: { display: "flex", alignItems: "center", backgroundColor: "#fff", fontWeight: 600 },
       },
       { field: "type", headerName: "Type", pinned: "left", width: 165, minWidth: 145, filter: "agSetColumnFilter" },
@@ -305,7 +305,7 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
             quickFilterText={search}
             getRowId={(params) => params.data.id}
             onCellValueChanged={(event) => void cellChanged(event)}
-            suppressRowTransform
+            enableCellSpan
             undoRedoCellEditing
             undoRedoCellEditingLimit={20}
             animateRows
