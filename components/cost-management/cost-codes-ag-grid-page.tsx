@@ -298,6 +298,24 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
     ["cc-general", "cc-settings", "cc-enterprise", "cc-project", "cc-amounts"].forEach((groupId) => gridApi.setColumnGroupOpened(groupId, open));
   }
 
+  function withRecalculatedEac(row: CostCode, patch: Partial<CostCode>): CostCode {
+    const next = { ...row, ...patch };
+    const estimateAtCompletion = next.eac_method === "Manual"
+      ? Number(next.manual_eac ?? 0)
+      : Number(next.actual_cost_to_date ?? 0) + Number(next.cost_to_complete ?? 0);
+    const currentBudget = Number(next.current_budget ?? 0);
+    const previousEac = next.previous_estimate_at_completion ?? null;
+    const previousVariance = next.variance_previous ?? null;
+    const variance = currentBudget - estimateAtCompletion;
+    return {
+      ...next,
+      estimate_at_completion: estimateAtCompletion,
+      eac_movement: previousEac == null ? null : estimateAtCompletion - previousEac,
+      variance,
+      variance_movement: previousVariance == null ? null : variance - previousVariance,
+    };
+  }
+
   async function cellChanged(event: CellValueChangedEvent<CostCode>) {
     if (event.newValue === event.oldValue || !event.data) return;
     const row = event.data;
@@ -316,14 +334,18 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
       } else if (colId === "eac_method") {
         const eacMethod = String(event.newValue ?? "") as EacMethod;
         if (!EAC_METHODS.includes(eacMethod)) { event.node.setDataValue(event.column, event.oldValue); return; }
-        await updateCostCodeFields(row.id, { eac_method: eacMethod });
-        await refresh();
+        const saved = await updateCostCodeFields(row.id, { eac_method: eacMethod });
+        setCostCodes((current) => current.map((item) => item.id === row.id
+          ? withRecalculatedEac(item, { eac_method: saved.eac_method, manual_eac: saved.manual_eac })
+          : item));
       } else if (colId === "estimate_at_completion") {
         if (row.eac_method !== "Manual") { event.node.setDataValue(event.column, event.oldValue); return; }
         const manualEac = Number(event.newValue ?? 0);
         if (!Number.isFinite(manualEac)) { event.node.setDataValue(event.column, event.oldValue); return; }
-        await updateCostCodeFields(row.id, { manual_eac: manualEac });
-        await refresh();
+        const saved = await updateCostCodeFields(row.id, { manual_eac: manualEac });
+        setCostCodes((current) => current.map((item) => item.id === row.id
+          ? withRecalculatedEac(item, { manual_eac: saved.manual_eac })
+          : item));
       } else if (colId.startsWith("e_attribute_") || colId.startsWith("p_attribute_")) {
         const field = colId as EnterpriseCostCodeAttributeField | ProjectCostCodeAttributeField;
         await updateCostCodeFields(row.id, { [field]: row[field] ?? null } as Partial<Omit<CostCodeInput, "project_id" | "cost_code_id">>);
