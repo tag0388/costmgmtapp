@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgGridProvider, AgGridReact } from "ag-grid-react";
-import type { CellValueChangedEvent, ColDef, ColGroupDef, GridApi, GridReadyEvent, SelectionChangedEvent, ValueGetterParams, ValueSetterParams } from "ag-grid-community";
+import type { CellValueChangedEvent, ColDef, ColGroupDef, GridApi, SelectionChangedEvent, ValueGetterParams, ValueSetterParams } from "ag-grid-community";
 import { themeQuartz } from "ag-grid-community";
 import { AllEnterpriseModule } from "ag-grid-enterprise";
 import ExcelImportDialog from "@/components/shared/excel-import-dialog";
@@ -310,7 +310,9 @@ export default function ChangeManagementPage({ projectPublicId, bulkRecords = fa
   }
 
   const orderExcelColumns = useMemo(() => ["Change Order ID", "Description", "Status", ...orderAttributes.map((attribute) => attribute.columnName)], [orderAttributes]);
-  const recordExcelColumns = useMemo(() => ["Change Order ID", "Cost Code ID", "Item", "Description", "Change to Budget", "Change to EAC", ...recordAttributes.map((attribute) => attribute.columnName)], [recordAttributes]);
+  const bulkRecordExcelColumns = useMemo(() => ["Change Order ID", "Cost Code ID", "Item", "Description", "Change to Budget", "Change to EAC", ...recordAttributes.map((attribute) => attribute.columnName)], [recordAttributes]);
+  const relatedRecordExcelColumns = useMemo(() => ["Cost Code ID", "Item", "Description", "Change to Budget", "Change to EAC", ...recordAttributes.map((attribute) => attribute.columnName)], [recordAttributes]);
+  const recordExcelColumns = bulkRecords ? bulkRecordExcelColumns : relatedRecordExcelColumns;
   const excelColumns = importMode === "orders" ? orderExcelColumns : recordExcelColumns;
   function exportRows() {
     if (!project) return;
@@ -319,8 +321,16 @@ export default function ChangeManagementPage({ projectPublicId, bulkRecords = fa
       exportExcel(`${project.project_code}-change-orders`, "Change Orders", data.length ? data : [Object.fromEntries(orderExcelColumns.map((column) => [column, ""]))]);
       return;
     }
-    const data = recordRows.map((row) => ({ "Change Order ID": row.change_order_ref, "Cost Code ID": row.cost_code_ref, Item: row.item ?? "", Description: row.description ?? "", "Change to Budget": row.change_to_budget == null ? "" : String(row.change_to_budget), "Change to EAC": row.change_to_eac == null ? "" : String(row.change_to_eac), ...Object.fromEntries(recordAttributes.map((attribute) => [attribute.columnName, row[attribute.field] ?? ""])) }));
-    exportExcel(`${project.project_code}-change-records`, "Change Records", data.length ? data : [Object.fromEntries(recordExcelColumns.map((column) => [column, ""]))]);
+    const data = recordRows.map((row) => ({
+      ...(bulkRecords ? { "Change Order ID": row.change_order_ref } : {}),
+      "Cost Code ID": row.cost_code_ref,
+      Item: row.item ?? "",
+      Description: row.description ?? "",
+      "Change to Budget": row.change_to_budget == null ? "" : String(row.change_to_budget),
+      "Change to EAC": row.change_to_eac == null ? "" : String(row.change_to_eac),
+      ...Object.fromEntries(recordAttributes.map((attribute) => [attribute.columnName, row[attribute.field] ?? ""])),
+    }));
+    exportExcel(`${project.project_code}-${bulkRecords ? "bulk-change-records" : `${selectedOrder?.change_order_id ?? "change-order"}-change-records`}`, "Change Records", data.length ? data : [Object.fromEntries(recordExcelColumns.map((column) => [column, ""]))]);
   }
   async function chooseImport(file: File | undefined) {
     if (!file) return;
@@ -330,13 +340,17 @@ export default function ChangeManagementPage({ projectPublicId, bulkRecords = fa
       if (incoming.length && !exactColumns(incoming, excelColumns)) errors.push(`Columns must be exactly: ${excelColumns.join(", ")}.`);
       incoming.forEach((row, index) => {
         const line = index + 2; const orderId = (row["Change Order ID"] ?? "").trim();
-        if (!orderId) errors.push(`Row ${line}: Change Order ID is required.`); if (orderId.length > 30) errors.push(`Row ${line}: Change Order ID is longer than 30 characters.`);
+        if (importMode === "orders" || bulkRecords) {
+          if (!orderId) errors.push(`Row ${line}: Change Order ID is required.`);
+          if (orderId.length > 30) errors.push(`Row ${line}: Change Order ID is longer than 30 characters.`);
+        }
         if (importMode === "orders") {
           if (!(row.Description ?? "").trim()) errors.push(`Row ${line}: Description is required.`); if ((row.Description ?? "").trim().length > 255) errors.push(`Row ${line}: Description is longer than 255 characters.`);
           if (!STATUSES.includes((row.Status ?? "") as ChangeOrderStatus)) errors.push(`Row ${line}: Status must be Pending, Approved, Rejected or Cancelled.`);
         } else {
-          const order = orderByRef.get(orderId.toLowerCase()); const costCodeReference = (row["Cost Code ID"] ?? "").trim(); const code = costCodeReference ? codeByRef.get(costCodeReference.toLowerCase()) : null;
-          if (!order) errors.push(`Row ${line}: Change Order ID is not valid for this project.`); if (costCodeReference && !code) errors.push(`Row ${line}: Cost Code ID is not valid for this project.`);
+          const order = bulkRecords ? orderByRef.get(orderId.toLowerCase()) : selectedOrder; const costCodeReference = (row["Cost Code ID"] ?? "").trim(); const code = costCodeReference ? codeByRef.get(costCodeReference.toLowerCase()) : null;
+          if (!order) errors.push(bulkRecords ? `Row ${line}: Change Order ID is not valid for this project.` : "The selected Change Order is no longer available.");
+          if (costCodeReference && !code) errors.push(`Row ${line}: Cost Code ID is not valid for this project.`);
           if ((row.Item ?? "").trim().length > 50) errors.push(`Row ${line}: Item is longer than 50 characters.`);
           if ((row.Description ?? "").trim().length > 255) errors.push(`Row ${line}: Description is longer than 255 characters.`);
           if ((row["Change to Budget"] ?? "").trim() && Number.isNaN(parseNumber(row["Change to Budget"]))) errors.push(`Row ${line}: Change to Budget must be numeric or blank.`); if ((row["Change to EAC"] ?? "").trim() && Number.isNaN(parseNumber(row["Change to EAC"]))) errors.push(`Row ${line}: Change to EAC must be numeric or blank.`);
@@ -366,7 +380,7 @@ export default function ChangeManagementPage({ projectPublicId, bulkRecords = fa
       } else {
         if (replace) await deleteChangeRecords(recordRows.map((row) => row.id));
         for (let index = 0; index < importRows.length; index += 1) {
-        const row = importRows[index]; const order = orderByRef.get(row["Change Order ID"].trim().toLowerCase())!; const costCodeReference = row["Cost Code ID"].trim(); const code = costCodeReference ? codeByRef.get(costCodeReference.toLowerCase()) : null; const budget = row["Change to Budget"].trim(); const eac = row["Change to EAC"].trim();
+        const row = importRows[index]; const order = bulkRecords ? orderByRef.get(row["Change Order ID"].trim().toLowerCase()) : selectedOrder; if (!order) throw new Error("The Change Order for this import could not be resolved."); const costCodeReference = row["Cost Code ID"].trim(); const code = costCodeReference ? codeByRef.get(costCodeReference.toLowerCase()) : null; const budget = row["Change to Budget"].trim(); const eac = row["Change to EAC"].trim();
         await createChangeRecord(project.id, { change_order_id: order.id, cost_code_id: code?.id ?? null, item: row.Item.trim() || null, description: row.Description?.trim() || null, change_to_budget: budget ? parseNumber(budget) : null, change_to_eac: eac ? parseNumber(eac) : null, row_order: (recordRows.length + index + 1) * 1000, ...Object.fromEntries(recordAttributes.map((attribute) => [attribute.field, row[attribute.columnName]?.trim() || null])) });
         setProgress(((index + 1) / importRows.length) * 100);
         }
@@ -414,7 +428,6 @@ export default function ChangeManagementPage({ projectPublicId, bulkRecords = fa
     if (open) api.expandAll(); else api.collapseAll();
     ["co-general", "co-financial", "co-enterprise", "co-project", "cr-general", "cr-financial", "cr-enterprise", "cr-project"].forEach((groupId) => api.setColumnGroupOpened(groupId, open));
   }
-  function onGridReady(event: GridReadyEvent<OrderGridRow> | GridReadyEvent<RecordGridRow>) { if (showingRecords) setRecordGridApi(event.api as GridApi<RecordGridRow>); else setOrderGridApi(event.api as GridApi<OrderGridRow>); setHasGroups(event.api.getRowGroupColumns().length > 0); }
   function applyView(id: string) { setSelectedView(id); const api = activeGridApi(); if (!api) return; if (id === "Default") { api.resetColumnState(); api.setFilterModel(null); } else { const view = views.find((item) => item.id === id); if (view) { api.applyColumnState({ state: view.grid_state.columnState as never[], applyOrder: true }); api.setFilterModel(view.grid_state.filterModel ?? null); } } api.onFilterChanged(); setHasGroups(api.getRowGroupColumns().length > 0); }
   async function saveView(name = viewName) { if (!project) return; try { const api = activeGridApi(); if (!api) return; const saved = await saveProjectGridView(project.id, gridKey, name, { columnState: api.getColumnState(), filterModel: api.getFilterModel() }); setViews(await listProjectGridViews(project.id, gridKey)); setSelectedView(saved.id); setShowSaveView(false); showNotice("View saved."); } catch (requestError) { setError(gridViewErrorMessage(requestError)); } }
   async function deleteView() { if (selectedView === "Default" || !project) return; try { await deleteProjectGridView(selectedView); setViews(await listProjectGridViews(project.id, gridKey)); applyView("Default"); showNotice("View deleted."); } catch (requestError) { setError(gridViewErrorMessage(requestError)); } }
@@ -441,8 +454,8 @@ export default function ChangeManagementPage({ projectPublicId, bulkRecords = fa
       {error && <div className="data-message error"><strong>Unable to load Change Management</strong><span>{error}</span></div>}
       {!error && loading && <div className="data-message"><span className="spinner"/>Loading Change Management…</div>}
       {!error && !loading && <AgGridProvider modules={[AllEnterpriseModule]} licenseKey={process.env.NEXT_PUBLIC_AG_GRID_LICENSE_KEY ?? ""}><div style={{ height: selectedOrder && !bulkRecords ? "auto" : 640, flex: selectedOrder && !bulkRecords ? 1 : undefined, minHeight: selectedOrder && !bulkRecords ? 360 : undefined, width: "100%", padding: selectedOrder && !bulkRecords ? "8px 12px 10px" : undefined, boxSizing: "border-box" }}>
-        {!showingRecords ? <AgGridReact<OrderGridRow> theme={gridTheme} rowData={orders as OrderGridRow[]} columnDefs={orderColumns} defaultColDef={{ sortable: true, resizable: true, filter: true, minWidth: 90, enableRowGroup: true }} quickFilterText={search} getRowId={(params) => params.data.id} grandTotalRow="pinnedBottom" groupTotalRow="bottom" groupDisplayType="multipleColumns" rowGroupPanelShow="always" groupSuppressBlankHeader onRowDoubleClicked={(event) => openEditOrder(event.data!)} rowSelection={{ mode: "multiRow" }} selectionColumnDef={{ pinned: "left", width: 46, maxWidth: 46, suppressHeaderMenuButton: true }} onSelectionChanged={(event: SelectionChangedEvent<OrderGridRow>) => setSelectedOrderIds(event.api.getSelectedRows().map((row) => row.id))} onGridReady={onGridReady} onColumnRowGroupChanged={(event) => setHasGroups(event.api.getRowGroupColumns().length > 0)} animateRows/>
-        : <AgGridReact<RecordGridRow> theme={gridTheme} rowData={recordRows} columnDefs={recordColumns} defaultColDef={{ sortable: true, resizable: true, filter: true, minWidth: 90, enableRowGroup: true }} quickFilterText={search} getRowId={(params) => params.data.id} rowSelection={{ mode: "multiRow" }} selectionColumnDef={{ pinned: "left", width: 46, maxWidth: 46, suppressHeaderMenuButton: true }} onRowDoubleClicked={() => undefined} onSelectionChanged={(event: SelectionChangedEvent<RecordGridRow>) => { const nodes = event.api.getSelectedNodes().filter((node) => node.data); setSelectedRecordIds(nodes.map((node) => node.data!.id)); const last = [...nodes].sort((left, right) => (left.rowIndex ?? -1) - (right.rowIndex ?? -1)).at(-1); if (last?.data) setInsertAfterId(last.data.id); }} onCellFocused={(event) => { const row = event.api.getDisplayedRowAtIndex(event.rowIndex ?? -1)?.data; if (row) setInsertAfterId(row.id); }} onGridReady={onGridReady} onColumnRowGroupChanged={(event) => setHasGroups(event.api.getRowGroupColumns().length > 0)} onCellValueChanged={(event) => void cellChanged(event)} groupTotalRow="bottom" groupDisplayType="multipleColumns" rowGroupPanelShow="always" groupSuppressBlankHeader grandTotalRow="pinnedBottom" undoRedoCellEditing undoRedoCellEditingLimit={20} animateRows/>}
+        {!showingRecords ? <AgGridReact<OrderGridRow> theme={gridTheme} rowData={orders as OrderGridRow[]} columnDefs={orderColumns} defaultColDef={{ sortable: true, resizable: true, filter: true, minWidth: 90, enableRowGroup: true }} quickFilterText={search} getRowId={(params) => params.data.id} grandTotalRow="pinnedBottom" groupTotalRow="bottom" groupDisplayType="multipleColumns" rowGroupPanelShow="always" groupSuppressBlankHeader onRowDoubleClicked={(event) => openEditOrder(event.data!)} rowSelection={{ mode: "multiRow" }} selectionColumnDef={{ pinned: "left", width: 46, maxWidth: 46, suppressHeaderMenuButton: true }} onSelectionChanged={(event: SelectionChangedEvent<OrderGridRow>) => setSelectedOrderIds(event.api.getSelectedRows().map((row) => row.id))} onGridReady={(event) => { setOrderGridApi(event.api); setHasGroups(event.api.getRowGroupColumns().length > 0); }} onColumnRowGroupChanged={(event) => setHasGroups(event.api.getRowGroupColumns().length > 0)} animateRows/>
+        : <AgGridReact<RecordGridRow> theme={gridTheme} rowData={recordRows} columnDefs={recordColumns} defaultColDef={{ sortable: true, resizable: true, filter: true, minWidth: 90, enableRowGroup: true }} quickFilterText={search} getRowId={(params) => params.data.id} rowSelection={{ mode: "multiRow" }} selectionColumnDef={{ pinned: "left", width: 46, maxWidth: 46, suppressHeaderMenuButton: true }} onRowDoubleClicked={() => undefined} onSelectionChanged={(event: SelectionChangedEvent<RecordGridRow>) => { const nodes = event.api.getSelectedNodes().filter((node) => node.data); setSelectedRecordIds(nodes.map((node) => node.data!.id)); const last = [...nodes].sort((left, right) => (left.rowIndex ?? -1) - (right.rowIndex ?? -1)).at(-1); if (last?.data) setInsertAfterId(last.data.id); }} onCellFocused={(event) => { const row = event.api.getDisplayedRowAtIndex(event.rowIndex ?? -1)?.data; if (row) setInsertAfterId(row.id); }} onGridReady={(event) => { setRecordGridApi(event.api); setHasGroups(event.api.getRowGroupColumns().length > 0); }} onColumnRowGroupChanged={(event) => setHasGroups(event.api.getRowGroupColumns().length > 0)} onCellValueChanged={(event) => void cellChanged(event)} groupTotalRow="bottom" groupDisplayType="multipleColumns" rowGroupPanelShow="always" groupSuppressBlankHeader grandTotalRow="pinnedBottom" undoRedoCellEditing undoRedoCellEditingLimit={20} animateRows/>}
       </div></AgGridProvider>}
       <div className="grid-footer"><span>{showingRecords ? `${recordRows.length} Change Records` : `${orders.length} Change Orders`} · {selectedIds.length} selected</span><span>{showingRecords ? `Change to Budget: ${money(recordRows.reduce((sum, row) => sum + Number(row.change_to_budget), 0))} · Change to EAC: ${money(recordRows.reduce((sum, row) => sum + Number(row.change_to_eac), 0))}` : `${orderAttributes.filter((attribute) => attribute.prefix === "E").length} enterprise + ${orderAttributes.filter((attribute) => attribute.prefix === "P").length} project Change attributes`}</span></div>
     </section>
