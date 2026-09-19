@@ -184,7 +184,10 @@ export function updateCostCodeFields(id: string, patch: Partial<Omit<CostCodeInp
     method: "PATCH",
     headers: { Prefer: "return=representation" },
     body: JSON.stringify({ ...patch, updated_at: new Date().toISOString() }),
-  }).then((rows) => rows[0]);
+  }).then((rows) => {
+    if (!rows[0]) throw new Error("The Cost Code update was not applied.");
+    return rows[0];
+  });
 }
 
 export function setCostCodesActive(ids: string[], isActive: boolean) {
