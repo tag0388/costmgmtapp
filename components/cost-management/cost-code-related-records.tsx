@@ -7,6 +7,7 @@ import type { CellValueChangedEvent, ColDef, ColGroupDef, ColumnState, GridApi, 
 import { themeQuartz } from "ag-grid-community";
 import { AllEnterpriseModule } from "ag-grid-enterprise";
 import ExcelImportDialog from "@/components/shared/excel-import-dialog";
+import CostCodeChangeRecordsWorkspace from "@/components/cost-management/cost-code-change-records";
 import { ExcelRow, exportExcel, readExcel } from "@/lib/excel";
 import type { CostCode } from "@/lib/cost-codes";
 import type { Project } from "@/lib/projects";
@@ -57,7 +58,7 @@ const ACTUAL_USER_TEXT_COLUMNS = ACTUAL_USER_TEXT_FIELDS.map((field, index) => (
 const CTC_USER_NUMBER_COLUMNS = CTC_USER_NUMBER_FIELDS.map((field, index) => ({ field, label: `User Number ${index + 1}` }));
 const CTC_USER_TEXT_COLUMNS = CTC_USER_TEXT_FIELDS.map((field, index) => ({ field, label: `User Text ${index + 1}` }));
 const COST_CODE_MENU_EVENT = "costwise:open-cost-code-actions";
-type RelatedMode = "actual" | "ctc";
+type RelatedMode = "changes" | "actual" | "ctc";
 type AttributeDefinition = EnterpriseAttributeDefinition | ProjectAttributeDefinition;
 type ActiveAttribute<TField extends string> = { prefix: "E" | "P"; field: TField; definition: AttributeDefinition; columnName: string };
 type ActualGridRow = ActualCostTransaction & { period_label: string };
@@ -182,14 +183,17 @@ export function CostCodeActionsCell({ costCode, project, onEdit }: { costCode: C
 
   const menu = typeof document !== "undefined" && open ? createPortal(
     <div ref={menuRef} onMouseDown={(event) => event.stopPropagation()} style={{ position: "fixed", right: menuPosition.right, top: menuPosition.top, zIndex: 10000, width: 182, background: "#fff", border: "1px solid #dbe1e8", borderRadius: 6, boxShadow: "0 10px 26px rgba(15,23,42,.16)", padding: 4 }}>
-      <MenuOption icon="changes" label="Change Records" hint="Coming soon" disabled onClick={() => undefined}/>
+      <MenuOption icon="changes" label="Change Records" hint="View & edit" disabled={!project} onClick={() => { setOpen(false); setMode("changes"); }}/>
       <MenuOption icon="actual" label="Actual Cost" hint="View & edit" disabled={!project} onClick={() => { setOpen(false); setMode("actual"); }}/>
       <MenuOption icon="ctc" label="Cost to Complete" hint="View & edit" disabled={!project} onClick={() => { setOpen(false); setMode("ctc"); }}/>
     </div>, document.body,
   ) : null;
 
   const workspace = typeof document !== "undefined" && project && mode ? createPortal(
-    <RelatedRecordsWorkspace project={project} costCode={costCode} mode={mode} onClose={() => setMode(null)}/>, document.body,
+    mode === "changes"
+      ? <CostCodeChangeRecordsWorkspace project={project} costCode={costCode} onClose={() => setMode(null)}/>
+      : <RelatedRecordsWorkspace project={project} costCode={costCode} mode={mode} onClose={() => setMode(null)}/>,
+    document.body,
   ) : null;
 
   return <>
