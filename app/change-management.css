@@ -1,0 +1,61 @@
+.form-field select {
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid #dce2ea;
+  border-radius: 6px;
+  background: #fff;
+  color: #303b4e;
+  font-size: 10px;
+  outline: 0;
+}
+
+.form-field select:focus {
+  border-color: #758bd4;
+  box-shadow: 0 0 0 2px #3157c812;
+}
+
+.change-row-actions {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.change-icon-button {
+  display: grid;
+  width: 28px;
+  height: 24px;
+  padding: 0;
+  place-items: center;
+  border: 1px solid #d7dde6;
+  border-radius: 5px;
+  background: #fff;
+  color: #526074;
+  cursor: pointer;
+}
+
+.change-icon-button:hover {
+  border-color: #aeb8c7;
+  background: #f7f9fc;
+}
+
+.change-icon-button.delete {
+  border-color: #efc9c5;
+  color: #c7473e;
+}
+
+.change-icon-button.delete:hover {
+  background: #fff3f2;
+}
+
+.change-icon-button svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
