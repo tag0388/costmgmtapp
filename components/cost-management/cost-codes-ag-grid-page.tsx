@@ -19,12 +19,13 @@ import {
   CostCodeInput,
   costCodeErrorMessage,
   createCostCode,
+  deleteCostCode,
+  deleteCostCodes,
   EacMethod,
   EnterpriseCostCodeAttributeField,
   importCostCodes,
   listCostCodes,
   ProjectCostCodeAttributeField,
-  setCostCodesActive,
   TimephasingMethod,
   updateCostCode,
   updateCostCodeFields,
@@ -111,6 +112,9 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
   const [status, setStatus] = useState<StatusFilter>("all");
   const [selected, setSelected] = useState<string[]>([]);
   const [editing, setEditing] = useState<CostCode | "new" | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<CostCode | null>(null);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [bulkOpen, setBulkOpen] = useState(false);
   const [importRows, setImportRows] = useState<ExcelRow[] | null>(null);
   const [importErrors, setImportErrors] = useState<string[]>([]);
@@ -222,14 +226,29 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
         cellEditorParams: { values: ["", ...definition.attribute_values.filter((value) => value.is_active).map((value) => `${value.value_id} - ${value.value_name}`)] },
       };
     });
-    const amountColumn = (field: keyof CostCode & string, headerName: string, columnGroupShow?: "open"): ColDef<CostCode> => ({
+    const financialCellStyles = {
+      budget: { backgroundColor: "#ecfdf3" },
+      cost: { backgroundColor: "#fff7e6" },
+      variance: { backgroundColor: "#fffde7" },
+    } as const;
+    const amountColumn = (
+      field: keyof CostCode & string,
+      headerName: string,
+      columnGroupShow?: "open",
+      tone?: keyof typeof financialCellStyles,
+    ): ColDef<CostCode> => ({
       field,
       headerName,
-      minWidth: 145,
+      width: 118,
+      minWidth: 100,
+      maxWidth: 130,
+      wrapHeaderText: true,
+      autoHeaderHeight: true,
       type: "numericColumn",
       aggFunc: "sum",
       enableValue: true,
       valueFormatter: (params) => money(params.value as number | null),
+      cellStyle: tone ? financialCellStyles[tone] : undefined,
       columnGroupShow,
     });
     return [
@@ -244,23 +263,27 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
       ...(enterpriseDefs.length ? [{ groupId: "cc-enterprise", headerName: "Enterprise Attributes", marryChildren: true, openByDefault: false, children: enterpriseDefs }] : []),
       ...(projectDefs.length ? [{ groupId: "cc-project", headerName: "Project Attributes", marryChildren: true, openByDefault: false, children: projectDefs }] : []),
       { groupId: "cc-amounts", headerName: "Cost Amounts", marryChildren: true, openByDefault: true, children: [
-        amountColumn("baseline_budget", "Baseline Budget"),
-        amountColumn("budget_changes", "Budget Changes", "open"),
-        amountColumn("current_budget", "Current Budget", "open"),
-        amountColumn("previous_budget", "Previous Period Budget", "open"),
-        amountColumn("budget_movement", "Budget Movement", "open"),
-        amountColumn("actual_cost_this_period", "Actual Cost This Period", "open"),
-        amountColumn("actual_cost_to_date", "Actual Cost to Date", "open"),
-        amountColumn("cost_to_complete", "Cost To Complete", "open"),
+        amountColumn("baseline_budget", "Baseline Budget", undefined, "budget"),
+        amountColumn("budget_changes", "Budget Changes", "open", "budget"),
+        amountColumn("current_budget", "Current Budget", "open", "budget"),
+        amountColumn("previous_budget", "Previous Period Budget", "open", "budget"),
+        amountColumn("budget_movement", "Budget Movement", "open", "budget"),
+        amountColumn("actual_cost_this_period", "Actual Cost This Period", "open", "cost"),
+        amountColumn("actual_cost_to_date", "Actual Cost to Date", "open", "cost"),
+        amountColumn("cost_to_complete", "Cost To Complete", "open", "cost"),
         {
           field: "estimate_at_completion",
           headerName: "Estimate at Completion",
-          minWidth: 170,
+          width: 125,
+          minWidth: 105,
+          maxWidth: 140,
+          wrapHeaderText: true,
+          autoHeaderHeight: true,
           type: "numericColumn",
           aggFunc: "sum",
           enableValue: true,
           editable: (params) => params.data?.eac_method === "Manual",
-          cellStyle: (params) => params.data?.eac_method === "Manual" ? { backgroundColor: "#fffdf2" } : undefined,
+          cellStyle: financialCellStyles.cost,
           valueParser: (params) => {
             const raw = String(params.newValue ?? "").trim();
             if (!raw) return 0;
@@ -270,14 +293,14 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
           valueFormatter: (params) => money(params.value as number | null),
           columnGroupShow: "open",
         },
-        amountColumn("previous_estimate_at_completion", "Previous Estimate at Completion", "open"),
-        amountColumn("eac_movement", "EAC Movement", "open"),
-        amountColumn("variance", "Variance", "open"),
-        amountColumn("variance_previous", "Variance Previous", "open"),
-        amountColumn("variance_movement", "Variance Movement", "open"),
+        amountColumn("previous_estimate_at_completion", "Previous Estimate at Completion", "open", "cost"),
+        amountColumn("eac_movement", "EAC Movement", "open", "cost"),
+        amountColumn("variance", "Variance", "open", "variance"),
+        amountColumn("variance_previous", "Variance Previous", "open", "variance"),
+        amountColumn("variance_movement", "Variance Movement", "open", "variance"),
       ]},
       { field: "is_active", headerName: "Status", minWidth: 105, enableRowGroup: true, filter: "agSetColumnFilter", valueFormatter: (params) => params.value ? "Active" : "Inactive" },
-      { colId: "actions", headerName: "Actions", pinned: "right", sortable: false, filter: false, suppressHeaderMenuButton: true, minWidth: 150, maxWidth: 150, cellRenderer: (params: { data?: CostCode }) => params.data ? <CostCodeActionsCell costCode={params.data} project={project} onEdit={() => setEditing(params.data!)} /> : null },
+      { colId: "actions", headerName: "Actions", pinned: "right", sortable: false, filter: false, suppressHeaderMenuButton: true, minWidth: 130, maxWidth: 130, cellRenderer: (params: { data?: CostCode }) => params.data ? <CostCodeActionsCell costCode={params.data} project={project} onEdit={() => setEditing(params.data!)} onDelete={() => setDeleteTarget(params.data!)} /> : null },
     ];
   }, [activeEnterprise, activeProject, project]);
 
@@ -457,10 +480,41 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
     finally { setImporting(false); }
   }
 
-  async function deactivateSelected() {
+  async function confirmDeleteCostCode() {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    setError("");
+    try {
+      await deleteCostCode(deleteTarget.id);
+      setDeleteTarget(null);
+      showNotice(`Cost Code ${deleteTarget.cost_code_id} deleted.`);
+      await refresh();
+    } catch (requestError) {
+      setError(costCodeErrorMessage(requestError));
+      setDeleteTarget(null);
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  async function confirmBulkDeleteCostCodes() {
     if (!selected.length) return;
-    try { await setCostCodesActive(selected, false); setSelected([]); gridApi?.deselectAll(); showNotice("Cost code status updated."); await refresh(); }
-    catch (requestError) { setError(costCodeErrorMessage(requestError)); }
+    setDeleting(true);
+    setError("");
+    try {
+      await deleteCostCodes(selected);
+      const count = selected.length;
+      setBulkDeleteOpen(false);
+      setSelected([]);
+      gridApi?.deselectAll();
+      showNotice(`${count} Cost Code${count === 1 ? "" : "s"} deleted.`);
+      await refresh();
+    } catch (requestError) {
+      setError(costCodeErrorMessage(requestError));
+      setBulkDeleteOpen(false);
+    } finally {
+      setDeleting(false);
+    }
   }
 
   async function saveView() {
@@ -512,7 +566,7 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
         <button className="button secondary" onClick={() => fileRef.current?.click()}>⇧ Import</button>
         <input ref={fileRef} hidden type="file" accept=".xlsx,.xls" onChange={(event) => void chooseImport(event.target.files?.[0])}/>
         <button className="button secondary" onClick={() => void refresh()} disabled={loading}>↻ Refresh</button>
-        <button className="button danger" disabled={!selected.length} onClick={() => void deactivateSelected()}>Deactivate{selected.length > 1 ? ` (${selected.length})` : ""}</button>
+        <button className="button danger" disabled={!selected.length} onClick={() => setBulkDeleteOpen(true)}>Delete{selected.length ? ` (${selected.length})` : ""}</button>
       </div>
       <div className="data-message" style={{ minHeight: 48 }}><span>Right-click a column header to show, hide or pin columns. Drag columns into the grouping bar above the table to create multiple group levels. Expand/Collapse becomes available when grouping is active. Cost Code Name, Description, EAC Method and attributes can be edited directly in the grid. Estimate at Completion is editable only when EAC Method is Manual. Use the related-records icon in Actions to open related records for that Cost Code.</span></div>
       {error && <div className="data-message error"><strong>Unable to load cost codes</strong><span>{error}</span></div>}
@@ -545,6 +599,32 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
       <div className="grid-footer"><span>{rows.length} of {costCodes.length} cost codes · {selected.length} selected</span><span>{activeEnterprise.length} enterprise + {activeProject.length} project cost code attributes</span></div>
     </section>
 
+    {bulkDeleteOpen && <div className="confirm-layer">
+      <button className="confirm-scrim" onClick={() => !deleting && setBulkDeleteOpen(false)} aria-label="Close bulk delete confirmation"/>
+      <div className="confirm-dialog" role="dialog" aria-modal="true">
+        <div className="confirm-icon">!</div>
+        <h2>Delete {selected.length} Cost Code{selected.length === 1 ? "" : "s"}?</h2>
+        <p>Are you sure you want to permanently delete the selected Cost Codes? This action cannot be undone.</p>
+        <p>If any selected Cost Code is used by Budget Details, Actual Cost, Change Records, Cost to Complete, Timephasing or Subcontract details, the entire bulk delete will be blocked and no selected Cost Codes will be deleted.</p>
+        <div className="confirm-actions">
+          <button className="button secondary" disabled={deleting} onClick={() => setBulkDeleteOpen(false)}>Cancel</button>
+          <button className="button danger" disabled={deleting} onClick={() => void confirmBulkDeleteCostCodes()}>{deleting ? "Deleting…" : "Yes, Delete"}</button>
+        </div>
+      </div>
+    </div>}
+    {deleteTarget && <div className="confirm-layer">
+      <button className="confirm-scrim" onClick={() => !deleting && setDeleteTarget(null)} aria-label="Close delete confirmation"/>
+      <div className="confirm-dialog" role="dialog" aria-modal="true">
+        <div className="confirm-icon">!</div>
+        <h2>Delete Cost Code?</h2>
+        <p>Are you sure you want to permanently delete <strong>{deleteTarget.cost_code_id} - {deleteTarget.name}</strong>?</p>
+        <p>If this Cost Code is used by Budget Details, Actual Cost, Change Records, Cost to Complete, Timephasing or Subcontract details, deletion will be blocked until those records are removed or reassigned.</p>
+        <div className="confirm-actions">
+          <button className="button secondary" disabled={deleting} onClick={() => setDeleteTarget(null)}>Cancel</button>
+          <button className="button danger" disabled={deleting} onClick={() => void confirmDeleteCostCode()}>{deleting ? "Deleting…" : "Yes, Delete"}</button>
+        </div>
+      </div>
+    </div>}
     {editing && <CostCodeForm projectId={project!.id} value={editing === "new" ? null : editing} enterpriseAttributes={activeEnterprise} projectAttributes={activeProject} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); showNotice("Cost code saved."); void refresh(); }}/>} 
     {bulkOpen && project && <BulkAttributeDialog selected={selected} enterpriseAttributes={activeEnterprise} projectAttributes={activeProject} onClose={() => setBulkOpen(false)} onSaved={() => { setBulkOpen(false); showNotice("Selected cost codes updated."); void refresh(); }}/>} 
     {importRows && <ExcelImportDialog title="Import Cost Codes" rows={importRows} columns={excelColumns} errors={importErrors} replace={replace} setReplace={setReplace} importing={importing} progress={progress} onCancel={() => !importing && setImportRows(null)} onImport={() => void runImport()}/>} 
