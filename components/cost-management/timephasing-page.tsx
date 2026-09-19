@@ -6,7 +6,7 @@ import type { CellValueChangedEvent, ColDef, ColGroupDef, ValueGetterParams } fr
 import { themeQuartz } from "ag-grid-community";
 import { AllEnterpriseModule } from "ag-grid-enterprise";
 import { getProjectByPublicId, type Project } from "@/lib/projects";
-import { listCostCodes, updateCostCodeFields, type CostCode, type TimephasingMethod } from "@/lib/cost-codes";
+import { listCostCodes, updateCostCodeFields, type CostCode, type CostCodeInput, type TimephasingMethod } from "@/lib/cost-codes";
 import { listCostReportingPeriods, type CostReportingPeriod } from "@/lib/cost-reporting";
 import {
   listActualCostPeriodAmounts,
@@ -170,7 +170,7 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
   }
 
   async function saveSetting(row: GridRow, colId: string, value: unknown) {
-    const patch: Record<string, string | null> = {};
+    const patch: Partial<Omit<CostCodeInput, "project_id" | "cost_code_id">> = {};
     if (colId === "phasingMethod") {
       const method = String(value) as TimephasingMethod;
       if (row.type === "Baseline Budget" && method === "Cost Details") throw new Error("Baseline Budget supports Manual or Dates phasing.");
@@ -235,7 +235,7 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
       {
         field: "phasingMethod", headerName: "Phasing Method", width: 135, editable: true,
         cellEditor: "agSelectCellEditor",
-        cellEditorParams: (params: { data: GridRow }) => ({ values: params.data.type === "Estimate At Completion" ? METHODS : ["Manual", "Dates"] }),
+        cellEditorParams: (params) => ({ values: params.data?.type === "Estimate At Completion" ? METHODS : ["Manual", "Dates"] }),
       },
       { field: "startDate", headerName: "Start Date", width: 115, editable: true, cellEditor: "agDateStringCellEditor" },
       { field: "finishDate", headerName: "Finish Date", width: 115, editable: true, cellEditor: "agDateStringCellEditor" },
