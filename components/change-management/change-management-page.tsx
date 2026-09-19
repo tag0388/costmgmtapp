@@ -210,11 +210,11 @@ export default function ChangeManagementPage({ projectPublicId, bulkRecords = fa
         ] : []),
         { field: "item", headerName: "Item", pinned: bulkRecords ? undefined : "left", minWidth: 120, editable: true, columnGroupShow: bulkRecords ? "open" : undefined },
         { field: "description", headerName: "Description", minWidth: 230, editable: true, columnGroupShow: "open" },
-        { field: "cost_code_ref", headerName: "Cost Code ID", minWidth: 135, editable: true, cellEditor: "agSelectCellEditor", cellEditorParams: { values: ["", ...costCodes.filter((code) => code.is_active).map((code) => code.cost_code_id)] }, columnGroupShow: "open" },
+        { field: "cost_code_ref", headerName: "Cost Code ID", minWidth: 180, editable: true, valueFormatter: (params) => { const reference = String(params.value ?? ""); const code = reference ? codeByRef.get(reference.toLowerCase()) : null; return code ? `${code.cost_code_id} - ${code.name}` : reference; }, cellEditor: "agSelectCellEditor", cellEditorParams: { values: ["", ...costCodes.filter((code) => code.is_active).map((code) => `${code.cost_code_id} - ${code.name}`)] }, columnGroupShow: "open" },
       ]},
       { groupId: "cr-financial", headerName: "Financial", marryChildren: true, openByDefault: true, children: [
-        { field: "change_to_budget", headerName: "Change to Budget", minWidth: 145, type: "numericColumn", editable: true, aggFunc: "sum", enableValue: true, valueParser: (params) => String(params.newValue ?? "").trim() === "" ? null : Number(params.newValue), valueFormatter: (params) => params.value == null ? "" : money(params.value) },
-        { field: "change_to_eac", headerName: "Change to EAC", minWidth: 135, type: "numericColumn", editable: true, aggFunc: "sum", enableValue: true, valueParser: (params) => String(params.newValue ?? "").trim() === "" ? null : Number(params.newValue), valueFormatter: (params) => params.value == null ? "" : money(params.value), columnGroupShow: "open" },
+        { field: "change_to_budget", headerName: "Change to Budget", minWidth: 145, type: "numericColumn", editable: true, aggFunc: "sum", enableValue: true, valueParser: (params) => { const raw = String(params.newValue ?? "").trim(); if (!raw) return null; const parsed = Number(raw.replace(/,/g, "")); return Number.isFinite(parsed) ? parsed : params.oldValue; }, valueFormatter: (params) => params.value == null ? "" : money(params.value) },
+        { field: "change_to_eac", headerName: "Change to EAC", minWidth: 135, type: "numericColumn", editable: true, aggFunc: "sum", enableValue: true, valueParser: (params) => { const raw = String(params.newValue ?? "").trim(); if (!raw) return null; const parsed = Number(raw.replace(/,/g, "")); return Number.isFinite(parsed) ? parsed : params.oldValue; }, valueFormatter: (params) => params.value == null ? "" : money(params.value), columnGroupShow: "open" },
       ]},
       ...(enterprise.length ? [{ groupId: "cr-enterprise", headerName: "Enterprise Line-Item Attributes", marryChildren: true, openByDefault: true, children: enterprise }] : []),
       ...(projectCols.length ? [{ groupId: "cr-project", headerName: "Project Line-Item Attributes", marryChildren: true, openByDefault: true, children: projectCols }] : []),
@@ -282,7 +282,7 @@ export default function ChangeManagementPage({ projectPublicId, bulkRecords = fa
     try {
       setSaving(true); setError("");
       if (colId === "cost_code_ref") {
-        const reference = String(event.newValue ?? "").trim(); const code = reference ? codeByRef.get(reference.toLowerCase()) : null;
+        const selected = String(event.newValue ?? "").trim(); const reference = selected.includes(" - ") ? selected.split(" - ", 1)[0].trim() : selected; const code = reference ? codeByRef.get(reference.toLowerCase()) : null;
         if (reference && !code) throw new Error(`Cost Code ID “${reference}” is not valid for this project.`);
         patch.cost_code_id = code?.id ?? null;
       } else if (colId === "item") patch.item = String(event.newValue ?? "").trim() || null;
