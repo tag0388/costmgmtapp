@@ -93,9 +93,10 @@ export function bulkUpdateChangeOrders(ids: string[], patch: Partial<Pick<Change
   });
 }
 
-export function listChangeRecords(projectId: string, changeOrderId?: string) {
+export function listChangeRecords(projectId: string, changeOrderId?: string, costCodeId?: string) {
   const orderFilter = changeOrderId ? `&change_order_id=eq.${encodeURIComponent(changeOrderId)}` : "";
-  return supabaseRequest<ChangeRecord[]>(`change_records?project_id=eq.${encodeURIComponent(projectId)}${orderFilter}&select=${encodeURIComponent(recordSelect)}&order=row_order.asc.nullslast,created_at.asc`);
+  const costCodeFilter = costCodeId ? `&cost_code_id=eq.${encodeURIComponent(costCodeId)}` : "";
+  return supabaseRequest<ChangeRecord[]>(`change_records?project_id=eq.${encodeURIComponent(projectId)}${orderFilter}${costCodeFilter}&select=${encodeURIComponent(recordSelect)}&order=row_order.asc.nullslast,created_at.asc`);
 }
 
 export function createChangeRecord(projectId: string, input: ChangeRecordInput) {
