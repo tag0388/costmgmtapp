@@ -190,6 +190,13 @@ export function updateCostCodeFields(id: string, patch: Partial<Omit<CostCodeInp
   });
 }
 
+export function deleteCostCode(id: string) {
+  return supabaseRequest(`cost_codes?id=eq.${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: { Prefer: "return=minimal" },
+  });
+}
+
 export function setCostCodesActive(ids: string[], isActive: boolean) {
   if (!ids.length) return Promise.resolve([] as CostCode[]);
   return supabaseRequest<CostCode[]>(`cost_codes?id=in.(${ids.join(",")})&select=${encodeURIComponent(select)}`, {
@@ -223,6 +230,7 @@ export async function importCostCodes(projectId: string, rows: Omit<CostCodeInpu
 export function costCodeErrorMessage(error: unknown) {
   if (error instanceof SupabaseRequestError) {
     if (error.code === "23505") return "That Cost Code ID is already used in this project.";
+    if (error.code === "23503") return "This Cost Code cannot be deleted because it is still used by project data such as Budget Details, Actual Cost, Change Records, Cost to Complete, Timephasing or Subcontract details. Remove or reassign those records first.";
     return error.message;
   }
   return error instanceof Error ? error.message : "Something went wrong while working with cost codes.";
