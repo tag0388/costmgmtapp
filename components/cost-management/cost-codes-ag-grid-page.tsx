@@ -19,6 +19,7 @@ import {
   CostCodeInput,
   costCodeErrorMessage,
   createCostCode,
+  deleteCostCode,
   EacMethod,
   EnterpriseCostCodeAttributeField,
   importCostCodes,
@@ -111,6 +112,8 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
   const [status, setStatus] = useState<StatusFilter>("all");
   const [selected, setSelected] = useState<string[]>([]);
   const [editing, setEditing] = useState<CostCode | "new" | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<CostCode | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [bulkOpen, setBulkOpen] = useState(false);
   const [importRows, setImportRows] = useState<ExcelRow[] | null>(null);
   const [importErrors, setImportErrors] = useState<string[]>([]);
@@ -277,7 +280,7 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
         amountColumn("variance_movement", "Variance Movement", "open"),
       ]},
       { field: "is_active", headerName: "Status", minWidth: 105, enableRowGroup: true, filter: "agSetColumnFilter", valueFormatter: (params) => params.value ? "Active" : "Inactive" },
-      { colId: "actions", headerName: "Actions", pinned: "right", sortable: false, filter: false, suppressHeaderMenuButton: true, minWidth: 150, maxWidth: 150, cellRenderer: (params: { data?: CostCode }) => params.data ? <CostCodeActionsCell costCode={params.data} project={project} onEdit={() => setEditing(params.data!)} /> : null },
+      { colId: "actions", headerName: "Actions", pinned: "right", sortable: false, filter: false, suppressHeaderMenuButton: true, minWidth: 130, maxWidth: 130, cellRenderer: (params: { data?: CostCode }) => params.data ? <CostCodeActionsCell costCode={params.data} project={project} onEdit={() => setEditing(params.data!)} onDelete={() => setDeleteTarget(params.data!)} /> : null },
     ];
   }, [activeEnterprise, activeProject, project]);
 
@@ -457,6 +460,23 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
     finally { setImporting(false); }
   }
 
+  async function confirmDeleteCostCode() {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    setError("");
+    try {
+      await deleteCostCode(deleteTarget.id);
+      setDeleteTarget(null);
+      showNotice(`Cost Code ${deleteTarget.cost_code_id} deleted.`);
+      await refresh();
+    } catch (requestError) {
+      setError(costCodeErrorMessage(requestError));
+      setDeleteTarget(null);
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   async function deactivateSelected() {
     if (!selected.length) return;
     try { await setCostCodesActive(selected, false); setSelected([]); gridApi?.deselectAll(); showNotice("Cost code status updated."); await refresh(); }
@@ -545,6 +565,19 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
       <div className="grid-footer"><span>{rows.length} of {costCodes.length} cost codes · {selected.length} selected</span><span>{activeEnterprise.length} enterprise + {activeProject.length} project cost code attributes</span></div>
     </section>
 
+    {deleteTarget && <div className="confirm-layer">
+      <button className="confirm-scrim" onClick={() => !deleting && setDeleteTarget(null)} aria-label="Close delete confirmation"/>
+      <div className="confirm-dialog" role="dialog" aria-modal="true">
+        <div className="confirm-icon">!</div>
+        <h2>Delete Cost Code?</h2>
+        <p>Are you sure you want to permanently delete <strong>{deleteTarget.cost_code_id} - {deleteTarget.name}</strong>?</p>
+        <p>If this Cost Code is used by Budget Details, Actual Cost, Change Records, Cost to Complete, Timephasing or Subcontract details, deletion will be blocked until those records are removed or reassigned.</p>
+        <div className="confirm-actions">
+          <button className="button secondary" disabled={deleting} onClick={() => setDeleteTarget(null)}>Cancel</button>
+          <button className="button danger" disabled={deleting} onClick={() => void confirmDeleteCostCode()}>{deleting ? "Deleting…" : "Yes, Delete"}</button>
+        </div>
+      </div>
+    </div>}
     {editing && <CostCodeForm projectId={project!.id} value={editing === "new" ? null : editing} enterpriseAttributes={activeEnterprise} projectAttributes={activeProject} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); showNotice("Cost code saved."); void refresh(); }}/>} 
     {bulkOpen && project && <BulkAttributeDialog selected={selected} enterpriseAttributes={activeEnterprise} projectAttributes={activeProject} onClose={() => setBulkOpen(false)} onSaved={() => { setBulkOpen(false); showNotice("Selected cost codes updated."); void refresh(); }}/>} 
     {importRows && <ExcelImportDialog title="Import Cost Codes" rows={importRows} columns={excelColumns} errors={importErrors} replace={replace} setReplace={setReplace} importing={importing} progress={progress} onCancel={() => !importing && setImportRows(null)} onImport={() => void runImport()}/>} 
