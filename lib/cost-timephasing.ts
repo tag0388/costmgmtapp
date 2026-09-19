@@ -44,6 +44,7 @@ export async function setCostCodeTimephasingValue(
       }),
     },
   );
+  if (!rows[0]) throw new Error("The Timephasing value was not saved.");
   return rows[0];
 }
 
