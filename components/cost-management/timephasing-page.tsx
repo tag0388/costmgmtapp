@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AgGridProvider, AgGridReact } from "ag-grid-react";
-import type { CellValueChangedEvent, ColDef, ColGroupDef, ValueGetterParams } from "ag-grid-community";
+import type { CellValueChangedEvent, ColDef, ColGroupDef, ICellEditorParams, ValueGetterParams } from "ag-grid-community";
 import { themeQuartz } from "ag-grid-community";
 import { AllEnterpriseModule } from "ag-grid-enterprise";
 import { getProjectByPublicId, type Project } from "@/lib/projects";
@@ -235,7 +235,7 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
       {
         field: "phasingMethod", headerName: "Phasing Method", width: 135, editable: true,
         cellEditor: "agSelectCellEditor",
-        cellEditorParams: (params) => ({ values: params.data?.type === "Estimate At Completion" ? METHODS : ["Manual", "Dates"] }),
+        cellEditorParams: (params: ICellEditorParams<GridRow>) => ({ values: params.data?.type === "Estimate At Completion" ? METHODS : ["Manual", "Dates"] }),
       },
       { field: "startDate", headerName: "Start Date", width: 115, editable: true, cellEditor: "agDateStringCellEditor" },
       { field: "finishDate", headerName: "Finish Date", width: 115, editable: true, cellEditor: "agDateStringCellEditor" },
