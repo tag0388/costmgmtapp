@@ -35,12 +35,12 @@ export type CostCode = {
   current_budget_timephasing_method: TimephasingMethod;
   ctc_timephasing_method: TimephasingMethod;
   manual_eac: number | null;
-  baseline_start_date: string | null;
-  baseline_finish_date: string | null;
-  budget_start_date: string | null;
-  budget_finish_date: string | null;
-  current_start_date: string | null;
-  current_finish_date: string | null;
+  baseline_start_date?: string | null;
+  baseline_finish_date?: string | null;
+  budget_start_date?: string | null;
+  budget_finish_date?: string | null;
+  current_start_date?: string | null;
+  current_finish_date?: string | null;
   baseline_budget?: number;
   budget_changes?: number;
   current_budget?: number;
