@@ -197,6 +197,14 @@ export function deleteCostCode(id: string) {
   });
 }
 
+export function deleteCostCodes(ids: string[]) {
+  if (!ids.length) return Promise.resolve();
+  return supabaseRequest(`cost_codes?id=in.(${ids.map(encodeURIComponent).join(",")})`, {
+    method: "DELETE",
+    headers: { Prefer: "return=minimal" },
+  });
+}
+
 export function setCostCodesActive(ids: string[], isActive: boolean) {
   if (!ids.length) return Promise.resolve([] as CostCode[]);
   return supabaseRequest<CostCode[]>(`cost_codes?id=in.(${ids.join(",")})&select=${encodeURIComponent(select)}`, {
