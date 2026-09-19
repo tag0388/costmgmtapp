@@ -54,6 +54,12 @@ function money(value: unknown) { return new Intl.NumberFormat(undefined, { minim
 function parseNumber(value: string) { const number = Number(value.replace(/,/g, "")); return Number.isFinite(number) ? number : Number.NaN; }
 function exactColumns(rows: ExcelRow[], columns: string[]) { const actual = rows[0] ? Object.keys(rows[0]) : []; return actual.length === columns.length && columns.every((column, index) => actual[index] === column); }
 
+function ActionIcon({ type }: { type: "edit" | "delete" | "records" }) {
+  if (type === "edit") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4l11-11-4-4L4 16v4Zm10-13 4 4M13.5 6.5l4 4"/></svg>;
+  if (type === "delete") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m-9 0 1 13h10l1-13M10 11v5m4-5v5"/></svg>;
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l4 4v14H6V3Zm9 0v5h4M9 12h7M9 16h7"/></svg>;
+}
+
 function AttributeFields({ attributes, form, setForm }: { attributes: ActiveAttribute[]; form: ChangeAttributesForm; setForm: (form: ChangeAttributesForm) => void }) {
   if (!attributes.length) return null;
   return <>{attributes.map((attribute) => <label className="form-field" key={attribute.field}>
@@ -154,46 +160,46 @@ export default function ChangeManagementPage({ projectPublicId, bulkRecords = fa
   })), [attributes]);
 
   const orderColumns = useMemo<Array<ColDef<OrderGridRow> | ColGroupDef<OrderGridRow>>>(() => {
-    const enterprise = attributeColumns(false).filter((_, index) => attributes[index]?.prefix === "E") as ColDef<OrderGridRow>[];
-    const projectCols = attributeColumns(false).filter((_, index) => attributes[index]?.prefix === "P") as ColDef<OrderGridRow>[];
+    const enterprise = attributeColumns(false).filter((_, index) => attributes[index]?.prefix === "E").map((column, index) => ({ ...column, columnGroupShow: index === 0 ? undefined : "open" as const })) as ColDef<OrderGridRow>[];
+    const projectCols = attributeColumns(false).filter((_, index) => attributes[index]?.prefix === "P").map((column, index) => ({ ...column, columnGroupShow: index === 0 ? undefined : "open" as const })) as ColDef<OrderGridRow>[];
     return [
-      { groupId: "co-general", headerName: "General Info", marryChildren: true, children: [
+      { groupId: "co-general", headerName: "General Info", marryChildren: true, openByDefault: true, children: [
         { field: "change_order_id", headerName: "Change Order ID", pinned: "left", minWidth: 145, filter: true },
-        { field: "description", headerName: "Description", minWidth: 280, filter: true },
-        { field: "status", headerName: "Status", minWidth: 115, filter: "agSetColumnFilter" },
+        { field: "description", headerName: "Description", minWidth: 280, filter: true, columnGroupShow: "open" },
+        { field: "status", headerName: "Status", minWidth: 115, filter: "agSetColumnFilter", columnGroupShow: "open" },
       ]},
-      { groupId: "co-financial", headerName: "Financial Summary", marryChildren: true, children: [
+      { groupId: "co-financial", headerName: "Financial Summary", marryChildren: true, openByDefault: true, children: [
         { field: "change_to_budget", headerName: "Change to Budget", minWidth: 145, type: "numericColumn", aggFunc: "sum", enableValue: true, valueFormatter: (params) => money(params.value) },
-        { field: "change_to_eac", headerName: "Change to EAC", minWidth: 135, type: "numericColumn", aggFunc: "sum", enableValue: true, valueFormatter: (params) => money(params.value) },
-        { field: "record_count", headerName: "Records", minWidth: 90, type: "numericColumn" },
+        { field: "change_to_eac", headerName: "Change to EAC", minWidth: 135, type: "numericColumn", aggFunc: "sum", enableValue: true, valueFormatter: (params) => money(params.value), columnGroupShow: "open" },
+        { field: "record_count", headerName: "Records", minWidth: 90, type: "numericColumn", columnGroupShow: "open" },
       ]},
       ...(enterprise.length ? [{ groupId: "co-enterprise", headerName: "Enterprise Change Attributes", marryChildren: true, openByDefault: true, children: enterprise }] : []),
       ...(projectCols.length ? [{ groupId: "co-project", headerName: "Project Change Attributes", marryChildren: true, openByDefault: true, children: projectCols }] : []),
-      { headerName: "Actions", pinned: "right", width: 205, sortable: false, filter: false, suppressHeaderMenuButton: true, cellRenderer: (params: { data?: ChangeOrder }) => params.data ? <div className="change-row-actions" onMouseDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>
-        <button className="button secondary compact" onClick={() => { setEditingOrder(params.data!); setOrderForm({ ...params.data! }); setFormError(""); }}>✎ Edit</button>
-        <button className="button danger compact" onClick={() => setDeletePrompt({ kind: "orders", ids: [params.data!.id] })}>Delete</button>
-        <button className="button secondary compact more-button" title="Open related Change Records" aria-label={`Open related Change Records for ${params.data.change_order_id}`} onClick={() => setSelectedOrder(params.data!)}>...</button>
+      { headerName: "Actions", pinned: "right", width: 112, minWidth: 112, maxWidth: 112, sortable: false, filter: false, suppressHeaderMenuButton: true, cellRenderer: (params: { data?: ChangeOrder }) => params.data ? <div className="change-row-actions" onMouseDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>
+        <button className="change-icon-button" title="Edit Change Order" aria-label={`Edit ${params.data.change_order_id}`} onClick={() => { setEditingOrder(params.data!); setOrderForm({ ...params.data! }); setFormError(""); }}><ActionIcon type="edit"/></button>
+        <button className="change-icon-button delete" title="Delete Change Order" aria-label={`Delete ${params.data.change_order_id}`} onClick={() => setDeletePrompt({ kind: "orders", ids: [params.data!.id] })}><ActionIcon type="delete"/></button>
+        <button className="change-icon-button" title="Open related Change Records" aria-label={`Open related Change Records for ${params.data.change_order_id}`} onClick={() => setSelectedOrder(params.data!)}><ActionIcon type="records"/></button>
       </div> : null },
     ];
   }, [attributeColumns, attributes]);
 
   const recordColumns = useMemo<Array<ColDef<RecordGridRow> | ColGroupDef<RecordGridRow>>>(() => {
-    const enterprise = attributeColumns(true).filter((_, index) => attributes[index]?.prefix === "E") as ColDef<RecordGridRow>[];
-    const projectCols = attributeColumns(true).filter((_, index) => attributes[index]?.prefix === "P") as ColDef<RecordGridRow>[];
+    const enterprise = attributeColumns(true).filter((_, index) => attributes[index]?.prefix === "E").map((column, index) => ({ ...column, columnGroupShow: index === 0 ? undefined : "open" as const })) as ColDef<RecordGridRow>[];
+    const projectCols = attributeColumns(true).filter((_, index) => attributes[index]?.prefix === "P").map((column, index) => ({ ...column, columnGroupShow: index === 0 ? undefined : "open" as const })) as ColDef<RecordGridRow>[];
     return [
-      { groupId: "cr-general", headerName: "General Info", marryChildren: true, children: [
+      { groupId: "cr-general", headerName: "General Info", marryChildren: true, openByDefault: true, children: [
         ...(bulkRecords ? [
           { field: "change_order_ref", headerName: "Change Order ID", pinned: "left" as const, minWidth: 145, filter: true },
-          { field: "change_order_description", headerName: "Change Order Description", minWidth: 220, filter: true },
-          { field: "status", headerName: "Status", minWidth: 105, filter: "agSetColumnFilter" },
+          { field: "change_order_description", headerName: "Change Order Description", minWidth: 220, filter: true, columnGroupShow: "open" as const },
+          { field: "status", headerName: "Status", minWidth: 105, filter: "agSetColumnFilter", columnGroupShow: "open" as const },
         ] : []),
-        { field: "item", headerName: "Item", pinned: bulkRecords ? undefined : "left", minWidth: 120, editable: true },
-        { field: "description", headerName: "Description", minWidth: 230, editable: true },
-        { field: "cost_code_ref", headerName: "Cost Code ID", minWidth: 135, editable: true, cellEditor: "agSelectCellEditor", cellEditorParams: { values: costCodes.filter((code) => code.is_active).map((code) => code.cost_code_id) } },
+        { field: "item", headerName: "Item", pinned: bulkRecords ? undefined : "left", minWidth: 120, editable: true, columnGroupShow: bulkRecords ? "open" : undefined },
+        { field: "description", headerName: "Description", minWidth: 230, editable: true, columnGroupShow: "open" },
+        { field: "cost_code_ref", headerName: "Cost Code ID", minWidth: 135, editable: true, cellEditor: "agSelectCellEditor", cellEditorParams: { values: costCodes.filter((code) => code.is_active).map((code) => code.cost_code_id) }, columnGroupShow: "open" },
       ]},
-      { groupId: "cr-financial", headerName: "Financial", marryChildren: true, children: [
+      { groupId: "cr-financial", headerName: "Financial", marryChildren: true, openByDefault: true, children: [
         { field: "change_to_budget", headerName: "Change to Budget", minWidth: 145, type: "numericColumn", editable: true, aggFunc: "sum", enableValue: true, valueParser: (params) => Number(params.newValue), valueFormatter: (params) => money(params.value) },
-        { field: "change_to_eac", headerName: "Change to EAC", minWidth: 135, type: "numericColumn", editable: true, aggFunc: "sum", enableValue: true, valueParser: (params) => Number(params.newValue), valueFormatter: (params) => money(params.value) },
+        { field: "change_to_eac", headerName: "Change to EAC", minWidth: 135, type: "numericColumn", editable: true, aggFunc: "sum", enableValue: true, valueParser: (params) => Number(params.newValue), valueFormatter: (params) => money(params.value), columnGroupShow: "open" },
       ]},
       ...(enterprise.length ? [{ groupId: "cr-enterprise", headerName: "Enterprise Change Attributes", marryChildren: true, openByDefault: true, children: enterprise }] : []),
       ...(projectCols.length ? [{ groupId: "cr-project", headerName: "Project Change Attributes", marryChildren: true, openByDefault: true, children: projectCols }] : []),
