@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AgGridProvider, AgGridReact } from "ag-grid-react";
-import type { CellValueChangedEvent, ColDef, ColGroupDef, ICellEditorParams, ValueGetterParams } from "ag-grid-community";
+import type { CellStyle, CellValueChangedEvent, ColDef, ColGroupDef, ICellEditorParams, ValueGetterParams } from "ag-grid-community";
 import { themeQuartz } from "ag-grid-community";
 import { AllEnterpriseModule } from "ag-grid-enterprise";
 import { getProjectByPublicId, type Project } from "@/lib/projects";
@@ -243,7 +243,7 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
       { field: "phasedTotal", headerName: "Phased Total", width: 120, type: "numericColumn", valueFormatter: (params) => money(params.value) },
       {
         field: "check", headerName: "Check", width: 105, type: "numericColumn", valueFormatter: (params) => money(params.value),
-        cellStyle: (params) => Math.abs(Number(params.value ?? 0)) < 0.01
+        cellStyle: (params): CellStyle => Math.abs(Number(params.value ?? 0)) < 0.01
           ? { backgroundColor: "#ecfdf3", fontWeight: 700 }
           : { backgroundColor: "#fff1f2", color: "#b42318", fontWeight: 700 },
       },
@@ -269,7 +269,7 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
         return true;
       },
       valueFormatter: (params) => money(params.value),
-      cellStyle: (params) => {
+      cellStyle: (params): CellStyle | undefined => {
         if (params.data?.type !== "Baseline Budget" && period.status !== "Future") return { backgroundColor: "#f1f5f9", fontWeight: 600 };
         if (params.data?.phasingMethod !== "Manual") return { backgroundColor: "#f8fafc" };
         return undefined;
