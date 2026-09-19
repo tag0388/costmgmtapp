@@ -226,7 +226,17 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
         cellEditorParams: { values: ["", ...definition.attribute_values.filter((value) => value.is_active).map((value) => `${value.value_id} - ${value.value_name}`)] },
       };
     });
-    const amountColumn = (field: keyof CostCode & string, headerName: string, columnGroupShow?: "open"): ColDef<CostCode> => ({
+    const financialCellStyles = {
+      budget: { backgroundColor: "#ecfdf3" },
+      cost: { backgroundColor: "#fff7e6" },
+      variance: { backgroundColor: "#fffde7" },
+    } as const;
+    const amountColumn = (
+      field: keyof CostCode & string,
+      headerName: string,
+      columnGroupShow?: "open",
+      tone?: keyof typeof financialCellStyles,
+    ): ColDef<CostCode> => ({
       field,
       headerName,
       minWidth: 145,
@@ -234,6 +244,7 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
       aggFunc: "sum",
       enableValue: true,
       valueFormatter: (params) => money(params.value as number | null),
+      cellStyle: tone ? financialCellStyles[tone] : undefined,
       columnGroupShow,
     });
     return [
@@ -248,14 +259,14 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
       ...(enterpriseDefs.length ? [{ groupId: "cc-enterprise", headerName: "Enterprise Attributes", marryChildren: true, openByDefault: false, children: enterpriseDefs }] : []),
       ...(projectDefs.length ? [{ groupId: "cc-project", headerName: "Project Attributes", marryChildren: true, openByDefault: false, children: projectDefs }] : []),
       { groupId: "cc-amounts", headerName: "Cost Amounts", marryChildren: true, openByDefault: true, children: [
-        amountColumn("baseline_budget", "Baseline Budget"),
-        amountColumn("budget_changes", "Budget Changes", "open"),
-        amountColumn("current_budget", "Current Budget", "open"),
-        amountColumn("previous_budget", "Previous Period Budget", "open"),
-        amountColumn("budget_movement", "Budget Movement", "open"),
-        amountColumn("actual_cost_this_period", "Actual Cost This Period", "open"),
-        amountColumn("actual_cost_to_date", "Actual Cost to Date", "open"),
-        amountColumn("cost_to_complete", "Cost To Complete", "open"),
+        amountColumn("baseline_budget", "Baseline Budget", undefined, "budget"),
+        amountColumn("budget_changes", "Budget Changes", "open", "budget"),
+        amountColumn("current_budget", "Current Budget", "open", "budget"),
+        amountColumn("previous_budget", "Previous Period Budget", "open", "budget"),
+        amountColumn("budget_movement", "Budget Movement", "open", "budget"),
+        amountColumn("actual_cost_this_period", "Actual Cost This Period", "open", "cost"),
+        amountColumn("actual_cost_to_date", "Actual Cost to Date", "open", "cost"),
+        amountColumn("cost_to_complete", "Cost To Complete", "open", "cost"),
         {
           field: "estimate_at_completion",
           headerName: "Estimate at Completion",
@@ -264,7 +275,7 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
           aggFunc: "sum",
           enableValue: true,
           editable: (params) => params.data?.eac_method === "Manual",
-          cellStyle: (params) => params.data?.eac_method === "Manual" ? { backgroundColor: "#fffdf2" } : undefined,
+          cellStyle: financialCellStyles.cost,
           valueParser: (params) => {
             const raw = String(params.newValue ?? "").trim();
             if (!raw) return 0;
@@ -274,11 +285,11 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
           valueFormatter: (params) => money(params.value as number | null),
           columnGroupShow: "open",
         },
-        amountColumn("previous_estimate_at_completion", "Previous Estimate at Completion", "open"),
-        amountColumn("eac_movement", "EAC Movement", "open"),
-        amountColumn("variance", "Variance", "open"),
-        amountColumn("variance_previous", "Variance Previous", "open"),
-        amountColumn("variance_movement", "Variance Movement", "open"),
+        amountColumn("previous_estimate_at_completion", "Previous Estimate at Completion", "open", "cost"),
+        amountColumn("eac_movement", "EAC Movement", "open", "cost"),
+        amountColumn("variance", "Variance", "open", "variance"),
+        amountColumn("variance_previous", "Variance Previous", "open", "variance"),
+        amountColumn("variance_movement", "Variance Movement", "open", "variance"),
       ]},
       { field: "is_active", headerName: "Status", minWidth: 105, enableRowGroup: true, filter: "agSetColumnFilter", valueFormatter: (params) => params.value ? "Active" : "Inactive" },
       { colId: "actions", headerName: "Actions", pinned: "right", sortable: false, filter: false, suppressHeaderMenuButton: true, minWidth: 130, maxWidth: 130, cellRenderer: (params: { data?: CostCode }) => params.data ? <CostCodeActionsCell costCode={params.data} project={project} onEdit={() => setEditing(params.data!)} onDelete={() => setDeleteTarget(params.data!)} /> : null },
