@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo, useRef, useState, useEffect } from "react";
 import { AgGridProvider, AgGridReact } from "ag-grid-react";
-import type { ColDef, ColumnState, GridApi, GridReadyEvent, SelectionChangedEvent } from "ag-grid-community";
+import type { ColDef, ColGroupDef, ColumnState, GridApi, GridReadyEvent, SelectionChangedEvent } from "ag-grid-community";
 import { themeQuartz } from "ag-grid-community";
 import { AllEnterpriseModule } from "ag-grid-enterprise";
 import ExcelImportDialog from "@/components/shared/excel-import-dialog";
@@ -54,6 +54,12 @@ const blankForm: Form = {
   current_budget_timephasing_method: "Manual",
   ctc_timephasing_method: "Cost Details",
   manual_eac: null,
+  baseline_start_date: null,
+  baseline_finish_date: null,
+  budget_start_date: null,
+  budget_finish_date: null,
+  current_start_date: null,
+  current_finish_date: null,
   is_active: true,
 };
 
@@ -149,27 +155,63 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
 
   const rows = useMemo(() => costCodes.filter((row) => status === "all" || (status === "active" ? row.is_active : !row.is_active)), [costCodes, status]);
 
-  const columnDefs = useMemo<ColDef<CostCode>[]>(() => {
-    const enterpriseDefs: ColDef<CostCode>[] = activeEnterprise.map((definition) => {
+  const columnDefs = useMemo<Array<ColDef<CostCode> | ColGroupDef<CostCode>>>(() => {
+    const enterpriseDefs: ColDef<CostCode>[] = activeEnterprise.map((definition, index) => {
       const field = enterpriseField(definition.attribute_number);
-      return { colId: field, headerName: definition.name, headerTooltip: `Enterprise Cost Code Attribute E${String(definition.attribute_number).padStart(2, "0")}`, valueGetter: (params) => valueName(definition, params.data?.[field]), minWidth: 150, enableRowGroup: true, filter: "agSetColumnFilter" };
+      return { colId: field, headerName: definition.name, headerTooltip: `Enterprise Cost Code Attribute E${String(definition.attribute_number).padStart(2, "0")}`, valueGetter: (params) => valueName(definition, params.data?.[field]), minWidth: 150, enableRowGroup: true, filter: "agSetColumnFilter", columnGroupShow: index === 0 ? undefined : "open" };
     });
-    const projectDefs: ColDef<CostCode>[] = activeProject.map((definition) => {
+    const projectDefs: ColDef<CostCode>[] = activeProject.map((definition, index) => {
       const field = projectField(definition.attribute_number);
-      return { colId: field, headerName: definition.name, headerTooltip: `Project Cost Code Attribute P${String(definition.attribute_number).padStart(2, "0")}`, valueGetter: (params) => valueName(definition, params.data?.[field]), minWidth: 150, enableRowGroup: true, filter: "agSetColumnFilter" };
+      return { colId: field, headerName: definition.name, headerTooltip: `Project Cost Code Attribute P${String(definition.attribute_number).padStart(2, "0")}`, valueGetter: (params) => valueName(definition, params.data?.[field]), minWidth: 150, enableRowGroup: true, filter: "agSetColumnFilter", columnGroupShow: index === 0 ? undefined : "open" };
+    });
+    const amountColumn = (field: keyof CostCode & string, headerName: string, columnGroupShow?: "open"): ColDef<CostCode> => ({
+      field,
+      headerName,
+      minWidth: 145,
+      type: "numericColumn",
+      aggFunc: "sum",
+      enableValue: true,
+      valueFormatter: (params) => money(params.value as number | null),
+      columnGroupShow,
     });
     return [
-      { field: "cost_code_id", headerName: "Cost Code ID", pinned: "left", minWidth: 145, enableRowGroup: true, filter: true },
-      { field: "name", headerName: "Cost Code Name", pinned: "left", minWidth: 220, enableRowGroup: true, filter: true },
-      { field: "description", headerName: "Description", minWidth: 220, filter: true },
-      ...enterpriseDefs,
-      ...projectDefs,
-      { field: "baseline_budget", headerName: "Baseline Budget", minWidth: 145, type: "numericColumn", aggFunc: "sum", enableValue: true, valueFormatter: (params) => money(params.value as number | null) },
-      { field: "eac_method", headerName: "EAC Method", minWidth: 155, enableRowGroup: true, filter: "agSetColumnFilter" },
-      { field: "manual_eac", headerName: "Manual EAC", minWidth: 135, type: "numericColumn", aggFunc: "sum", enableValue: true, valueFormatter: (params) => money(params.value as number | null) },
-      { field: "baseline_timephasing_method", headerName: "Baseline Timephasing", minWidth: 175, enableRowGroup: true, filter: "agSetColumnFilter" },
-      { field: "current_budget_timephasing_method", headerName: "Current Budget", minWidth: 160, enableRowGroup: true, filter: "agSetColumnFilter" },
-      { field: "ctc_timephasing_method", headerName: "CTC Timephasing", minWidth: 160, enableRowGroup: true, filter: "agSetColumnFilter" },
+      { groupId: "cc-general", headerName: "General", marryChildren: true, openByDefault: true, children: [
+        { field: "cost_code_id", headerName: "Cost Code ID", pinned: "left", minWidth: 145, enableRowGroup: true, filter: true },
+        { field: "name", headerName: "Cost Code Name", pinned: "left", minWidth: 220, enableRowGroup: true, filter: true },
+        { field: "description", headerName: "Description", minWidth: 220, filter: true, columnGroupShow: "open" },
+      ]},
+      { groupId: "cc-settings", headerName: "Account Settings", marryChildren: true, openByDefault: true, children: [
+        { field: "eac_method", headerName: "EAC Method", minWidth: 155, enableRowGroup: true, filter: "agSetColumnFilter" },
+        { field: "baseline_timephasing_method", headerName: "Baseline Timephasing Method", minWidth: 195, enableRowGroup: true, filter: "agSetColumnFilter", columnGroupShow: "open" },
+        { field: "current_budget_timephasing_method", headerName: "Budget Timephasing Method", minWidth: 190, enableRowGroup: true, filter: "agSetColumnFilter", columnGroupShow: "open" },
+        { field: "ctc_timephasing_method", headerName: "CTC Timephasing Method", minWidth: 180, enableRowGroup: true, filter: "agSetColumnFilter", columnGroupShow: "open" },
+      ]},
+      { groupId: "cc-dates", headerName: "Account Dates", marryChildren: true, openByDefault: false, children: [
+        { field: "baseline_start_date", headerName: "Baseline Start Date", minWidth: 145 },
+        { field: "baseline_finish_date", headerName: "Baseline Finish Date", minWidth: 150, columnGroupShow: "open" },
+        { field: "budget_start_date", headerName: "Budget Start Date", minWidth: 140, columnGroupShow: "open" },
+        { field: "budget_finish_date", headerName: "Budget Finish Date", minWidth: 145, columnGroupShow: "open" },
+        { field: "current_start_date", headerName: "Current Start Date", minWidth: 145, columnGroupShow: "open" },
+        { field: "current_finish_date", headerName: "Current Finish Date", minWidth: 150, columnGroupShow: "open" },
+      ]},
+      ...(enterpriseDefs.length ? [{ groupId: "cc-enterprise", headerName: "Enterprise Attributes", marryChildren: true, openByDefault: false, children: enterpriseDefs }] : []),
+      ...(projectDefs.length ? [{ groupId: "cc-project", headerName: "Project Attributes", marryChildren: true, openByDefault: false, children: projectDefs }] : []),
+      { groupId: "cc-amounts", headerName: "Cost Amounts", marryChildren: true, openByDefault: true, children: [
+        amountColumn("baseline_budget", "Baseline Budget"),
+        amountColumn("budget_changes", "Budget Changes", "open"),
+        amountColumn("current_budget", "Current Budget", "open"),
+        amountColumn("previous_budget", "Previous Period Budget", "open"),
+        amountColumn("budget_movement", "Budget Movement", "open"),
+        amountColumn("actual_cost_this_period", "Actual Cost This Period", "open"),
+        amountColumn("actual_cost_to_date", "Actual Cost to Date", "open"),
+        amountColumn("cost_to_complete", "Cost To Complete", "open"),
+        amountColumn("estimate_at_completion", "Estimate at Completion", "open"),
+        amountColumn("previous_estimate_at_completion", "Previous Estimate at Completion", "open"),
+        amountColumn("eac_movement", "EAC Movement", "open"),
+        amountColumn("variance", "Variance", "open"),
+        amountColumn("variance_previous", "Variance Previous", "open"),
+        amountColumn("variance_movement", "Variance Movement", "open"),
+      ]},
       { field: "is_active", headerName: "Status", minWidth: 105, enableRowGroup: true, filter: "agSetColumnFilter", valueFormatter: (params) => params.value ? "Active" : "Inactive" },
       { colId: "actions", headerName: "Actions", pinned: "right", sortable: false, filter: false, suppressHeaderMenuButton: true, minWidth: 150, maxWidth: 150, cellRenderer: (params: { data?: CostCode }) => params.data ? <CostCodeActionsCell costCode={params.data} project={project} onEdit={() => setEditing(params.data!)} /> : null },
     ];
