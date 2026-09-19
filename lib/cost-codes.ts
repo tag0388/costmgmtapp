@@ -138,7 +138,9 @@ export async function listCostCodes(projectId: string) {
     const actualCostToDate = Number(actualToDateByCode.get(code.id) ?? 0);
     const actualCostThisPeriod = Number(actualThisPeriodByCode.get(code.id) ?? 0);
     const costToComplete = Number(ctcByCode.get(code.id) ?? 0);
-    const estimateAtCompletion = actualCostToDate + costToComplete;
+    const estimateAtCompletion = code.eac_method === "Manual"
+      ? Number(code.manual_eac ?? 0)
+      : actualCostToDate + costToComplete;
     const snapshot = snapshotByCode.get(code.id);
     const previousBudget = snapshot ? Number(snapshot.current_budget ?? 0) : null;
     const previousEac = snapshot ? Number(snapshot.eac ?? 0) : null;
@@ -174,6 +176,14 @@ export function updateCostCode(id: string, input: Omit<CostCodeInput, "project_i
   return supabaseRequest<CostCode[]>(`cost_codes?id=eq.${encodeURIComponent(id)}&select=${encodeURIComponent(select)}`, {
     method: "PATCH", headers: { Prefer: "return=representation" },
     body: JSON.stringify({ ...input, updated_at: new Date().toISOString() }),
+  }).then((rows) => rows[0]);
+}
+
+export function updateCostCodeFields(id: string, patch: Partial<Omit<CostCodeInput, "project_id" | "cost_code_id">>) {
+  return supabaseRequest<CostCode[]>(`cost_codes?id=eq.${encodeURIComponent(id)}&select=${encodeURIComponent(select)}`, {
+    method: "PATCH",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify({ ...patch, updated_at: new Date().toISOString() }),
   }).then((rows) => rows[0]);
 }
 
