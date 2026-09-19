@@ -60,7 +60,13 @@ export type CostCode = {
   updated_at: string;
 } & CostCodeAttributeValues;
 
-export type CostCodeInput = Omit<CostCode, "id" | "created_at" | "updated_at" | "baseline_budget">;
+export type CostCodeInput = Omit<
+  CostCode,
+  "id" | "created_at" | "updated_at" |
+  "baseline_budget" | "budget_changes" | "current_budget" | "previous_budget" | "budget_movement" |
+  "actual_cost_this_period" | "actual_cost_to_date" | "cost_to_complete" | "estimate_at_completion" |
+  "previous_estimate_at_completion" | "eac_movement" | "variance" | "variance_previous" | "variance_movement"
+>;
 
 const select = [
   "id", "project_id", "cost_code_id", "name", "description", "eac_method",
