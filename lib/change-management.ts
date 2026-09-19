@@ -33,11 +33,11 @@ export type ChangeRecord = {
   id: string;
   project_id: string;
   change_order_id: string;
-  item: string;
+  item: string | null;
   description: string | null;
-  change_to_budget: number;
-  change_to_eac: number;
-  cost_code_id: string;
+  change_to_budget: number | null;
+  change_to_eac: number | null;
+  cost_code_id: string | null;
   created_by: string | null;
   created_at: string;
   updated_at: string;
@@ -111,7 +111,7 @@ export function createChangeRecords(projectId: string, inputs: ChangeRecordInput
   });
 }
 
-export function updateChangeRecord(id: string, input: ChangeRecordInput) {
+export function updateChangeRecord(id: string, input: Partial<ChangeRecordInput>) {
   return supabaseRequest<ChangeRecord[]>(`change_records?id=eq.${encodeURIComponent(id)}&select=${encodeURIComponent(recordSelect)}`, {
     method: "PATCH", headers: { Prefer: "return=representation" }, body: JSON.stringify({ ...input, updated_at: new Date().toISOString() }),
   }).then((rows) => rows[0]);
