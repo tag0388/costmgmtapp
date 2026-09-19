@@ -24,7 +24,6 @@ import {
   importCostCodes,
   listCostCodes,
   ProjectCostCodeAttributeField,
-  setCostCodesActive,
   TimephasingMethod,
   updateCostCode,
   updateCostCodeFields,
@@ -457,11 +456,6 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
     finally { setImporting(false); }
   }
 
-  async function deactivateSelected() {
-    if (!selected.length) return;
-    try { await setCostCodesActive(selected, false); setSelected([]); gridApi?.deselectAll(); showNotice("Cost code status updated."); await refresh(); }
-    catch (requestError) { setError(costCodeErrorMessage(requestError)); }
-  }
 
   async function saveView() {
     if (!gridApi || !project || !viewName.trim()) return;
@@ -497,9 +491,13 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
   const selectedViewName = selectedView === "Default" ? "" : views.find((view) => view.id === selectedView)?.view_name ?? "";
 
   return <div className="enterprise-admin-page">
-    <div className="enterprise-page-title"><div><h2>Cost Codes</h2><p>Maintain cost codes, attributes and forecasting methods. Group, subtotal, pin and save grid layouts for recurring cost reviews.</p></div><button className="button primary" disabled={!project} onClick={() => setEditing("new")}>+ Add Cost Code</button></div>
     <section className="enterprise-grid-card">
-      <div className="enterprise-toolbar" style={{ flexWrap: "wrap" }}>
+      <div className="enterprise-toolbar" style={{ flexWrap: "wrap", alignItems: "center" }}>
+        <div style={{ display: "flex", flexDirection: "column", minWidth: 180, marginRight: 4 }}>
+          <strong style={{ fontSize: 14, lineHeight: 1.2 }}>Cost Codes</strong>
+          <span style={{ fontSize: 11, color: "#64748b", lineHeight: 1.2 }}>Manage codes, EAC settings and cost attributes.</span>
+        </div>
+        <button className="button primary" disabled={!project} onClick={() => setEditing("new")}>+ Add Cost Code</button>
         <label className="enterprise-search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search cost codes or attributes…" /></label>
         <label className="status-filter"><span>Status</span><select value={status} onChange={(event) => setStatus(event.target.value as StatusFilter)}><option value="all">All</option><option value="active">Active</option><option value="inactive">Inactive</option></select></label>
         <label className="status-filter"><span>View</span><select value={selectedView} onChange={(event) => applyView(event.target.value)}><option value="Default">Default</option>{views.map((view) => <option key={view.id} value={view.id}>{view.view_name}</option>)}</select></label>
@@ -512,13 +510,12 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
         <button className="button secondary" onClick={() => fileRef.current?.click()}>⇧ Import</button>
         <input ref={fileRef} hidden type="file" accept=".xlsx,.xls" onChange={(event) => void chooseImport(event.target.files?.[0])}/>
         <button className="button secondary" onClick={() => void refresh()} disabled={loading}>↻ Refresh</button>
-        <button className="button danger" disabled={!selected.length} onClick={() => void deactivateSelected()}>Deactivate{selected.length > 1 ? ` (${selected.length})` : ""}</button>
       </div>
-      <div className="data-message" style={{ minHeight: 48 }}><span>Right-click a column header to show, hide or pin columns. Drag columns into the grouping bar above the table to create multiple group levels. Expand/Collapse becomes available when grouping is active. Cost Code Name, Description, EAC Method and attributes can be edited directly in the grid. Estimate at Completion is editable only when EAC Method is Manual. Use the related-records icon in Actions to open related records for that Cost Code.</span></div>
+      <div className="data-message" style={{ minHeight: 34, paddingTop: 6, paddingBottom: 6 }}><span>Inline edit: Cost Code Name, Description, EAC Method and attributes. Estimate at Completion is editable only for Manual EAC. Right-click headers for column options.</span></div>
       {error && <div className="data-message error"><strong>Unable to load cost codes</strong><span>{error}</span></div>}
       {!error && loading && <div className="data-message"><span className="spinner"/>Loading cost codes…</div>}
       {!error && !loading && <AgGridProvider modules={[AllEnterpriseModule]} licenseKey={process.env.NEXT_PUBLIC_AG_GRID_LICENSE_KEY ?? ""}>
-        <div style={{ height: 640, width: "100%" }}>
+        <div style={{ height: "calc(100vh - 205px)", minHeight: 520, width: "100%" }}>
           <AgGridReact<CostCode>
             theme={gridTheme}
             rowData={rows}
