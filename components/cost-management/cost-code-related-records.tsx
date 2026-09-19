@@ -7,6 +7,7 @@ import type { CellValueChangedEvent, ColDef, ColGroupDef, ColumnState, GridApi, 
 import { themeQuartz } from "ag-grid-community";
 import { AllEnterpriseModule } from "ag-grid-enterprise";
 import ExcelImportDialog from "@/components/shared/excel-import-dialog";
+import CostCodeChangeRecordsWorkspace from "@/components/cost-management/cost-code-change-records";
 import { ExcelRow, exportExcel, readExcel } from "@/lib/excel";
 import type { CostCode } from "@/lib/cost-codes";
 import type { Project } from "@/lib/projects";
@@ -49,6 +50,7 @@ import {
 import { listResourceRates, RESOURCE_CATEGORIES, type ResourceCategory, type ResourceRate } from "@/lib/resource-rates";
 import { listProjectResourceRates, type ProjectResourceRate } from "@/lib/project-resource-rates";
 import { getCostCodeFinancialSummary, type CostCodeFinancialSummary } from "@/lib/cost-code-financial-summary";
+import { listBaselineDetails, type BaselineDetail } from "@/lib/cost-baseline-budget";
 
 const gridTheme = themeQuartz.withParams({ spacing: 4, rowHeight: 30, headerHeight: 34, fontSize: 12 });
 const ACTUAL_TYPES: TransactionType[] = ["FIN", "MAN", "ACC", "REV"];
@@ -57,7 +59,7 @@ const ACTUAL_USER_TEXT_COLUMNS = ACTUAL_USER_TEXT_FIELDS.map((field, index) => (
 const CTC_USER_NUMBER_COLUMNS = CTC_USER_NUMBER_FIELDS.map((field, index) => ({ field, label: `User Number ${index + 1}` }));
 const CTC_USER_TEXT_COLUMNS = CTC_USER_TEXT_FIELDS.map((field, index) => ({ field, label: `User Text ${index + 1}` }));
 const COST_CODE_MENU_EVENT = "costwise:open-cost-code-actions";
-type RelatedMode = "actual" | "ctc";
+type RelatedMode = "budget" | "changes" | "actual" | "ctc";
 type AttributeDefinition = EnterpriseAttributeDefinition | ProjectAttributeDefinition;
 type ActiveAttribute<TField extends string> = { prefix: "E" | "P"; field: TField; definition: AttributeDefinition; columnName: string };
 type ActualGridRow = ActualCostTransaction & { period_label: string };
@@ -65,8 +67,9 @@ type CtcGridRow = CostToCompleteLedgerRow & { resource_source_label: string; _fo
 type RelatedGridRow = ActualGridRow | CtcGridRow;
 type BulkChoice = { id: string; label: string; kind: "text" | "number" | "select" | "attribute" | "periodQty"; values?: string[]; definition?: AttributeDefinition };
 
-function SvgIcon({ type }: { type: "changes" | "actual" | "ctc" | "more" | "resource" }) {
+function SvgIcon({ type }: { type: "budget" | "changes" | "actual" | "ctc" | "more" | "resource" }) {
   const common = { width: 15, height: 15, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
+  if (type === "budget") return <svg {...common}><path d="M4 6h16v12H4z"/><path d="M8 10h8M8 14h5"/></svg>;
   if (type === "changes") return <svg {...common}><path d="M4 7h11"/><path d="m12 4 3 3-3 3"/><path d="M20 17H9"/><path d="m12 14-3 3 3 3"/></svg>;
   if (type === "actual") return <svg {...common}><circle cx="12" cy="12" r="9"/><path d="M15.5 8.5c-.8-.7-1.8-1-3-1-1.7 0-3 .9-3 2.2 0 3.3 6 1.3 6 4.5 0 1.3-1.3 2.3-3.2 2.3-1.2 0-2.4-.4-3.3-1.2"/><path d="M12 5.5v13"/></svg>;
   if (type === "ctc") return <svg {...common}><path d="M4 19V9"/><path d="M10 19V5"/><path d="M16 19v-7"/><path d="M22 19V3"/><path d="M2 19h20"/></svg>;
@@ -182,14 +185,20 @@ export function CostCodeActionsCell({ costCode, project, onEdit }: { costCode: C
 
   const menu = typeof document !== "undefined" && open ? createPortal(
     <div ref={menuRef} onMouseDown={(event) => event.stopPropagation()} style={{ position: "fixed", right: menuPosition.right, top: menuPosition.top, zIndex: 10000, width: 182, background: "#fff", border: "1px solid #dbe1e8", borderRadius: 6, boxShadow: "0 10px 26px rgba(15,23,42,.16)", padding: 4 }}>
-      <MenuOption icon="changes" label="Change Records" hint="Coming soon" disabled onClick={() => undefined}/>
+      <MenuOption icon="budget" label="Budget Details" hint="View details" disabled={!project} onClick={() => { setOpen(false); setMode("budget"); }}/>
+      <MenuOption icon="changes" label="Change Records" hint="View & edit" disabled={!project} onClick={() => { setOpen(false); setMode("changes"); }}/>
       <MenuOption icon="actual" label="Actual Cost" hint="View & edit" disabled={!project} onClick={() => { setOpen(false); setMode("actual"); }}/>
       <MenuOption icon="ctc" label="Cost to Complete" hint="View & edit" disabled={!project} onClick={() => { setOpen(false); setMode("ctc"); }}/>
     </div>, document.body,
   ) : null;
 
   const workspace = typeof document !== "undefined" && project && mode ? createPortal(
-    <RelatedRecordsWorkspace project={project} costCode={costCode} mode={mode} onClose={() => setMode(null)}/>, document.body,
+    mode === "budget"
+      ? <CostCodeBudgetDetailsWorkspace project={project} costCode={costCode} onClose={() => setMode(null)}/>
+      : mode === "changes"
+        ? <CostCodeChangeRecordsWorkspace project={project} costCode={costCode} onClose={() => setMode(null)}/>
+        : <RelatedRecordsWorkspace project={project} costCode={costCode} mode={mode} onClose={() => setMode(null)}/>,
+    document.body,
   ) : null;
 
   return <>
@@ -202,11 +211,65 @@ export function CostCodeActionsCell({ costCode, project, onEdit }: { costCode: C
   </>;
 }
 
-function MenuOption({ icon, label, hint, disabled, onClick }: { icon: "changes" | "actual" | "ctc"; label: string; hint: string; disabled?: boolean; onClick: () => void }) {
+function MenuOption({ icon, label, hint, disabled, onClick }: { icon: "budget" | "changes" | "actual" | "ctc"; label: string; hint: string; disabled?: boolean; onClick: () => void }) {
   return <button disabled={disabled} onClick={onClick} style={{ width: "100%", border: 0, background: "transparent", borderRadius: 4, padding: "5px 7px", display: "grid", gridTemplateColumns: "20px 1fr", alignItems: "center", gap: 7, textAlign: "left", cursor: disabled ? "not-allowed" : "pointer", color: disabled ? "#9ca3af" : "#111827", font: "inherit" }}>
     <span style={{ display: "grid", placeItems: "center", color: disabled ? "#9ca3af" : "#4b5563" }}><SvgIcon type={icon}/></span>
     <span style={{ minWidth: 0 }}><span style={{ display: "block", fontSize: 12, fontWeight: 600, lineHeight: "15px" }}>{label}</span><small style={{ display: "block", marginTop: 1, fontSize: 9.5, color: disabled ? "#b5bbc4" : "#7b8491", lineHeight: "12px" }}>{hint}</small></span>
   </button>;
+}
+
+function CostCodeBudgetDetailsWorkspace({ project, costCode, onClose }: { project: Project; costCode: CostCode; onClose: () => void }) {
+  const [rows, setRows] = useState<BaselineDetail[]>([]);
+  const [search, setSearch] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setError("");
+    void listBaselineDetails(project.id)
+      .then((details) => { if (active) setRows(details.filter((row) => row.cost_code_id === costCode.id)); })
+      .catch((requestError) => { if (active) setError(requestError instanceof Error ? requestError.message : "Unable to load Budget Details."); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [project.id, costCode.id]);
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter((row) => [row.item_no, row.item_description, row.unit, row.qty, row.rate, row.total].some((value) => String(value ?? "").toLowerCase().includes(q)));
+  }, [rows, search]);
+
+  const total = useMemo(() => rows.reduce((sum, row) => sum + Number(row.total ?? 0), 0), [rows]);
+  const columns = useMemo<ColDef<BaselineDetail>[]>(() => [
+    { field: "item_no", headerName: "Item No", minWidth: 120, filter: true },
+    { field: "item_description", headerName: "Item Description", minWidth: 280, filter: true },
+    { field: "qty", headerName: "Qty", minWidth: 110, type: "numericColumn" },
+    { field: "unit", headerName: "Unit", minWidth: 100, filter: true },
+    { field: "rate", headerName: "Rate", minWidth: 120, type: "numericColumn", valueFormatter: (params) => numberFormat(params.value, 2) },
+    { field: "total", headerName: "Total", minWidth: 135, type: "numericColumn", aggFunc: "sum", enableValue: true, valueFormatter: (params) => numberFormat(params.value, 2) },
+  ], []);
+
+  return <div style={{ position: "fixed", inset: 0, zIndex: 12000, background: "#f5f7fa", display: "flex", flexDirection: "column" }}>
+    <header style={{ minHeight: 58, background: "#fff", borderBottom: "1px solid #dfe4ea", display: "flex", alignItems: "center", gap: 12, padding: "7px 12px" }}>
+      <button className="button secondary compact" onClick={onClose}>← Back</button>
+      <div><div style={{ fontSize: 16, fontWeight: 700 }}>Budget Details</div><div style={{ fontSize: 12, color: "#68707d" }}><strong>{costCode.cost_code_id}</strong> · {costCode.name}</div></div>
+    </header>
+    <section className="enterprise-grid-card" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", border: 0, borderRadius: 0, boxShadow: "none" }}>
+      <div className="enterprise-toolbar" style={{ flexWrap: "wrap", padding: "8px 12px", background: "#fff", borderBottom: "1px solid #e5e7eb" }}>
+        <label className="enterprise-search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search budget details…"/></label>
+      </div>
+      {error && <div className="data-message error"><strong>Unable to load Budget Details</strong><span>{error}</span></div>}
+      {!error && loading && <div className="data-message"><span className="spinner"/>Loading Budget Details…</div>}
+      {!error && !loading && <AgGridProvider modules={[AllEnterpriseModule]} licenseKey={process.env.NEXT_PUBLIC_AG_GRID_LICENSE_KEY ?? ""}>
+        <div style={{ flex: 1, minHeight: 360, width: "100%", padding: "8px 12px 10px", boxSizing: "border-box" }}>
+          <AgGridReact<BaselineDetail> theme={gridTheme} rowData={filtered} columnDefs={columns} defaultColDef={{ sortable: true, resizable: true, filter: true, minWidth: 90 }} getRowId={(params) => params.data.id} grandTotalRow="pinnedBottom" animateRows/>
+        </div>
+      </AgGridProvider>}
+      <div className="grid-footer"><span>{rows.length} Budget Detail row{rows.length === 1 ? "" : "s"}</span><span>Baseline Budget: {numberFormat(total, 2)}</span></div>
+    </section>
+  </div>;
 }
 
 function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project: Project; costCode: CostCode; mode: RelatedMode; onClose: () => void }) {
