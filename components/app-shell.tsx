@@ -164,7 +164,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         <main className="workspace">
           <div className="workspace-heading">
             <div><div className="breadcrumbs"><span>{activeModule.name}</span><span>/</span><strong>{workspaceTitle}</strong></div><h1>{workspaceTitle}</h1><p>{descriptionFor(activeModule.name, workspaceTitle)}</p></div>
-            <div className="heading-actions"><button className="button secondary"><Icon name="sliders" size={16}/> View options</button><button className="button primary">Create new</button></div>
           </div>
           {children}
           <WorkspacePlaceholder module={activeModule.name} title={workspaceTitle} />

@@ -33,21 +33,22 @@ export type ChangeRecord = {
   id: string;
   project_id: string;
   change_order_id: string;
-  item: string;
+  item: string | null;
   description: string | null;
-  change_to_budget: number;
-  change_to_eac: number;
-  cost_code_id: string;
+  change_to_budget: number | null;
+  change_to_eac: number | null;
+  cost_code_id: string | null;
   created_by: string | null;
   created_at: string;
   updated_at: string;
+  row_order: number | null;
 } & ChangeAttributes;
 
 export type ChangeOrderInput = Pick<ChangeOrder, "change_order_id" | "description" | "status"> & ChangeAttributes;
-export type ChangeRecordInput = Pick<ChangeRecord, "change_order_id" | "item" | "description" | "change_to_budget" | "change_to_eac" | "cost_code_id"> & ChangeAttributes;
+export type ChangeRecordInput = Pick<ChangeRecord, "change_order_id" | "item" | "description" | "change_to_budget" | "change_to_eac" | "cost_code_id"> & Partial<Pick<ChangeRecord, "row_order">> & ChangeAttributes;
 
 const orderSelect = ["id", "project_id", "change_order_id", "description", "status", "created_by", "created_at", "updated_at", ...CHANGE_ATTRIBUTE_FIELDS].join(",");
-const recordSelect = ["id", "project_id", "change_order_id", "item", "description", "change_to_budget", "change_to_eac", "cost_code_id", "created_by", "created_at", "updated_at", ...CHANGE_ATTRIBUTE_FIELDS].join(",");
+const recordSelect = ["id", "project_id", "change_order_id", "item", "description", "change_to_budget", "change_to_eac", "cost_code_id", "created_by", "created_at", "updated_at", "row_order", ...CHANGE_ATTRIBUTE_FIELDS].join(",");
 
 export async function listChangeOrders(projectId: string) {
   const [orders, records] = await Promise.all([
@@ -94,7 +95,7 @@ export function bulkUpdateChangeOrders(ids: string[], patch: Partial<Pick<Change
 
 export function listChangeRecords(projectId: string, changeOrderId?: string) {
   const orderFilter = changeOrderId ? `&change_order_id=eq.${encodeURIComponent(changeOrderId)}` : "";
-  return supabaseRequest<ChangeRecord[]>(`change_records?project_id=eq.${encodeURIComponent(projectId)}${orderFilter}&select=${encodeURIComponent(recordSelect)}&order=created_at.asc`);
+  return supabaseRequest<ChangeRecord[]>(`change_records?project_id=eq.${encodeURIComponent(projectId)}${orderFilter}&select=${encodeURIComponent(recordSelect)}&order=row_order.asc.nullslast,created_at.asc`);
 }
 
 export function createChangeRecord(projectId: string, input: ChangeRecordInput) {
@@ -103,7 +104,14 @@ export function createChangeRecord(projectId: string, input: ChangeRecordInput) 
   }).then((rows) => rows[0]);
 }
 
-export function updateChangeRecord(id: string, input: ChangeRecordInput) {
+export function createChangeRecords(projectId: string, inputs: ChangeRecordInput[]) {
+  if (!inputs.length) return Promise.resolve([] as ChangeRecord[]);
+  return supabaseRequest<ChangeRecord[]>(`change_records?select=${encodeURIComponent(recordSelect)}`, {
+    method: "POST", headers: { Prefer: "return=representation" }, body: JSON.stringify(inputs.map((input) => ({ project_id: projectId, ...input }))),
+  });
+}
+
+export function updateChangeRecord(id: string, input: Partial<ChangeRecordInput>) {
   return supabaseRequest<ChangeRecord[]>(`change_records?id=eq.${encodeURIComponent(id)}&select=${encodeURIComponent(recordSelect)}`, {
     method: "PATCH", headers: { Prefer: "return=representation" }, body: JSON.stringify({ ...input, updated_at: new Date().toISOString() }),
   }).then((rows) => rows[0]);

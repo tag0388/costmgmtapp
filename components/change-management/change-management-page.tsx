@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgGridProvider, AgGridReact } from "ag-grid-react";
-import type { CellValueChangedEvent, ColDef, ColGroupDef, GridApi, GridReadyEvent, SelectionChangedEvent, ValueGetterParams, ValueSetterParams } from "ag-grid-community";
+import type { CellValueChangedEvent, ColDef, ColGroupDef, GridApi, SelectionChangedEvent, ValueGetterParams, ValueSetterParams } from "ag-grid-community";
 import { themeQuartz } from "ag-grid-community";
 import { AllEnterpriseModule } from "ag-grid-enterprise";
 import ExcelImportDialog from "@/components/shared/excel-import-dialog";
@@ -14,7 +14,7 @@ import { getProjectByPublicId, Project } from "@/lib/projects";
 import { deleteProjectGridView, gridViewErrorMessage, listProjectGridViews, ProjectGridView, saveProjectGridView } from "@/lib/grid-views";
 import {
   ChangeAttributeField, ChangeOrder, ChangeOrderInput, ChangeOrderStatus, ChangeRecord, ChangeRecordInput,
-  bulkUpdateChangeOrders, bulkUpdateChangeRecords, changeManagementErrorMessage, createChangeOrder, createChangeRecord, deleteChangeOrders, deleteChangeRecords,
+  bulkUpdateChangeOrders, bulkUpdateChangeRecords, changeManagementErrorMessage, createChangeOrder, createChangeRecord, createChangeRecords, deleteChangeOrders, deleteChangeRecords,
   listChangeOrders, listChangeRecords, updateChangeOrder, updateChangeRecord,
 } from "@/lib/change-management";
 
@@ -31,7 +31,7 @@ type OrderForm = ChangeOrderInput;
 type RecordForm = ChangeRecordInput;
 
 const blankOrder: OrderForm = { change_order_id: "", description: "", status: "Pending" };
-const blankRecord: RecordForm = { change_order_id: "", cost_code_id: "", item: "", description: "", change_to_budget: 0, change_to_eac: 0 };
+const blankRecord: RecordForm = { change_order_id: "", cost_code_id: null, item: null, description: null, change_to_budget: null, change_to_eac: null };
 
 function attributeField(prefix: "E" | "P", slot: number) { return `${prefix.toLowerCase()}_attribute_${String(slot).padStart(2, "0")}` as ChangeAttributeField; }
 function buildAttributes(enterprise: EnterpriseAttributeDefinition[], project: ProjectAttributeDefinition[]) {
@@ -50,6 +50,11 @@ function valueName(definition: AttributeDefinition, value: string | null | undef
   if (!value) return "";
   return definition.attribute_values.find((item) => item.value_id.toLowerCase() === value.toLowerCase())?.value_name ?? value;
 }
+function valueLabel(definition: AttributeDefinition, value: string | null | undefined) {
+  if (!value) return "";
+  const match = definition.attribute_values.find((item) => item.value_id.toLowerCase() === value.toLowerCase());
+  return match ? `${match.value_id} - ${match.value_name}` : value;
+}
 function money(value: unknown) { return new Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(value ?? 0)); }
 function parseNumber(value: string) { const number = Number(value.replace(/,/g, "")); return Number.isFinite(number) ? number : Number.NaN; }
 function exactColumns(rows: ExcelRow[], columns: string[]) { const actual = rows[0] ? Object.keys(rows[0]) : []; return actual.length === columns.length && columns.every((column, index) => actual[index] === column); }
@@ -60,13 +65,13 @@ function ActionIcon({ type }: { type: "edit" | "delete" | "records" }) {
   return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l4 4v14H6V3Zm9 0v5h4M9 12h7M9 16h7"/></svg>;
 }
 
-function AttributeFields({ attributes, form, setForm }: { attributes: ActiveAttribute[]; form: ChangeAttributesForm; setForm: (form: ChangeAttributesForm) => void }) {
+function AttributeFields({ attributes, form, setForm, showId = false }: { attributes: ActiveAttribute[]; form: ChangeAttributesForm; setForm: (form: ChangeAttributesForm) => void; showId?: boolean }) {
   if (!attributes.length) return null;
   return <>{attributes.map((attribute) => <label className="form-field" key={attribute.field}>
     <span>{attribute.columnName}<small>{attribute.prefix}{String(attribute.definition.attribute_number).padStart(2, "0")}</small></span>
     <select value={String(form[attribute.field] ?? "")} onChange={(event) => setForm({ ...form, [attribute.field]: event.target.value || null })}>
       <option value="">—</option>
-      {attribute.definition.attribute_values.filter((value) => value.is_active || value.value_id === form[attribute.field]).map((value) => <option key={value.id} value={value.value_id}>{value.value_name}{value.is_active ? "" : " (Inactive)"}</option>)}
+      {attribute.definition.attribute_values.filter((value) => value.is_active || value.value_id === form[attribute.field]).map((value) => <option key={value.id} value={value.value_id}>{showId ? `${value.value_id} - ${value.value_name}` : value.value_name}{value.is_active ? "" : " (Inactive)"}</option>)}
     </select>
   </label>)}</>;
 }
@@ -78,8 +83,10 @@ export default function ChangeManagementPage({ projectPublicId, bulkRecords = fa
   const [orders, setOrders] = useState<ChangeOrder[]>([]);
   const [records, setRecords] = useState<ChangeRecord[]>([]);
   const [costCodes, setCostCodes] = useState<CostCode[]>([]);
-  const [enterpriseAttributes, setEnterpriseAttributes] = useState<EnterpriseAttributeDefinition[]>([]);
-  const [projectAttributes, setProjectAttributes] = useState<ProjectAttributeDefinition[]>([]);
+  const [enterpriseChangeAttributes, setEnterpriseChangeAttributes] = useState<EnterpriseAttributeDefinition[]>([]);
+  const [projectChangeAttributes, setProjectChangeAttributes] = useState<ProjectAttributeDefinition[]>([]);
+  const [enterpriseLineItemAttributes, setEnterpriseLineItemAttributes] = useState<EnterpriseAttributeDefinition[]>([]);
+  const [projectLineItemAttributes, setProjectLineItemAttributes] = useState<ProjectAttributeDefinition[]>([]);
   const [selectedOrder, setSelectedOrder] = useState<ChangeOrder | null>(null);
   const [orderForm, setOrderForm] = useState<OrderForm | null>(null);
   const [editingOrder, setEditingOrder] = useState<ChangeOrder | null>(null);
@@ -89,7 +96,7 @@ export default function ChangeManagementPage({ projectPublicId, bulkRecords = fa
   const [selectedRecordIds, setSelectedRecordIds] = useState<string[]>([]);
   const [orderGridApi, setOrderGridApi] = useState<GridApi<OrderGridRow> | null>(null);
   const [recordGridApi, setRecordGridApi] = useState<GridApi<RecordGridRow> | null>(null);
-  const [hasGroups, setHasGroups] = useState(false);
+  const [, setHasGroups] = useState(false);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -110,6 +117,8 @@ export default function ChangeManagementPage({ projectPublicId, bulkRecords = fa
   const [selectedView, setSelectedView] = useState("Default");
   const [showSaveView, setShowSaveView] = useState(false);
   const [viewName, setViewName] = useState("");
+  const [addCount, setAddCount] = useState(1);
+  const [insertAfterId, setInsertAfterId] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true); setError("");
@@ -117,11 +126,14 @@ export default function ChangeManagementPage({ projectPublicId, bulkRecords = fa
       const currentProject = await getProjectByPublicId(projectPublicId);
       setProject(currentProject);
       if (!currentProject) throw new Error("The selected project could not be found.");
-      const [nextOrders, nextRecords, codes, enterpriseDefs, projectDefs] = await Promise.all([
+      const [nextOrders, nextRecords, codes, enterpriseChangeDefs, projectChangeDefs, enterpriseLineItemDefs, projectLineItemDefs] = await Promise.all([
         listChangeOrders(currentProject.id), listChangeRecords(currentProject.id), listCostCodes(currentProject.id),
         listEnterpriseAttributes(currentProject.enterprise_id, "Change"), listProjectAttributes(currentProject.id, "Change"),
+        listEnterpriseAttributes(currentProject.enterprise_id, "Line Item"), listProjectAttributes(currentProject.id, "Line Item"),
       ]);
-      setOrders(nextOrders); setRecords(nextRecords); setCostCodes(codes); setEnterpriseAttributes(enterpriseDefs); setProjectAttributes(projectDefs);
+      setOrders(nextOrders); setRecords(nextRecords); setCostCodes(codes);
+      setEnterpriseChangeAttributes(enterpriseChangeDefs); setProjectChangeAttributes(projectChangeDefs);
+      setEnterpriseLineItemAttributes(enterpriseLineItemDefs); setProjectLineItemAttributes(projectLineItemDefs);
       setSelectedOrder((current) => current ? nextOrders.find((order) => order.id === current.id) ?? null : null);
     } catch (requestError) { setError(changeManagementErrorMessage(requestError)); }
     finally { setLoading(false); }
@@ -130,16 +142,19 @@ export default function ChangeManagementPage({ projectPublicId, bulkRecords = fa
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { void refresh(); }, [refresh]);
 
-  const attributes = useMemo(() => buildAttributes(enterpriseAttributes, projectAttributes), [enterpriseAttributes, projectAttributes]);
+  const orderAttributes = useMemo(() => buildAttributes(enterpriseChangeAttributes, projectChangeAttributes), [enterpriseChangeAttributes, projectChangeAttributes]);
+  const recordAttributes = useMemo(() => buildAttributes(enterpriseLineItemAttributes, projectLineItemAttributes), [enterpriseLineItemAttributes, projectLineItemAttributes]);
   const orderById = useMemo(() => new Map(orders.map((order) => [order.id, order])), [orders]);
   const orderByRef = useMemo(() => new Map(orders.map((order) => [order.change_order_id.toLowerCase(), order])), [orders]);
   const codeById = useMemo(() => new Map(costCodes.map((code) => [code.id, code])), [costCodes]);
   const codeByRef = useMemo(() => new Map(costCodes.map((code) => [code.cost_code_id.toLowerCase(), code])), [costCodes]);
   const recordRows = useMemo<RecordGridRow[]>(() => records
     .filter((record) => bulkRecords || !selectedOrder || record.change_order_id === selectedOrder.id)
-    .map((record) => { const order = orderById.get(record.change_order_id); return { ...record, change_order_ref: order?.change_order_id ?? "", change_order_description: order?.description ?? "", status: order?.status ?? "Pending", cost_code_ref: codeById.get(record.cost_code_id)?.cost_code_id ?? "" }; }),
+    .sort((left, right) => (left.row_order ?? Number.MAX_SAFE_INTEGER) - (right.row_order ?? Number.MAX_SAFE_INTEGER) || left.created_at.localeCompare(right.created_at))
+    .map((record) => { const order = orderById.get(record.change_order_id); return { ...record, change_order_ref: order?.change_order_id ?? "", change_order_description: order?.description ?? "", status: order?.status ?? "Pending", cost_code_ref: record.cost_code_id ? codeById.get(record.cost_code_id)?.cost_code_id ?? "" : "" }; }),
   [records, bulkRecords, selectedOrder, orderById, codeById]);
   const showingRecords = bulkRecords || selectedOrder !== null;
+  const attributes = showingRecords ? recordAttributes : orderAttributes;
   const gridKey = showingRecords ? (bulkRecords ? "bulk-change-records" : "change-records") : "change-orders";
   const selectedIds = showingRecords ? selectedRecordIds : selectedOrderIds;
 
@@ -151,17 +166,17 @@ export default function ChangeManagementPage({ projectPublicId, bulkRecords = fa
     }).catch((requestError) => setError(gridViewErrorMessage(requestError)));
   }, [gridKey, project]);
 
-  const attributeColumns = useCallback((editable: boolean): ColDef<AttributeGridRow>[] => attributes.map((attribute, index) => ({
+  const attributeColumns = useCallback((attributes: ActiveAttribute[], editable: boolean, showId = false): ColDef<AttributeGridRow>[] => attributes.map((attribute, index) => ({
     colId: attribute.field, headerName: attribute.columnName, headerTooltip: `${attribute.prefix}${String(attribute.definition.attribute_number).padStart(2, "0")} · ${attribute.definition.name}`,
     minWidth: 135, editable, filter: "agSetColumnFilter", columnGroupShow: index === 0 ? undefined : "open",
-    valueGetter: (params: ValueGetterParams<AttributeGridRow>) => valueName(attribute.definition, params.data?.[attribute.field]),
-    valueSetter: editable ? (params: ValueSetterParams<AttributeGridRow>) => { if (params.newValue === "") { if (params.data) params.data[attribute.field] = null; return true; } const selected = attribute.definition.attribute_values.find((value) => value.value_name === params.newValue || value.value_id === params.newValue); if (!selected?.is_active) return false; if (params.data) params.data[attribute.field] = selected.value_id; return true; } : undefined,
-    cellEditor: editable ? "agSelectCellEditor" : undefined, cellEditorParams: editable ? { values: ["", ...attribute.definition.attribute_values.filter((value) => value.is_active).map((value) => value.value_name)] } : undefined,
-  })), [attributes]);
+    valueGetter: (params: ValueGetterParams<AttributeGridRow>) => showId ? valueLabel(attribute.definition, params.data?.[attribute.field]) : valueName(attribute.definition, params.data?.[attribute.field]),
+    valueSetter: editable ? (params: ValueSetterParams<AttributeGridRow>) => { if (params.newValue === "") { if (params.data) params.data[attribute.field] = null; return true; } const selected = attribute.definition.attribute_values.find((value) => value.value_name === params.newValue || value.value_id === params.newValue || `${value.value_id} - ${value.value_name}` === params.newValue); if (!selected?.is_active) return false; if (params.data) params.data[attribute.field] = selected.value_id; return true; } : undefined,
+    cellEditor: editable ? "agSelectCellEditor" : undefined, cellEditorParams: editable ? { values: ["", ...attribute.definition.attribute_values.filter((value) => value.is_active).map((value) => showId ? `${value.value_id} - ${value.value_name}` : value.value_name)] } : undefined,
+  })), []);
 
   const orderColumns = useMemo<Array<ColDef<OrderGridRow> | ColGroupDef<OrderGridRow>>>(() => {
-    const enterprise = attributeColumns(false).filter((_, index) => attributes[index]?.prefix === "E").map((column, index) => ({ ...column, columnGroupShow: index === 0 ? undefined : "open" as const })) as ColDef<OrderGridRow>[];
-    const projectCols = attributeColumns(false).filter((_, index) => attributes[index]?.prefix === "P").map((column, index) => ({ ...column, columnGroupShow: index === 0 ? undefined : "open" as const })) as ColDef<OrderGridRow>[];
+    const enterprise = attributeColumns(orderAttributes, false).filter((_, index) => orderAttributes[index]?.prefix === "E").map((column, index) => ({ ...column, columnGroupShow: index === 0 ? undefined : "open" as const })) as ColDef<OrderGridRow>[];
+    const projectCols = attributeColumns(orderAttributes, false).filter((_, index) => orderAttributes[index]?.prefix === "P").map((column, index) => ({ ...column, columnGroupShow: index === 0 ? undefined : "open" as const })) as ColDef<OrderGridRow>[];
     return [
       { groupId: "co-general", headerName: "General Info", marryChildren: true, openByDefault: true, children: [
         { field: "change_order_id", headerName: "Change Order ID", pinned: "left", minWidth: 145, filter: true },
@@ -181,11 +196,11 @@ export default function ChangeManagementPage({ projectPublicId, bulkRecords = fa
         <button className="change-icon-button" title="Open related Change Records" aria-label={`Open related Change Records for ${params.data.change_order_id}`} onClick={() => setSelectedOrder(params.data!)}><ActionIcon type="records"/></button>
       </div> : null },
     ];
-  }, [attributeColumns, attributes]);
+  }, [attributeColumns, orderAttributes]);
 
   const recordColumns = useMemo<Array<ColDef<RecordGridRow> | ColGroupDef<RecordGridRow>>>(() => {
-    const enterprise = attributeColumns(true).filter((_, index) => attributes[index]?.prefix === "E").map((column, index) => ({ ...column, columnGroupShow: index === 0 ? undefined : "open" as const })) as ColDef<RecordGridRow>[];
-    const projectCols = attributeColumns(true).filter((_, index) => attributes[index]?.prefix === "P").map((column, index) => ({ ...column, columnGroupShow: index === 0 ? undefined : "open" as const })) as ColDef<RecordGridRow>[];
+    const enterprise = attributeColumns(recordAttributes, true, true).filter((_, index) => recordAttributes[index]?.prefix === "E").map((column, index) => ({ ...column, columnGroupShow: index === 0 ? undefined : "open" as const })) as ColDef<RecordGridRow>[];
+    const projectCols = attributeColumns(recordAttributes, true, true).filter((_, index) => recordAttributes[index]?.prefix === "P").map((column, index) => ({ ...column, columnGroupShow: index === 0 ? undefined : "open" as const })) as ColDef<RecordGridRow>[];
     return [
       { groupId: "cr-general", headerName: "General Info", marryChildren: true, openByDefault: true, children: [
         ...(bulkRecords ? [
@@ -195,22 +210,44 @@ export default function ChangeManagementPage({ projectPublicId, bulkRecords = fa
         ] : []),
         { field: "item", headerName: "Item", pinned: bulkRecords ? undefined : "left", minWidth: 120, editable: true, columnGroupShow: bulkRecords ? "open" : undefined },
         { field: "description", headerName: "Description", minWidth: 230, editable: true, columnGroupShow: "open" },
-        { field: "cost_code_ref", headerName: "Cost Code ID", minWidth: 135, editable: true, cellEditor: "agSelectCellEditor", cellEditorParams: { values: costCodes.filter((code) => code.is_active).map((code) => code.cost_code_id) }, columnGroupShow: "open" },
+        { field: "cost_code_ref", headerName: "Cost Code ID", minWidth: 180, editable: true, valueFormatter: (params) => { const reference = String(params.value ?? ""); const code = reference ? codeByRef.get(reference.toLowerCase()) : null; return code ? `${code.cost_code_id} - ${code.name}` : reference; }, cellEditor: "agSelectCellEditor", cellEditorParams: { values: ["", ...costCodes.filter((code) => code.is_active).map((code) => `${code.cost_code_id} - ${code.name}`)] }, columnGroupShow: "open" },
       ]},
       { groupId: "cr-financial", headerName: "Financial", marryChildren: true, openByDefault: true, children: [
-        { field: "change_to_budget", headerName: "Change to Budget", minWidth: 145, type: "numericColumn", editable: true, aggFunc: "sum", enableValue: true, valueParser: (params) => Number(params.newValue), valueFormatter: (params) => money(params.value) },
-        { field: "change_to_eac", headerName: "Change to EAC", minWidth: 135, type: "numericColumn", editable: true, aggFunc: "sum", enableValue: true, valueParser: (params) => Number(params.newValue), valueFormatter: (params) => money(params.value), columnGroupShow: "open" },
+        { field: "change_to_budget", headerName: "Change to Budget", minWidth: 145, type: "numericColumn", editable: true, aggFunc: "sum", enableValue: true, valueParser: (params) => { const raw = String(params.newValue ?? "").trim(); if (!raw) return null; const parsed = Number(raw.replace(/,/g, "")); return Number.isFinite(parsed) ? parsed : params.oldValue; }, valueFormatter: (params) => params.value == null ? "" : money(params.value) },
+        { field: "change_to_eac", headerName: "Change to EAC", minWidth: 135, type: "numericColumn", editable: true, aggFunc: "sum", enableValue: true, valueParser: (params) => { const raw = String(params.newValue ?? "").trim(); if (!raw) return null; const parsed = Number(raw.replace(/,/g, "")); return Number.isFinite(parsed) ? parsed : params.oldValue; }, valueFormatter: (params) => params.value == null ? "" : money(params.value), columnGroupShow: "open" },
       ]},
-      ...(enterprise.length ? [{ groupId: "cr-enterprise", headerName: "Enterprise Change Attributes", marryChildren: true, openByDefault: true, children: enterprise }] : []),
-      ...(projectCols.length ? [{ groupId: "cr-project", headerName: "Project Change Attributes", marryChildren: true, openByDefault: true, children: projectCols }] : []),
-      { headerName: "Actions", pinned: "right", width: 90, sortable: false, filter: false, suppressHeaderMenuButton: true, cellRenderer: (params: { data?: ChangeRecord }) => <button className="button secondary compact" onClick={() => { if (params.data) { setEditingRecord(params.data); setRecordForm({ ...params.data }); setFormError(""); } }}>✎ Edit</button> },
+      ...(enterprise.length ? [{ groupId: "cr-enterprise", headerName: "Enterprise Line-Item Attributes", marryChildren: true, openByDefault: true, children: enterprise }] : []),
+      ...(projectCols.length ? [{ groupId: "cr-project", headerName: "Project Line-Item Attributes", marryChildren: true, openByDefault: true, children: projectCols }] : []),
     ];
-  }, [attributeColumns, attributes, bulkRecords, costCodes]);
+  }, [attributeColumns, recordAttributes, bulkRecords, costCodes]);
 
   function showNotice(message: string) { setNotice(message); window.setTimeout(() => setNotice(""), 3500); }
   function openNewOrder() { setEditingOrder(null); setOrderForm({ ...blankOrder }); setFormError(""); }
   function openEditOrder(order: ChangeOrder) { setEditingOrder(order); setOrderForm({ ...order }); setFormError(""); }
-  function openNewRecord() { setEditingRecord(null); setRecordForm({ ...blankRecord, change_order_id: selectedOrder?.id ?? orders[0]?.id ?? "", cost_code_id: costCodes.find((code) => code.is_active)?.id ?? "" }); setFormError(""); }
+  function openNewRecord() { setEditingRecord(null); setRecordForm({ ...blankRecord, change_order_id: selectedOrder?.id ?? orders[0]?.id ?? "" }); setFormError(""); }
+
+  function insertionOrders(count: number) {
+    const safeCount = Math.max(1, Math.min(100, Math.trunc(count || 1)));
+    const anchorIndex = insertAfterId ? recordRows.findIndex((row) => row.id === insertAfterId) : -1;
+    const index = anchorIndex >= 0 ? anchorIndex : recordRows.length - 1;
+    const current = index >= 0 ? recordRows[index].row_order ?? (index + 1) * 1000 : 0;
+    const next = index + 1 < recordRows.length ? recordRows[index + 1].row_order ?? (index + 2) * 1000 : current + (safeCount + 1) * 1000;
+    if (next > current) return Array.from({ length: safeCount }, (_, itemIndex) => Math.trunc(current + ((next - current) * (itemIndex + 1)) / (safeCount + 1)));
+    return Array.from({ length: safeCount }, (_, itemIndex) => current + (itemIndex + 1) * 1000);
+  }
+
+  async function addRows() {
+    if (!project || !selectedOrder) return;
+    const safeCount = Math.max(1, Math.min(100, Math.trunc(addCount || 1)));
+    setSaving(true); setError("");
+    try {
+      const orders = insertionOrders(safeCount);
+      const created = await createChangeRecords(project.id, Array.from({ length: safeCount }, (_, index) => ({ ...blankRecord, change_order_id: selectedOrder.id, row_order: orders[index] })));
+      setRecords((current) => [...current, ...created]);
+      setInsertAfterId(created.at(-1)?.id ?? null); showNotice(`${safeCount} row${safeCount === 1 ? "" : "s"} added${insertAfterId || selectedRecordIds.length ? " below the selection" : ""}.`);
+    } catch (requestError) { setError(changeManagementErrorMessage(requestError)); }
+    finally { setSaving(false); }
+  }
 
   async function saveOrder() {
     if (!project || !orderForm) return;
@@ -227,11 +264,11 @@ export default function ChangeManagementPage({ projectPublicId, bulkRecords = fa
 
   async function saveRecord() {
     if (!project || !recordForm) return;
-    if (!recordForm.change_order_id || !recordForm.cost_code_id || !recordForm.item.trim()) { setFormError("Change Order, Cost Code and Item are required."); return; }
-    if (recordForm.item.length > 50 || (recordForm.description?.length ?? 0) > 255) { setFormError("Item must be 50 characters or fewer and Description 255 or fewer."); return; }
+    if (!recordForm.change_order_id) { setFormError("Change Order is required."); return; }
+    if ((recordForm.item?.length ?? 0) > 50 || (recordForm.description?.length ?? 0) > 255) { setFormError("Item must be 50 characters or fewer and Description 255 or fewer."); return; }
     setSaving(true); setFormError("");
     try {
-      const input = { ...recordForm, item: recordForm.item.trim(), description: recordForm.description?.trim() || null, change_to_budget: Number(recordForm.change_to_budget), change_to_eac: Number(recordForm.change_to_eac) };
+      const input = { ...recordForm, item: recordForm.item?.trim() || null, description: recordForm.description?.trim() || null, change_to_budget: recordForm.change_to_budget == null ? null : Number(recordForm.change_to_budget), change_to_eac: recordForm.change_to_eac == null ? null : Number(recordForm.change_to_eac) };
       if (editingRecord) await updateChangeRecord(editingRecord.id, input); else await createChangeRecord(project.id, input);
       setRecordForm(null); showNotice(editingRecord ? "Change Record updated." : "Change Record added."); await refresh();
     } catch (requestError) { setFormError(changeManagementErrorMessage(requestError)); }
@@ -239,13 +276,26 @@ export default function ChangeManagementPage({ projectPublicId, bulkRecords = fa
   }
 
   async function cellChanged(event: CellValueChangedEvent<RecordGridRow>) {
-    const row = event.data;
-    const code = codeByRef.get(row.cost_code_ref.toLowerCase());
-    if (!code) { setError(`Cost Code ID “${row.cost_code_ref}” is not valid for this project.`); await refresh(); return; }
+    if (event.newValue === event.oldValue) return;
+    const row = event.data; const colId = event.column.getColId();
+    const patch: Partial<ChangeRecordInput> = {};
     try {
-      await updateChangeRecord(row.id, { ...row, cost_code_id: code.id, description: row.description || null, change_to_budget: Number(row.change_to_budget), change_to_eac: Number(row.change_to_eac) });
-      showNotice("Change Record updated."); await refresh();
-    } catch (requestError) { setError(changeManagementErrorMessage(requestError)); await refresh(); }
+      setSaving(true); setError("");
+      if (colId === "cost_code_ref") {
+        const selected = String(event.newValue ?? "").trim(); const reference = selected.includes(" - ") ? selected.split(" - ", 1)[0].trim() : selected; const code = reference ? codeByRef.get(reference.toLowerCase()) : null;
+        if (reference && !code) throw new Error(`Cost Code ID “${reference}” is not valid for this project.`);
+        patch.cost_code_id = code?.id ?? null;
+      } else if (colId === "item") patch.item = String(event.newValue ?? "").trim() || null;
+      else if (colId === "description") patch.description = String(event.newValue ?? "").trim() || null;
+      else if (colId === "change_to_budget" || colId === "change_to_eac") {
+        const raw = String(event.newValue ?? "").trim(); const value = raw === "" ? null : Number(raw);
+        if (value !== null && !Number.isFinite(value)) throw new Error(`${colId === "change_to_budget" ? "Change to Budget" : "Change to EAC"} must be numeric or blank.`);
+        patch[colId] = value;
+      } else if (colId.startsWith("e_attribute_") || colId.startsWith("p_attribute_")) patch[colId as ChangeAttributeField] = row[colId as ChangeAttributeField] ?? null;
+      await updateChangeRecord(row.id, patch);
+      setRecords((current) => current.map((record) => record.id === row.id ? { ...record, ...patch } : record));
+    } catch (requestError) { event.node.setDataValue(event.column, event.oldValue); setError(changeManagementErrorMessage(requestError)); }
+    finally { setSaving(false); }
   }
 
   async function confirmDelete() {
@@ -259,18 +309,28 @@ export default function ChangeManagementPage({ projectPublicId, bulkRecords = fa
     finally { setSaving(false); }
   }
 
-  const orderExcelColumns = useMemo(() => ["Change Order ID", "Description", "Status", ...attributes.map((attribute) => attribute.columnName)], [attributes]);
-  const recordExcelColumns = useMemo(() => ["Change Order ID", "Cost Code ID", "Item", "Description", "Change to Budget", "Change to EAC", ...attributes.map((attribute) => attribute.columnName)], [attributes]);
+  const orderExcelColumns = useMemo(() => ["Change Order ID", "Description", "Status", ...orderAttributes.map((attribute) => attribute.columnName)], [orderAttributes]);
+  const bulkRecordExcelColumns = useMemo(() => ["Change Order ID", "Cost Code ID", "Item", "Description", "Change to Budget", "Change to EAC", ...recordAttributes.map((attribute) => attribute.columnName)], [recordAttributes]);
+  const relatedRecordExcelColumns = useMemo(() => ["Cost Code ID", "Item", "Description", "Change to Budget", "Change to EAC", ...recordAttributes.map((attribute) => attribute.columnName)], [recordAttributes]);
+  const recordExcelColumns = bulkRecords ? bulkRecordExcelColumns : relatedRecordExcelColumns;
   const excelColumns = importMode === "orders" ? orderExcelColumns : recordExcelColumns;
   function exportRows() {
     if (!project) return;
     if (!showingRecords) {
-      const data = orders.map((row) => ({ "Change Order ID": row.change_order_id, Description: row.description, Status: row.status, ...Object.fromEntries(attributes.map((attribute) => [attribute.columnName, row[attribute.field] ?? ""])) }));
+      const data = orders.map((row) => ({ "Change Order ID": row.change_order_id, Description: row.description, Status: row.status, ...Object.fromEntries(orderAttributes.map((attribute) => [attribute.columnName, row[attribute.field] ?? ""])) }));
       exportExcel(`${project.project_code}-change-orders`, "Change Orders", data.length ? data : [Object.fromEntries(orderExcelColumns.map((column) => [column, ""]))]);
       return;
     }
-    const data = recordRows.map((row) => ({ "Change Order ID": row.change_order_ref, "Cost Code ID": row.cost_code_ref, Item: row.item, Description: row.description ?? "", "Change to Budget": String(row.change_to_budget), "Change to EAC": String(row.change_to_eac), ...Object.fromEntries(attributes.map((attribute) => [attribute.columnName, row[attribute.field] ?? ""])) }));
-    exportExcel(`${project.project_code}-change-records`, "Change Records", data.length ? data : [Object.fromEntries(recordExcelColumns.map((column) => [column, ""]))]);
+    const data = recordRows.map((row) => ({
+      ...(bulkRecords ? { "Change Order ID": row.change_order_ref } : {}),
+      "Cost Code ID": row.cost_code_ref,
+      Item: row.item ?? "",
+      Description: row.description ?? "",
+      "Change to Budget": row.change_to_budget == null ? "" : String(row.change_to_budget),
+      "Change to EAC": row.change_to_eac == null ? "" : String(row.change_to_eac),
+      ...Object.fromEntries(recordAttributes.map((attribute) => [attribute.columnName, row[attribute.field] ?? ""])),
+    }));
+    exportExcel(`${project.project_code}-${bulkRecords ? "bulk-change-records" : `${selectedOrder?.change_order_id ?? "change-order"}-change-records`}`, "Change Records", data.length ? data : [Object.fromEntries(recordExcelColumns.map((column) => [column, ""]))]);
   }
   async function chooseImport(file: File | undefined) {
     if (!file) return;
@@ -280,18 +340,22 @@ export default function ChangeManagementPage({ projectPublicId, bulkRecords = fa
       if (incoming.length && !exactColumns(incoming, excelColumns)) errors.push(`Columns must be exactly: ${excelColumns.join(", ")}.`);
       incoming.forEach((row, index) => {
         const line = index + 2; const orderId = (row["Change Order ID"] ?? "").trim();
-        if (!orderId) errors.push(`Row ${line}: Change Order ID is required.`); if (orderId.length > 30) errors.push(`Row ${line}: Change Order ID is longer than 30 characters.`);
+        if (importMode === "orders" || bulkRecords) {
+          if (!orderId) errors.push(`Row ${line}: Change Order ID is required.`);
+          if (orderId.length > 30) errors.push(`Row ${line}: Change Order ID is longer than 30 characters.`);
+        }
         if (importMode === "orders") {
           if (!(row.Description ?? "").trim()) errors.push(`Row ${line}: Description is required.`); if ((row.Description ?? "").trim().length > 255) errors.push(`Row ${line}: Description is longer than 255 characters.`);
           if (!STATUSES.includes((row.Status ?? "") as ChangeOrderStatus)) errors.push(`Row ${line}: Status must be Pending, Approved, Rejected or Cancelled.`);
         } else {
-          const order = orderByRef.get(orderId.toLowerCase()); const code = codeByRef.get((row["Cost Code ID"] ?? "").trim().toLowerCase());
-          if (!order) errors.push(`Row ${line}: Change Order ID is not valid for this project.`); if (!code) errors.push(`Row ${line}: Cost Code ID is not valid for this project.`);
-          if (!(row.Item ?? "").trim()) errors.push(`Row ${line}: Item is required.`); if ((row.Item ?? "").trim().length > 50) errors.push(`Row ${line}: Item is longer than 50 characters.`);
+          const order = bulkRecords ? orderByRef.get(orderId.toLowerCase()) : selectedOrder; const costCodeReference = (row["Cost Code ID"] ?? "").trim(); const code = costCodeReference ? codeByRef.get(costCodeReference.toLowerCase()) : null;
+          if (!order) errors.push(bulkRecords ? `Row ${line}: Change Order ID is not valid for this project.` : "The selected Change Order is no longer available.");
+          if (costCodeReference && !code) errors.push(`Row ${line}: Cost Code ID is not valid for this project.`);
+          if ((row.Item ?? "").trim().length > 50) errors.push(`Row ${line}: Item is longer than 50 characters.`);
           if ((row.Description ?? "").trim().length > 255) errors.push(`Row ${line}: Description is longer than 255 characters.`);
-          if (Number.isNaN(parseNumber(row["Change to Budget"] ?? ""))) errors.push(`Row ${line}: Change to Budget must be numeric.`); if (Number.isNaN(parseNumber(row["Change to EAC"] ?? ""))) errors.push(`Row ${line}: Change to EAC must be numeric.`);
+          if ((row["Change to Budget"] ?? "").trim() && Number.isNaN(parseNumber(row["Change to Budget"]))) errors.push(`Row ${line}: Change to Budget must be numeric or blank.`); if ((row["Change to EAC"] ?? "").trim() && Number.isNaN(parseNumber(row["Change to EAC"]))) errors.push(`Row ${line}: Change to EAC must be numeric or blank.`);
         }
-        attributes.forEach((attribute) => { const value = (row[attribute.columnName] ?? "").trim(); if (value && !attribute.definition.attribute_values.some((item) => item.is_active && item.value_id.toLowerCase() === value.toLowerCase())) errors.push(`Row ${line}: ${attribute.columnName} must contain an active Value ID.`); });
+        (importMode === "orders" ? orderAttributes : recordAttributes).forEach((attribute) => { const value = (row[attribute.columnName] ?? "").trim(); if (value && !attribute.definition.attribute_values.some((item) => item.is_active && item.value_id.toLowerCase() === value.toLowerCase())) errors.push(`Row ${line}: ${attribute.columnName} must contain an active Value ID.`); });
       });
       const ids = new Set<string>(); incoming.forEach((row, index) => { const id = (row["Change Order ID"] ?? "").trim().toLowerCase(); if (importMode === "orders" && id && ids.has(id)) errors.push(`Row ${index + 2}: duplicate Change Order ID “${row["Change Order ID"]}”.`); ids.add(id); });
       setImportRows(incoming); setImportErrors(errors); setReplace(false); setProgress(0);
@@ -309,15 +373,15 @@ export default function ChangeManagementPage({ projectPublicId, bulkRecords = fa
         }
         for (let index = 0; index < importRows.length; index += 1) {
           const row = importRows[index]; const existing = orderByRef.get(row["Change Order ID"].trim().toLowerCase());
-          const input = { change_order_id: row["Change Order ID"].trim(), description: row.Description.trim(), status: row.Status as ChangeOrderStatus, ...Object.fromEntries(attributes.map((attribute) => [attribute.field, row[attribute.columnName]?.trim() || null])) } as ChangeOrderInput;
+          const input = { change_order_id: row["Change Order ID"].trim(), description: row.Description.trim(), status: row.Status as ChangeOrderStatus, ...Object.fromEntries(orderAttributes.map((attribute) => [attribute.field, row[attribute.columnName]?.trim() || null])) } as ChangeOrderInput;
           if (existing && !replace) await updateChangeOrder(existing.id, input); else await createChangeOrder(project.id, input);
           setProgress(((index + 1) / importRows.length) * 100);
         }
       } else {
         if (replace) await deleteChangeRecords(recordRows.map((row) => row.id));
         for (let index = 0; index < importRows.length; index += 1) {
-        const row = importRows[index]; const order = orderByRef.get(row["Change Order ID"].trim().toLowerCase())!; const code = codeByRef.get(row["Cost Code ID"].trim().toLowerCase())!;
-        await createChangeRecord(project.id, { change_order_id: order.id, cost_code_id: code.id, item: row.Item.trim(), description: row.Description?.trim() || null, change_to_budget: parseNumber(row["Change to Budget"]), change_to_eac: parseNumber(row["Change to EAC"]), ...Object.fromEntries(attributes.map((attribute) => [attribute.field, row[attribute.columnName]?.trim() || null])) });
+        const row = importRows[index]; const order = bulkRecords ? orderByRef.get(row["Change Order ID"].trim().toLowerCase()) : selectedOrder; if (!order) throw new Error("The Change Order for this import could not be resolved."); const costCodeReference = row["Cost Code ID"].trim(); const code = costCodeReference ? codeByRef.get(costCodeReference.toLowerCase()) : null; const budget = row["Change to Budget"].trim(); const eac = row["Change to EAC"].trim();
+        await createChangeRecord(project.id, { change_order_id: order.id, cost_code_id: code?.id ?? null, item: row.Item.trim() || null, description: row.Description?.trim() || null, change_to_budget: budget ? parseNumber(budget) : null, change_to_eac: eac ? parseNumber(eac) : null, row_order: (recordRows.length + index + 1) * 1000, ...Object.fromEntries(recordAttributes.map((attribute) => [attribute.field, row[attribute.columnName]?.trim() || null])) });
         setProgress(((index + 1) / importRows.length) * 100);
         }
       }
@@ -330,11 +394,11 @@ export default function ChangeManagementPage({ projectPublicId, bulkRecords = fa
     { id: "cost_code_id", label: "Cost Code", kind: "select", values: costCodes.filter((code) => code.is_active).map((code) => code.cost_code_id) },
     { id: "change_to_budget", label: "Change to Budget", kind: "number" },
     { id: "change_to_eac", label: "Change to EAC", kind: "number" },
-    ...attributes.map((attribute) => ({ id: attribute.field, label: attribute.columnName, kind: "attribute", values: [KEEP, CLEAR, ...attribute.definition.attribute_values.filter((value) => value.is_active).map((value) => value.value_id)] })),
+    ...recordAttributes.map((attribute) => ({ id: attribute.field, label: attribute.columnName, kind: "attribute", values: [KEEP, CLEAR, ...attribute.definition.attribute_values.filter((value) => value.is_active).map((value) => value.value_id)] })),
   ] : [
     { id: "status", label: "Status", kind: "select", values: STATUSES },
-    ...attributes.map((attribute) => ({ id: attribute.field, label: attribute.columnName, kind: "attribute", values: [KEEP, CLEAR, ...attribute.definition.attribute_values.filter((value) => value.is_active).map((value) => value.value_id)] })),
-  ], [attributes, costCodes, showingRecords]);
+    ...orderAttributes.map((attribute) => ({ id: attribute.field, label: attribute.columnName, kind: "attribute", values: [KEEP, CLEAR, ...attribute.definition.attribute_values.filter((value) => value.is_active).map((value) => value.value_id)] })),
+  ], [orderAttributes, recordAttributes, costCodes, showingRecords]);
   const chosenBulk = bulkChoices.find((choice) => choice.id === bulkField);
   async function applyBulkEdit() {
     if (!bulkField || !selectedIds.length) return;
@@ -358,42 +422,46 @@ export default function ChangeManagementPage({ projectPublicId, bulkRecords = fa
   }
 
   function activeGridApi() { return showingRecords ? recordGridApi : orderGridApi; }
-  function onGridReady(event: GridReadyEvent<OrderGridRow> | GridReadyEvent<RecordGridRow>) { if (showingRecords) setRecordGridApi(event.api as GridApi<RecordGridRow>); else setOrderGridApi(event.api as GridApi<OrderGridRow>); setHasGroups(event.api.getRowGroupColumns().length > 0); }
+  function setAllGroupsOpen(open: boolean) {
+    const api = activeGridApi();
+    if (!api) return;
+    if (open) api.expandAll(); else api.collapseAll();
+    ["co-general", "co-financial", "co-enterprise", "co-project", "cr-general", "cr-financial", "cr-enterprise", "cr-project"].forEach((groupId) => api.setColumnGroupOpened(groupId, open));
+  }
   function applyView(id: string) { setSelectedView(id); const api = activeGridApi(); if (!api) return; if (id === "Default") { api.resetColumnState(); api.setFilterModel(null); } else { const view = views.find((item) => item.id === id); if (view) { api.applyColumnState({ state: view.grid_state.columnState as never[], applyOrder: true }); api.setFilterModel(view.grid_state.filterModel ?? null); } } api.onFilterChanged(); setHasGroups(api.getRowGroupColumns().length > 0); }
   async function saveView(name = viewName) { if (!project) return; try { const api = activeGridApi(); if (!api) return; const saved = await saveProjectGridView(project.id, gridKey, name, { columnState: api.getColumnState(), filterModel: api.getFilterModel() }); setViews(await listProjectGridViews(project.id, gridKey)); setSelectedView(saved.id); setShowSaveView(false); showNotice("View saved."); } catch (requestError) { setError(gridViewErrorMessage(requestError)); } }
   async function deleteView() { if (selectedView === "Default" || !project) return; try { await deleteProjectGridView(selectedView); setViews(await listProjectGridViews(project.id, gridKey)); applyView("Default"); showNotice("View deleted."); } catch (requestError) { setError(gridViewErrorMessage(requestError)); } }
 
-  return <div className="enterprise-admin-page">
-    <div className="enterprise-page-title"><div><h2>{bulkRecords ? "Bulk Change Records" : selectedOrder ? `Change Records · ${selectedOrder.change_order_id}` : "Change Management"}</h2><p>{bulkRecords ? "Manage Change Records across all Change Orders." : selectedOrder ? selectedOrder.description : "Manage Change Orders and their financial Change Records."}</p></div>{!showingRecords && <button className="button primary" onClick={openNewOrder}>+ Add Change Order</button>}</div>
-    <section className="enterprise-grid-card">
-      <div className="enterprise-toolbar" style={{ flexWrap: "wrap" }}>
-        {selectedOrder && !bulkRecords && <button className="button secondary" onClick={() => { setSelectedOrder(null); setSelectedRecordIds([]); }}>← Change Orders</button>}
+  return <div className="enterprise-admin-page" style={selectedOrder && !bulkRecords ? { position: "fixed", inset: 0, zIndex: 12000, background: "#f5f7fa", display: "flex", flexDirection: "column", padding: 0 } : undefined}>
+    {selectedOrder && !bulkRecords ? <header style={{ minHeight: 58, background: "#fff", borderBottom: "1px solid #dfe4ea", display: "flex", alignItems: "center", gap: 12, padding: "7px 12px" }}><button className="button secondary compact" onClick={() => { setSelectedOrder(null); setSelectedRecordIds([]); void refresh(); }}>← Back</button><div><div style={{ fontSize: 16, fontWeight: 700 }}>Change Records</div><div style={{ fontSize: 12, color: "#68707d" }}><strong>{selectedOrder.change_order_id}</strong> · {selectedOrder.description}</div></div><div style={{ marginLeft: "auto", fontSize: 11, color: saving ? "#2563eb" : "#68707d" }}>{saving ? "Saving…" : "Auto-save enabled"}</div></header> : <div className="enterprise-page-title"><div><h2>{bulkRecords ? "Bulk Change Records" : "Change Management"}</h2><p>{bulkRecords ? "Manage Change Records across all Change Orders." : "Manage Change Orders and their financial Change Records."}</p></div>{!showingRecords && <button className="button primary" onClick={openNewOrder}>+ Add Change Order</button>}</div>}
+    <section className="enterprise-grid-card" style={selectedOrder && !bulkRecords ? { flex: 1, minHeight: 0, display: "flex", flexDirection: "column", border: 0, borderRadius: 0, boxShadow: "none" } : undefined}>
+      <div className="enterprise-toolbar" style={selectedOrder && !bulkRecords ? { flexWrap: "wrap", padding: "8px 12px", background: "#fff", borderBottom: "1px solid #e5e7eb" } : { flexWrap: "wrap" }}>
         <label className="enterprise-search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={`Search ${showingRecords ? "change records" : "change orders"}…`}/></label>
-        <label className="status-filter"><span>View</span><select value={selectedView} onChange={(event) => applyView(event.target.value)}><option value="Default">Default</option>{views.map((view) => <option key={view.id} value={view.id}>{view.view_name}</option>)}</select></label>
-        <button className="button secondary" onClick={() => { setViewName(selectedView === "Default" ? "" : views.find((view) => view.id === selectedView)?.view_name ?? ""); setShowSaveView(true); }}>Save View</button>
-        <button className="button secondary" disabled={selectedView === "Default"} onClick={() => void deleteView()}>Delete View</button>
-        {showingRecords && <button className="button primary" disabled={!orders.length || !costCodes.length} onClick={openNewRecord}>+ Add Record</button>}
+        {selectedOrder && !bulkRecords ? <span style={{ display: "inline-flex", alignItems: "stretch" }}><button className="button primary" style={{ borderTopRightRadius: 0, borderBottomRightRadius: 0 }} disabled={saving} onClick={() => void addRows()}>+ Add Row{addCount === 1 ? "" : "s"}</button><input aria-label="Number of rows to add" title="Rows to add (1–100)" type="number" min={1} max={100} value={addCount} onChange={(event) => setAddCount(Math.max(1, Math.min(100, Number(event.target.value) || 1)))} style={{ width: 54, border: "1px solid #cbd5e1", borderLeft: 0, borderRadius: "0 6px 6px 0", padding: "0 6px", fontSize: 12, textAlign: "center" }}/></span> : showingRecords && <button className="button primary" disabled={!orders.length} onClick={openNewRecord}>+ Add Record</button>}
         <button className="button secondary" disabled={!selectedIds.length} onClick={() => { setBulkField(""); setBulkValue(""); setBulkOpen(true); }}>Bulk Edit{selectedIds.length ? ` (${selectedIds.length})` : ""}</button>
         <button className="button danger" disabled={!selectedIds.length} onClick={() => setDeletePrompt({ kind: showingRecords ? "records" : "orders", ids: selectedIds })}>Bulk Delete{selectedIds.length ? ` (${selectedIds.length})` : ""}</button>
-        <button className="button secondary" disabled={!hasGroups} title={hasGroups ? "Expand all grouped rows" : "Drag a column into the grouping bar first"} onClick={() => activeGridApi()?.expandAll()}>Expand All</button>
-        <button className="button secondary" disabled={!hasGroups} title={hasGroups ? "Collapse all grouped rows" : "Drag a column into the grouping bar first"} onClick={() => activeGridApi()?.collapseAll()}>Collapse All</button>
+        <button className="button secondary" onClick={() => setAllGroupsOpen(true)}>Expand All</button>
+        <button className="button secondary" onClick={() => setAllGroupsOpen(false)}>Collapse All</button>
         <button className="button secondary" onClick={exportRows}>⇩ Export</button>
         <button className="button secondary" onClick={() => { setImportMode(showingRecords ? "records" : "orders"); window.setTimeout(() => fileRef.current?.click(), 0); }}>⇧ Import</button>
         <input ref={fileRef} hidden type="file" accept=".xlsx,.xls" onChange={(event) => void chooseImport(event.target.files?.[0])}/>
+        <label className="status-filter"><span>View</span><select value={selectedView} onChange={(event) => applyView(event.target.value)}><option value="Default">Default</option>{views.map((view) => <option key={view.id} value={view.id}>{view.view_name}</option>)}</select></label>
+        <button className="button secondary" onClick={() => { setViewName(selectedView === "Default" ? "" : views.find((view) => view.id === selectedView)?.view_name ?? ""); setShowSaveView(true); }}>Save View</button>
+        <button className="button secondary" disabled={selectedView === "Default"} onClick={() => void deleteView()}>Delete View</button>
         <button className="button secondary" disabled={loading} onClick={() => void refresh()}>↻ Refresh</button>
       </div>
-      <div className="data-message" style={{ minHeight: 48 }}><span>Right-click a column header to show, hide or pin columns. Drag columns into the grouping bar to create group levels. Select rows to enable Bulk Edit and Bulk Delete. Import validates the exact template columns, IDs, statuses, numeric values and active Change attribute values.</span></div>
+      {(!selectedOrder || bulkRecords) && <div className="data-message" style={{ minHeight: 48 }}><span>Right-click a column header to show, hide or pin columns. Drag columns into the grouping bar to create group levels. Select rows to enable Bulk Edit and Bulk Delete. Import validates the exact template columns, IDs, statuses, numeric values and active attribute values.</span></div>}
       {error && <div className="data-message error"><strong>Unable to load Change Management</strong><span>{error}</span></div>}
       {!error && loading && <div className="data-message"><span className="spinner"/>Loading Change Management…</div>}
-      {!error && !loading && <AgGridProvider modules={[AllEnterpriseModule]} licenseKey={process.env.NEXT_PUBLIC_AG_GRID_LICENSE_KEY ?? ""}><div style={{ height: 640, width: "100%" }}>
-        {!showingRecords ? <AgGridReact<OrderGridRow> theme={gridTheme} rowData={orders as OrderGridRow[]} columnDefs={orderColumns} defaultColDef={{ sortable: true, resizable: true, filter: true, minWidth: 90, enableRowGroup: true }} quickFilterText={search} getRowId={(params) => params.data.id} grandTotalRow="pinnedBottom" groupTotalRow="bottom" groupDisplayType="multipleColumns" rowGroupPanelShow="always" groupSuppressBlankHeader onRowDoubleClicked={(event) => openEditOrder(event.data!)} rowSelection={{ mode: "multiRow" }} selectionColumnDef={{ pinned: "left", width: 46, maxWidth: 46, suppressHeaderMenuButton: true }} onSelectionChanged={(event: SelectionChangedEvent<OrderGridRow>) => setSelectedOrderIds(event.api.getSelectedRows().map((row) => row.id))} onGridReady={onGridReady} onColumnRowGroupChanged={(event) => setHasGroups(event.api.getRowGroupColumns().length > 0)} animateRows/>
-        : <AgGridReact<RecordGridRow> theme={gridTheme} rowData={recordRows} columnDefs={recordColumns} defaultColDef={{ sortable: true, resizable: true, filter: true, minWidth: 90, enableRowGroup: true }} quickFilterText={search} getRowId={(params) => params.data.id} rowSelection={{ mode: "multiRow" }} selectionColumnDef={{ pinned: "left", width: 46, maxWidth: 46, suppressHeaderMenuButton: true }} onSelectionChanged={(event: SelectionChangedEvent<RecordGridRow>) => setSelectedRecordIds(event.api.getSelectedRows().map((row) => row.id))} onGridReady={onGridReady} onColumnRowGroupChanged={(event) => setHasGroups(event.api.getRowGroupColumns().length > 0)} onCellValueChanged={(event) => void cellChanged(event)} groupTotalRow="bottom" groupDisplayType="multipleColumns" rowGroupPanelShow="always" groupSuppressBlankHeader grandTotalRow="pinnedBottom" undoRedoCellEditing undoRedoCellEditingLimit={20} animateRows/>}
+      {!error && !loading && <AgGridProvider modules={[AllEnterpriseModule]} licenseKey={process.env.NEXT_PUBLIC_AG_GRID_LICENSE_KEY ?? ""}><div style={{ height: selectedOrder && !bulkRecords ? "auto" : 640, flex: selectedOrder && !bulkRecords ? 1 : undefined, minHeight: selectedOrder && !bulkRecords ? 360 : undefined, width: "100%", padding: selectedOrder && !bulkRecords ? "8px 12px 10px" : undefined, boxSizing: "border-box" }}>
+        {!showingRecords ? <AgGridReact<OrderGridRow> theme={gridTheme} rowData={orders as OrderGridRow[]} columnDefs={orderColumns} defaultColDef={{ sortable: true, resizable: true, filter: true, minWidth: 90, enableRowGroup: true }} quickFilterText={search} getRowId={(params) => params.data.id} grandTotalRow="pinnedBottom" groupTotalRow="bottom" groupDisplayType="multipleColumns" rowGroupPanelShow="always" groupSuppressBlankHeader onRowDoubleClicked={(event) => openEditOrder(event.data!)} rowSelection={{ mode: "multiRow" }} selectionColumnDef={{ pinned: "left", width: 46, maxWidth: 46, suppressHeaderMenuButton: true }} onSelectionChanged={(event: SelectionChangedEvent<OrderGridRow>) => setSelectedOrderIds(event.api.getSelectedRows().map((row) => row.id))} onGridReady={(event) => { setOrderGridApi(event.api); setHasGroups(event.api.getRowGroupColumns().length > 0); }} onColumnRowGroupChanged={(event) => setHasGroups(event.api.getRowGroupColumns().length > 0)} animateRows/>
+        : <AgGridReact<RecordGridRow> theme={gridTheme} rowData={recordRows} columnDefs={recordColumns} defaultColDef={{ sortable: true, resizable: true, filter: true, minWidth: 90, enableRowGroup: true }} quickFilterText={search} getRowId={(params) => params.data.id} rowSelection={{ mode: "multiRow" }} selectionColumnDef={{ pinned: "left", width: 46, maxWidth: 46, suppressHeaderMenuButton: true }} onRowDoubleClicked={() => undefined} onSelectionChanged={(event: SelectionChangedEvent<RecordGridRow>) => { const nodes = event.api.getSelectedNodes().filter((node) => node.data); setSelectedRecordIds(nodes.map((node) => node.data!.id)); const last = [...nodes].sort((left, right) => (left.rowIndex ?? -1) - (right.rowIndex ?? -1)).at(-1); if (last?.data) setInsertAfterId(last.data.id); }} onCellFocused={(event) => { const row = event.api.getDisplayedRowAtIndex(event.rowIndex ?? -1)?.data; if (row) setInsertAfterId(row.id); }} onGridReady={(event) => { setRecordGridApi(event.api); setHasGroups(event.api.getRowGroupColumns().length > 0); }} onColumnRowGroupChanged={(event) => setHasGroups(event.api.getRowGroupColumns().length > 0)} onCellValueChanged={(event) => void cellChanged(event)} groupTotalRow="bottom" groupDisplayType="multipleColumns" rowGroupPanelShow="always" groupSuppressBlankHeader grandTotalRow="pinnedBottom" undoRedoCellEditing undoRedoCellEditingLimit={20} animateRows/>}
       </div></AgGridProvider>}
-      <div className="grid-footer"><span>{showingRecords ? `${recordRows.length} Change Records` : `${orders.length} Change Orders`} · {selectedIds.length} selected</span><span>{showingRecords ? `Change to Budget: ${money(recordRows.reduce((sum, row) => sum + Number(row.change_to_budget), 0))} · Change to EAC: ${money(recordRows.reduce((sum, row) => sum + Number(row.change_to_eac), 0))}` : `${attributes.filter((attribute) => attribute.prefix === "E").length} enterprise + ${attributes.filter((attribute) => attribute.prefix === "P").length} project Change attributes`}</span></div>
+      <div className="grid-footer"><span>{showingRecords ? `${recordRows.length} Change Records` : `${orders.length} Change Orders`} · {selectedIds.length} selected</span><span>{showingRecords ? `Change to Budget: ${money(recordRows.reduce((sum, row) => sum + Number(row.change_to_budget), 0))} · Change to EAC: ${money(recordRows.reduce((sum, row) => sum + Number(row.change_to_eac), 0))}` : `${orderAttributes.filter((attribute) => attribute.prefix === "E").length} enterprise + ${orderAttributes.filter((attribute) => attribute.prefix === "P").length} project Change attributes`}</span></div>
     </section>
 
     {orderForm && <><button className="drawer-scrim" aria-label="Close" onClick={() => !saving && setOrderForm(null)}/><aside className="admin-drawer"><header><div><span>{editingOrder ? "Edit" : "New"}</span><h2>Change Order</h2></div><button onClick={() => setOrderForm(null)}>×</button></header><div className="drawer-body"><div className="form-grid">{formError && <div className="form-error">{formError}</div>}<label className="form-field"><span>Change Order ID <b>*</b></span><input maxLength={30} value={orderForm.change_order_id} onChange={(event) => setOrderForm({ ...orderForm, change_order_id: event.target.value })}/></label><label className="form-field"><span>Description <b>*</b></span><input maxLength={255} value={orderForm.description} onChange={(event) => setOrderForm({ ...orderForm, description: event.target.value })}/></label><label className="form-field"><span>Status <b>*</b></span><select value={orderForm.status} onChange={(event) => setOrderForm({ ...orderForm, status: event.target.value as ChangeOrderStatus })}>{STATUSES.map((status) => <option key={status}>{status}</option>)}</select></label><AttributeFields attributes={attributes} form={orderForm} setForm={(form) => setOrderForm(form as OrderForm)}/></div></div><footer><button className="button secondary" onClick={() => setOrderForm(null)}>Cancel</button><button className="button primary" disabled={saving} onClick={() => void saveOrder()}>{saving ? "Saving…" : "Save"}</button></footer></aside></>}
-    {recordForm && <><button className="drawer-scrim" aria-label="Close" onClick={() => !saving && setRecordForm(null)}/><aside className="admin-drawer"><header><div><span>{editingRecord ? "Edit" : "New"}</span><h2>Change Record</h2></div><button onClick={() => setRecordForm(null)}>×</button></header><div className="drawer-body"><div className="form-grid">{formError && <div className="form-error">{formError}</div>}<label className="form-field"><span>Change Order <b>*</b></span><select value={recordForm.change_order_id} onChange={(event) => setRecordForm({ ...recordForm, change_order_id: event.target.value })}>{orders.map((order) => <option key={order.id} value={order.id}>{order.change_order_id} · {order.description}</option>)}</select></label><label className="form-field"><span>Cost Code <b>*</b></span><select value={recordForm.cost_code_id} onChange={(event) => setRecordForm({ ...recordForm, cost_code_id: event.target.value })}>{costCodes.filter((code) => code.is_active || code.id === recordForm.cost_code_id).map((code) => <option key={code.id} value={code.id}>{code.cost_code_id} · {code.name}</option>)}</select></label><label className="form-field"><span>Item <b>*</b></span><input maxLength={50} value={recordForm.item} onChange={(event) => setRecordForm({ ...recordForm, item: event.target.value })}/></label><label className="form-field"><span>Description</span><input maxLength={255} value={recordForm.description ?? ""} onChange={(event) => setRecordForm({ ...recordForm, description: event.target.value })}/></label><label className="form-field"><span>Change to Budget</span><input type="number" step="any" value={recordForm.change_to_budget} onChange={(event) => setRecordForm({ ...recordForm, change_to_budget: Number(event.target.value) })}/></label><label className="form-field"><span>Change to EAC</span><input type="number" step="any" value={recordForm.change_to_eac} onChange={(event) => setRecordForm({ ...recordForm, change_to_eac: Number(event.target.value) })}/></label><AttributeFields attributes={attributes} form={recordForm} setForm={(form) => setRecordForm(form as RecordForm)}/></div></div><footer><button className="button secondary" onClick={() => setRecordForm(null)}>Cancel</button><button className="button primary" disabled={saving} onClick={() => void saveRecord()}>{saving ? "Saving…" : "Save"}</button></footer></aside></>}
+    {bulkRecords && recordForm && <><button className="drawer-scrim" aria-label="Close" onClick={() => !saving && setRecordForm(null)}/><aside className="admin-drawer"><header><div><span>{editingRecord ? "Edit" : "New"}</span><h2>Change Record</h2></div><button onClick={() => setRecordForm(null)}>×</button></header><div className="drawer-body"><div className="form-grid">{formError && <div className="form-error">{formError}</div>}<label className="form-field"><span>Change Order <b>*</b></span><select value={recordForm.change_order_id} onChange={(event) => setRecordForm({ ...recordForm, change_order_id: event.target.value })}>{orders.map((order) => <option key={order.id} value={order.id}>{order.change_order_id} · {order.description}</option>)}</select></label><label className="form-field"><span>Cost Code</span><select value={recordForm.cost_code_id ?? ""} onChange={(event) => setRecordForm({ ...recordForm, cost_code_id: event.target.value || null })}><option value="">—</option>{costCodes.filter((code) => code.is_active || code.id === recordForm.cost_code_id).map((code) => <option key={code.id} value={code.id}>{code.cost_code_id} · {code.name}</option>)}</select></label><label className="form-field"><span>Item</span><input maxLength={50} value={recordForm.item ?? ""} onChange={(event) => setRecordForm({ ...recordForm, item: event.target.value })}/></label><label className="form-field"><span>Description</span><input maxLength={255} value={recordForm.description ?? ""} onChange={(event) => setRecordForm({ ...recordForm, description: event.target.value })}/></label><label className="form-field"><span>Change to Budget</span><input type="number" step="any" value={recordForm.change_to_budget ?? ""} onChange={(event) => setRecordForm({ ...recordForm, change_to_budget: event.target.value === "" ? null : Number(event.target.value) })}/></label><label className="form-field"><span>Change to EAC</span><input type="number" step="any" value={recordForm.change_to_eac ?? ""} onChange={(event) => setRecordForm({ ...recordForm, change_to_eac: event.target.value === "" ? null : Number(event.target.value) })}/></label><AttributeFields attributes={attributes} form={recordForm} showId setForm={(form) => setRecordForm(form as RecordForm)}/></div></div><footer><button className="button secondary" onClick={() => setRecordForm(null)}>Cancel</button><button className="button primary" disabled={saving} onClick={() => void saveRecord()}>{saving ? "Saving…" : "Save"}</button></footer></aside></>}
     {importRows && <ExcelImportDialog
       title={`Import ${importMode === "orders" ? "Change Orders" : "Change Records"}`}
       rows={importRows} columns={excelColumns} errors={importErrors} replace={replace} setReplace={setReplace}
