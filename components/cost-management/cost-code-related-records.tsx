@@ -145,7 +145,7 @@ function validateHeaders(rows: ExcelRow[], expected: string[]) {
   return errors;
 }
 
-export function CostCodeActionsCell({ costCode, project, onEdit }: { costCode: CostCode; project: Project | null; onEdit: () => void }) {
+export function CostCodeActionsCell({ costCode, project, onEdit, onDelete }: { costCode: CostCode; project: Project | null; onEdit: () => void; onDelete: () => void }) {
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<RelatedMode | null>(null);
   const [menuPosition, setMenuPosition] = useState({ top: 0, right: 8 });
@@ -202,9 +202,14 @@ export function CostCodeActionsCell({ costCode, project, onEdit }: { costCode: C
   ) : null;
 
   return <>
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 4, width: "100%", height: "100%" }} onMouseDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>
-      <button className="button secondary compact" onClick={(event) => { event.preventDefault(); onEdit(); }}>✎ Edit</button>
-      <button ref={buttonRef} className="button secondary compact" aria-label={`Open related records for ${costCode.cost_code_id}`} aria-expanded={open} title="Related records" onClick={(event) => { event.preventDefault(); event.stopPropagation(); toggleMenu(); }} style={{ width: 28, paddingInline: 0, display: "grid", placeItems: "center" }}><SvgIcon type="more"/></button>
+    <div className="change-row-actions" style={{ justifyContent: "flex-end", width: "100%", height: "100%" }} onMouseDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>
+      <button className="change-icon-button" title="Edit Cost Code" aria-label={`Edit ${costCode.cost_code_id}`} onClick={(event) => { event.preventDefault(); onEdit(); }}>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4l11-11-4-4L4 16v4Zm10-13 4 4M13.5 6.5l4 4"/></svg>
+      </button>
+      <button className="change-icon-button delete" title="Delete Cost Code" aria-label={`Delete ${costCode.cost_code_id}`} onClick={(event) => { event.preventDefault(); onDelete(); }}>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m-9 0 1 13h10l1-13M10 11v5m4-5v5"/></svg>
+      </button>
+      <button ref={buttonRef} className="change-icon-button" aria-label={`Open related records for ${costCode.cost_code_id}`} aria-expanded={open} title="Related records" onClick={(event) => { event.preventDefault(); event.stopPropagation(); toggleMenu(); }}><SvgIcon type="more"/></button>
     </div>
     {menu}
     {workspace}
