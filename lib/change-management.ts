@@ -80,6 +80,18 @@ export function updateChangeOrder(id: string, input: ChangeOrderInput) {
   }).then((rows) => rows[0]);
 }
 
+export function deleteChangeOrders(ids: string[]) {
+  if (!ids.length) return Promise.resolve();
+  return supabaseRequest(`change_orders?id=in.(${ids.map(encodeURIComponent).join(",")})`, { method: "DELETE" });
+}
+
+export function bulkUpdateChangeOrders(ids: string[], patch: Partial<Pick<ChangeOrder, "status">> & ChangeAttributes) {
+  if (!ids.length || !Object.keys(patch).length) return Promise.resolve([] as ChangeOrder[]);
+  return supabaseRequest<ChangeOrder[]>(`change_orders?id=in.(${ids.map(encodeURIComponent).join(",")})&select=${encodeURIComponent(orderSelect)}`, {
+    method: "PATCH", headers: { Prefer: "return=representation" }, body: JSON.stringify({ ...patch, updated_at: new Date().toISOString() }),
+  });
+}
+
 export function listChangeRecords(projectId: string, changeOrderId?: string) {
   const orderFilter = changeOrderId ? `&change_order_id=eq.${encodeURIComponent(changeOrderId)}` : "";
   return supabaseRequest<ChangeRecord[]>(`change_records?project_id=eq.${encodeURIComponent(projectId)}${orderFilter}&select=${encodeURIComponent(recordSelect)}&order=created_at.asc`);
@@ -102,10 +114,17 @@ export function deleteChangeRecords(ids: string[]) {
   return supabaseRequest(`change_records?id=in.(${ids.map(encodeURIComponent).join(",")})`, { method: "DELETE" });
 }
 
+export function bulkUpdateChangeRecords(ids: string[], patch: Partial<Pick<ChangeRecord, "cost_code_id" | "change_to_budget" | "change_to_eac">> & ChangeAttributes) {
+  if (!ids.length || !Object.keys(patch).length) return Promise.resolve([] as ChangeRecord[]);
+  return supabaseRequest<ChangeRecord[]>(`change_records?id=in.(${ids.map(encodeURIComponent).join(",")})&select=${encodeURIComponent(recordSelect)}`, {
+    method: "PATCH", headers: { Prefer: "return=representation" }, body: JSON.stringify({ ...patch, updated_at: new Date().toISOString() }),
+  });
+}
+
 export function changeManagementErrorMessage(error: unknown) {
   if (error instanceof SupabaseRequestError) {
     if (error.code === "23505") return "That Change Order ID is already used in this project.";
-    if (error.code === "23503") return "The selected Change Order or Cost Code is not valid for this project.";
+    if (error.code === "23503") return "The selected Change Order or Cost Code is invalid, or the Change Order still contains Change Records.";
     if (error.code === "23514" || error.code === "22P02") return "Check the required fields and numeric values.";
     return error.message;
   }
