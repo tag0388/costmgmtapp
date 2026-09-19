@@ -20,12 +20,12 @@ import {
   costCodeErrorMessage,
   createCostCode,
   deleteCostCode,
+  deleteCostCodes,
   EacMethod,
   EnterpriseCostCodeAttributeField,
   importCostCodes,
   listCostCodes,
   ProjectCostCodeAttributeField,
-  setCostCodesActive,
   TimephasingMethod,
   updateCostCode,
   updateCostCodeFields,
@@ -113,6 +113,7 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
   const [selected, setSelected] = useState<string[]>([]);
   const [editing, setEditing] = useState<CostCode | "new" | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<CostCode | null>(null);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [bulkOpen, setBulkOpen] = useState(false);
   const [importRows, setImportRows] = useState<ExcelRow[] | null>(null);
@@ -477,10 +478,24 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
     }
   }
 
-  async function deactivateSelected() {
+  async function confirmBulkDeleteCostCodes() {
     if (!selected.length) return;
-    try { await setCostCodesActive(selected, false); setSelected([]); gridApi?.deselectAll(); showNotice("Cost code status updated."); await refresh(); }
-    catch (requestError) { setError(costCodeErrorMessage(requestError)); }
+    setDeleting(true);
+    setError("");
+    try {
+      await deleteCostCodes(selected);
+      const count = selected.length;
+      setBulkDeleteOpen(false);
+      setSelected([]);
+      gridApi?.deselectAll();
+      showNotice(`${count} Cost Code${count === 1 ? "" : "s"} deleted.`);
+      await refresh();
+    } catch (requestError) {
+      setError(costCodeErrorMessage(requestError));
+      setBulkDeleteOpen(false);
+    } finally {
+      setDeleting(false);
+    }
   }
 
   async function saveView() {
@@ -532,7 +547,7 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
         <button className="button secondary" onClick={() => fileRef.current?.click()}>⇧ Import</button>
         <input ref={fileRef} hidden type="file" accept=".xlsx,.xls" onChange={(event) => void chooseImport(event.target.files?.[0])}/>
         <button className="button secondary" onClick={() => void refresh()} disabled={loading}>↻ Refresh</button>
-        <button className="button danger" disabled={!selected.length} onClick={() => void deactivateSelected()}>Deactivate{selected.length > 1 ? ` (${selected.length})` : ""}</button>
+        <button className="button danger" disabled={!selected.length} onClick={() => setBulkDeleteOpen(true)}>Delete{selected.length ? ` (${selected.length})` : ""}</button>
       </div>
       <div className="data-message" style={{ minHeight: 48 }}><span>Right-click a column header to show, hide or pin columns. Drag columns into the grouping bar above the table to create multiple group levels. Expand/Collapse becomes available when grouping is active. Cost Code Name, Description, EAC Method and attributes can be edited directly in the grid. Estimate at Completion is editable only when EAC Method is Manual. Use the related-records icon in Actions to open related records for that Cost Code.</span></div>
       {error && <div className="data-message error"><strong>Unable to load cost codes</strong><span>{error}</span></div>}
@@ -565,6 +580,19 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
       <div className="grid-footer"><span>{rows.length} of {costCodes.length} cost codes · {selected.length} selected</span><span>{activeEnterprise.length} enterprise + {activeProject.length} project cost code attributes</span></div>
     </section>
 
+    {bulkDeleteOpen && <div className="confirm-layer">
+      <button className="confirm-scrim" onClick={() => !deleting && setBulkDeleteOpen(false)} aria-label="Close bulk delete confirmation"/>
+      <div className="confirm-dialog" role="dialog" aria-modal="true">
+        <div className="confirm-icon">!</div>
+        <h2>Delete {selected.length} Cost Code{selected.length === 1 ? "" : "s"}?</h2>
+        <p>Are you sure you want to permanently delete the selected Cost Codes? This action cannot be undone.</p>
+        <p>If any selected Cost Code is used by Budget Details, Actual Cost, Change Records, Cost to Complete, Timephasing or Subcontract details, the entire bulk delete will be blocked and no selected Cost Codes will be deleted.</p>
+        <div className="confirm-actions">
+          <button className="button secondary" disabled={deleting} onClick={() => setBulkDeleteOpen(false)}>Cancel</button>
+          <button className="button danger" disabled={deleting} onClick={() => void confirmBulkDeleteCostCodes()}>{deleting ? "Deleting…" : "Yes, Delete"}</button>
+        </div>
+      </div>
+    </div>}
     {deleteTarget && <div className="confirm-layer">
       <button className="confirm-scrim" onClick={() => !deleting && setDeleteTarget(null)} aria-label="Close delete confirmation"/>
       <div className="confirm-dialog" role="dialog" aria-modal="true">
