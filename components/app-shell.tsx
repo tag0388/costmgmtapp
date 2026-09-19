@@ -166,7 +166,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             <div><div className="breadcrumbs"><span>{activeModule.name}</span><span>/</span><strong>{workspaceTitle}</strong></div><h1>{workspaceTitle}</h1><p>{descriptionFor(activeModule.name, workspaceTitle)}</p></div>
           </div>
           {children}
-          <WorkspacePlaceholder module={activeModule.name} title={workspaceTitle} />
         </main>
       </div>
     </section>
@@ -201,13 +200,6 @@ function ContextSidebar({ module, groups, activePath, enterprise, project, colla
     return enterprise && project ? `/enterprises/${enterprise.public_id}/projects/${project.public_id}${module.path}/${entryPath}` : `${module.path}/${entryPath}`;
   };
   return <aside className={`context-sidebar ${collapsed ? "collapsed" : ""}`}><div className="context-title"><div className="module-glyph"><Icon name={module.icon}/></div><div><span>Module</span><strong>{module.name}</strong></div><button onClick={onCollapse} className="context-collapse" aria-label="Collapse module navigation">‹</button></div><nav aria-label={`${module.name} navigation`}>{visibleGroups.map((group, index) => <div className="context-group" key={group.label ?? index}>{group.label && <div className="context-label">{group.label}{group.permission && <span className="admin-label">Project Admin</span>}</div>}{group.items.map((entry) => <Link title={collapsed ? entry.name : undefined} className={`context-link ${entry.path === activePath ? "active" : ""}`} key={entry.path} href={hrefFor(entry.path)}><Icon name={entry.icon} size={17}/><span>{entry.name}</span></Link>)}</div>)}</nav><div className="context-hint"><Icon name="info" size={16}/><span>Navigation reflects your assigned project permissions.</span></div></aside>;
-}
-
-function WorkspacePlaceholder({ module, title }: { module:string; title:string }) {
-  const [search, setSearch] = useState("");
-  const rows = ["Current period summary", "Portfolio status", "Pending approvals", "Recent activity", "Reporting configuration"];
-  const filteredRows = rows.filter((row) => row.toLowerCase().includes(search.trim().toLowerCase()));
-  return <section className="panel placeholder-panel"><div className="panel-head"><div><h2>{title} workspace</h2><p>A Phase 1 shell preview for {module.toLowerCase()}</p></div><div className="status-chip"><i/> Shell ready</div></div><div className="mock-toolbar"><label className="mock-search"><span aria-hidden="true">⌕</span><input aria-label={`Search ${title}`} value={search} onChange={(event) => setSearch(event.target.value)} placeholder={`Search ${title.toLowerCase()}...`} /></label><button className="button secondary" type="button" disabled title="Available in a future phase">Filters</button><button className="button secondary" type="button" disabled title="Available in a future phase">Columns</button></div><div className="table-shell"><div className="table-row table-head"><span>Reference</span><span>Description</span><span>Status</span><span>Owner</span><span>Updated</span></div>{filteredRows.map((row,i)=><div className="table-row" key={row}><span className="mono">{module.slice(0,3).toUpperCase()}-{String(i+1).padStart(4,"0")}</span><span><b>{row}</b><small>Placeholder content for the future module workspace</small></span><span><em className={i===1?"amber":"green"}>{i===1?"Review":"Current"}</em></span><span>Alex Rivera</span><span>{i+1}d ago</span></div>)}{filteredRows.length === 0 && <div className="empty-row">No placeholder rows match “{search}”.</div>}</div><div className="phase-note"><div className="note-icon"><Icon name="info"/></div><div><strong>Detailed workflows are intentionally deferred</strong><p>This phase establishes navigation, context, permissions and responsive workspace patterns only. No underlying project data or database schema has been changed.</p></div></div></section>;
 }
 
 function descriptionFor(module: string, title: string) { return title === "Overview" ? `A consolidated view of ${module.toLowerCase()} performance.` : `Review and manage ${title.toLowerCase()} for the selected context.`; }
