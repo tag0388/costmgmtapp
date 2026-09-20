@@ -77,92 +77,10 @@ const select = [
   ...PROJECT_COST_CODE_ATTRIBUTE_FIELDS,
 ].join(",");
 
-export async function listCostCodes(projectId: string) {
-  const project = encodeURIComponent(projectId);
-  const [codes, baselineDetails, changes, actuals, periods, ctcDetails, ctcPeriods] = await Promise.all([
-    supabaseRequest<CostCode[]>(`cost_codes?project_id=eq.${project}&select=${encodeURIComponent(select)}&order=cost_code_id.asc`),
-    supabaseRequest<Array<{ cost_code_id: string; total: number | null }>>(`baseline_details?project_id=eq.${project}&select=cost_code_id,total`),
-    supabaseRequest<Array<{ cost_code_id: string | null; change_to_budget: number | null }>>(`change_records?project_id=eq.${project}&select=cost_code_id,change_to_budget`),
-    supabaseRequest<Array<{ cost_code_id: string; cost_period_id: string; amount: number | null }>>(`actual_cost_transactions?project_id=eq.${project}&select=cost_code_id,cost_period_id,amount`),
-    supabaseRequest<Array<{ id: string; period_number: number; status: "Future" | "Current" | "Closed" }>>(`cost_reporting_periods?project_id=eq.${project}&select=id,period_number,status&order=period_number.asc`),
-    supabaseRequest<Array<{ id: string; cost_code_id: string; rate: number | null }>>(`cost_to_complete_details?project_id=eq.${project}&select=id,cost_code_id,rate`),
-    supabaseRequest<Array<{ cost_to_complete_detail_id: string; cost_period_id: string; qty: number | null }>>(`cost_to_complete_detail_periods?select=cost_to_complete_detail_id,cost_period_id,qty`),
-  ]);
-
-  const currentPeriod = periods.find((period) => period.status === "Current") ?? null;
-  const previousClosed = [...periods].filter((period) => period.status === "Closed").sort((a, b) => b.period_number - a.period_number)[0] ?? null;
-  const futurePeriodIds = new Set(
-    (currentPeriod ? periods.filter((period) => period.period_number > currentPeriod.period_number) : periods.filter((period) => period.status === "Future"))
-      .map((period) => period.id),
-  );
-
-  const snapshots = previousClosed
-    ? await supabaseRequest<Array<{ cost_code_id: string; current_budget: number | null; eac: number | null }>>(
-        `cost_code_period_snapshots?project_id=eq.${project}&cost_period_id=eq.${encodeURIComponent(previousClosed.id)}&select=cost_code_id,current_budget,eac`,
-      )
-    : [];
-
-  const baselineByCode = new Map<string, number>();
-  baselineDetails.forEach((detail) => baselineByCode.set(detail.cost_code_id, (baselineByCode.get(detail.cost_code_id) ?? 0) + Number(detail.total ?? 0)));
-
-  const changesByCode = new Map<string, number>();
-  changes.forEach((change) => {
-    if (!change.cost_code_id) return;
-    changesByCode.set(change.cost_code_id, (changesByCode.get(change.cost_code_id) ?? 0) + Number(change.change_to_budget ?? 0));
-  });
-
-  const actualToDateByCode = new Map<string, number>();
-  const actualThisPeriodByCode = new Map<string, number>();
-  actuals.forEach((actual) => {
-    actualToDateByCode.set(actual.cost_code_id, (actualToDateByCode.get(actual.cost_code_id) ?? 0) + Number(actual.amount ?? 0));
-    if (currentPeriod && actual.cost_period_id === currentPeriod.id) {
-      actualThisPeriodByCode.set(actual.cost_code_id, (actualThisPeriodByCode.get(actual.cost_code_id) ?? 0) + Number(actual.amount ?? 0));
-    }
-  });
-
-  const ctcDetailById = new Map(ctcDetails.map((detail) => [detail.id, detail]));
-  const ctcByCode = new Map<string, number>();
-  ctcPeriods.forEach((period) => {
-    if (!futurePeriodIds.has(period.cost_period_id)) return;
-    const detail = ctcDetailById.get(period.cost_to_complete_detail_id);
-    if (!detail) return;
-    ctcByCode.set(detail.cost_code_id, (ctcByCode.get(detail.cost_code_id) ?? 0) + Number(period.qty ?? 0) * Number(detail.rate ?? 0));
-  });
-
-  const snapshotByCode = new Map(snapshots.map((snapshot) => [snapshot.cost_code_id, snapshot]));
-
-  return codes.map((code) => {
-    const baselineBudget = Number(baselineByCode.get(code.id) ?? 0);
-    const budgetChanges = Number(changesByCode.get(code.id) ?? 0);
-    const currentBudget = baselineBudget + budgetChanges;
-    const actualCostToDate = Number(actualToDateByCode.get(code.id) ?? 0);
-    const actualCostThisPeriod = Number(actualThisPeriodByCode.get(code.id) ?? 0);
-    const costToComplete = Number(ctcByCode.get(code.id) ?? 0);
-    const estimateAtCompletion = code.eac_method === "Manual"
-      ? Number(code.manual_eac ?? 0)
-      : actualCostToDate + costToComplete;
-    const snapshot = snapshotByCode.get(code.id);
-    const previousBudget = snapshot ? Number(snapshot.current_budget ?? 0) : null;
-    const previousEac = snapshot ? Number(snapshot.eac ?? 0) : null;
-    const variance = currentBudget - estimateAtCompletion;
-    const variancePrevious = previousBudget == null || previousEac == null ? null : previousBudget - previousEac;
-    return {
-      ...code,
-      baseline_budget: baselineBudget,
-      budget_changes: budgetChanges,
-      current_budget: currentBudget,
-      previous_budget: previousBudget,
-      budget_movement: previousBudget == null ? null : currentBudget - previousBudget,
-      actual_cost_this_period: actualCostThisPeriod,
-      actual_cost_to_date: actualCostToDate,
-      cost_to_complete: costToComplete,
-      estimate_at_completion: estimateAtCompletion,
-      previous_estimate_at_completion: previousEac,
-      eac_movement: previousEac == null ? null : estimateAtCompletion - previousEac,
-      variance,
-      variance_previous: variancePrevious,
-      variance_movement: variancePrevious == null ? null : variance - variancePrevious,
-    };
+export function listCostCodes(projectId: string) {
+  return supabaseRequest<CostCode[]>("rpc/get_cost_codes_with_summary", {
+    method: "POST",
+    body: JSON.stringify({ p_project_id: projectId }),
   });
 }
 
