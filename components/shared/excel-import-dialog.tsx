@@ -13,6 +13,7 @@ export default function ExcelImportDialog({
   progress,
   onCancel,
   onImport,
+  showReplace = true,
 }: {
   title: string;
   rows: ExcelRow[];
@@ -24,6 +25,7 @@ export default function ExcelImportDialog({
   progress: number;
   onCancel: () => void;
   onImport: () => void;
+  showReplace?: boolean;
 }) {
   const previewRows = rows.slice(0, 100);
   return <div className="confirm-layer">
@@ -38,10 +40,10 @@ export default function ExcelImportDialog({
         {errors.length > 50 && <div>+ {errors.length - 50} more errors</div>}
       </div>}
 
-      <label style={{ display: "flex", alignItems: "flex-start", gap: 10, textAlign: "left", margin: "14px 0" }}>
+      {showReplace && <label style={{ display: "flex", alignItems: "flex-start", gap: 10, textAlign: "left", margin: "14px 0" }}>
         <input type="checkbox" checked={replace} onChange={(event) => setReplace(event.target.checked)} disabled={importing}/>
         <span><strong>Delete Existing Data</strong><br/><small>Replace the existing database rows in this screen with the rows from the Excel file.</small></span>
-      </label>
+      </label>}
 
       <div className="enterprise-table-wrap" style={{ maxHeight: 360, overflow: "auto", textAlign: "left" }}>
         <table className="enterprise-table"><thead><tr>{columns.map((column) => <th key={column}>{column}</th>)}</tr></thead><tbody>{previewRows.map((row, rowIndex) => <tr key={rowIndex}>{columns.map((column) => <td key={column}>{row[column] ?? ""}</td>)}</tr>)}</tbody></table>
