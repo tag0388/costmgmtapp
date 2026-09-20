@@ -11,10 +11,12 @@ import { listCostReportingPeriods, type CostReportingPeriod } from "@/lib/cost-r
 import { costCalculationErrorMessage, recalculateProjectCostManagement } from "@/lib/cost-calculation";
 import {
   listCostCodeTimephasing,
+  listCostCodeTimephasingChecks,
   listTimephasingCostCodes,
   setCostCodeTimephasingValue,
   timephasingErrorMessage,
   type CostCodeTimephasing,
+  type CostCodeTimephasingChecks,
   type TimephasingCostCode,
   type TimephasingValueField,
 } from "@/lib/cost-timephasing";
@@ -56,6 +58,7 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
   const [costCodes, setCostCodes] = useState<TimephasingCostCode[]>([]);
   const [periods, setPeriods] = useState<CostReportingPeriod[]>([]);
   const [stored, setStored] = useState<CostCodeTimephasing[]>([]);
+  const [checks, setChecks] = useState<CostCodeTimephasingChecks[]>([]);
    const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -69,14 +72,16 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
       const currentProject = await getProjectByPublicId(projectPublicId);
       setProject(currentProject);
       if (!currentProject) throw new Error("The selected project could not be found.");
-      const [codes, reportingPeriods, phasing] = await Promise.all([
+      const [codes, reportingPeriods, phasing, summaryChecks] = await Promise.all([
         listTimephasingCostCodes(currentProject.id),
         listCostReportingPeriods(currentProject.id),
         listCostCodeTimephasing(currentProject.id),
+        listCostCodeTimephasingChecks(currentProject.id),
       ]);
       setCostCodes(codes);
       setPeriods(reportingPeriods);
       setStored(phasing);
+      setChecks(summaryChecks);
     } catch (requestError) {
       setError(timephasingErrorMessage(requestError));
     } finally { setLoading(false); }
@@ -85,6 +90,7 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
   useEffect(() => { void refresh(); }, [refresh]);
 
   const storedByKey = useMemo(() => new Map(stored.map((row) => [`${row.cost_code_id}|${row.cost_period_id}`, row])), [stored]);
+  const checksByCode = useMemo(() => new Map(checks.map((row) => [row.cost_code_id, row])), [checks]);
   const rows = useMemo<GridRow[]>(() => {
     const output: GridRow[] = [];
     costCodes.forEach((code) => {
@@ -103,7 +109,17 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
           else values[period.id] = Number(period.status === "Future" ? storedValue?.cost_to_complete ?? 0 : storedValue?.actual_cost ?? 0);
         });
 
-        const phasedTotal = periods.reduce((sum, period) => sum + Number(values[period.id] ?? 0), 0);
+        const summary = checksByCode.get(code.id);
+        const phasedTotal = definition.type === "Baseline Budget"
+          ? Number(summary?.baseline_phased_total ?? 0)
+          : definition.type === "Current Budget"
+            ? Number(summary?.current_budget_phased_total ?? 0)
+            : Number(summary?.eac_phased_total ?? 0);
+        const check = definition.type === "Baseline Budget"
+          ? Number(summary?.baseline_phasing_check ?? definition.total)
+          : definition.type === "Current Budget"
+            ? Number(summary?.current_budget_phasing_check ?? definition.total)
+            : Number(summary?.eac_phasing_check ?? definition.total);
         output.push({
           id: `${code.id}:${definition.type}`,
           costCode: code,
@@ -113,18 +129,18 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
           finishDate: definition.finish,
           amountTotal: definition.total,
           phasedTotal,
-          check: roundMoney(definition.total - phasedTotal),
+          check,
           periodValues: values,
         });
       });
     });
     return output;
-  }, [costCodes, periods, storedByKey]);
+  }, [checksByCode, costCodes, periods, storedByKey]);
 
   const lastCalculated = useMemo(() => {
-    const latest = stored.reduce<string | null>((value, row) => !value || row.updated_at > value ? row.updated_at : value, null);
+    const latest = checks.reduce<string | null>((value, row) => !value || row.recalculated_at > value ? row.recalculated_at : value, null);
     return latest ? new Date(latest).toLocaleString() : null;
-  }, [stored]);
+  }, [checks]);
 
   function showNotice(message: string) {
     setNotice(message);
