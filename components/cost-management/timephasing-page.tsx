@@ -181,6 +181,9 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
       else patch.current_finish_date = String(value || "") || null;
     }
     await updateCostCodeFields(row.costCode.id, patch);
+    setCostCodes((current) => current.map((code) =>
+      code.id === row.costCode.id ? { ...code, ...patch } : code,
+    ));
   }
 
   async function cellChanged(event: CellValueChangedEvent<GridRow>) {
@@ -192,7 +195,6 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
       if (colId === "phasingMethod" || colId === "startDate" || colId === "finishDate") {
         await saveSetting(row, colId, event.newValue);
         showNotice("Timephasing setting updated. Recalculate to refresh derived phasing.");
-        await refresh();
         return;
       }
       if (!colId.startsWith("period:")) return;
