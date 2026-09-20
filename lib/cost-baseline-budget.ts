@@ -37,6 +37,33 @@ export function listBaselineDetails(projectId: string, costCodeId?: string) {
   );
 }
 
+export async function createBaselineDetail(projectId: string, row: Omit<BaselineDetailInput, "project_id">) {
+  const rows = await supabaseRequest<BaselineDetail[]>(`baseline_details?select=${encodeURIComponent(select)}`, {
+    method: "POST",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify({ project_id: projectId, ...row }),
+  });
+  return rows[0];
+}
+
+export async function updateBaselineDetail(id: string, patch: Partial<Omit<BaselineDetailInput, "project_id" | "cost_code_id">>) {
+  const rows = await supabaseRequest<BaselineDetail[]>(`baseline_details?id=eq.${encodeURIComponent(id)}&select=${encodeURIComponent(select)}`, {
+    method: "PATCH",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify(patch),
+  });
+  if (!rows[0]) throw new Error("The Budget Detail update was not applied.");
+  return rows[0];
+}
+
+export async function deleteBaselineDetails(ids: string[]) {
+  if (!ids.length) return;
+  await supabaseRequest(`baseline_details?id=in.(${ids.map(encodeURIComponent).join(",")})`, {
+    method: "DELETE",
+    headers: { Prefer: "return=minimal" },
+  });
+}
+
 export async function importBaselineDetails(projectId: string, rows: Omit<BaselineDetailInput, "project_id">[], replace: boolean, onProgress?: (progress: number) => void) {
   if (replace) {
     await supabaseRequest(`baseline_details?project_id=eq.${encodeURIComponent(projectId)}`, {
