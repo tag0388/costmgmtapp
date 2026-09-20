@@ -63,6 +63,10 @@ function normalizeImportDate(value: string) {
     const year = au[3].length === 2 ? 2000 + Number(au[3]) : Number(au[3]);
     return `${year}-${String(Number(au[2])).padStart(2, "0")}-${String(Number(au[1])).padStart(2, "0")}`;
   }
+  const parsed = new Date(text);
+  if (!Number.isNaN(parsed.getTime())) {
+    return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, "0")}-${String(parsed.getDate()).padStart(2, "0")}`;
+  }
   return text;
 }
 function timephasingField(type: RowType): TimephasingValueField {
