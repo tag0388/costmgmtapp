@@ -3,13 +3,18 @@ import { SupabaseRequestError, supabaseRequest } from "@/lib/supabase/browser";
 export type CostCodeFinancialSummary = {
   baseline_budget: number;
   budget_changes: number;
+  current_budget: number;
+  previous_budget: number | null;
+  budget_movement: number | null;
   actual_cost_to_date: number;
   actual_cost_in_period: number;
-  previous_budget: number | null;
-  previous_eac: number | null;
   cost_to_complete: number;
   eac: number;
+  previous_eac: number | null;
+  eac_movement: number | null;
   variance: number;
+  variance_previous: number | null;
+  variance_movement: number | null;
   recalculated_at: string | null;
 };
 
@@ -21,13 +26,18 @@ export async function getCostCodeFinancialSummary(projectId: string, costCodeId:
   return row ?? {
     baseline_budget: 0,
     budget_changes: 0,
+    current_budget: 0,
+    previous_budget: null,
+    budget_movement: null,
     actual_cost_to_date: 0,
     actual_cost_in_period: 0,
-    previous_budget: null,
-    previous_eac: null,
     cost_to_complete: 0,
     eac: 0,
+    previous_eac: null,
+    eac_movement: null,
     variance: 0,
+    variance_previous: null,
+    variance_movement: null,
     recalculated_at: null,
   };
 }
