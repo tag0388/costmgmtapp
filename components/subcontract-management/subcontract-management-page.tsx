@@ -587,6 +587,7 @@ export default function SubcontractManagementPage({
     const errors: string[] = [];
     if (rows.length && !exactColumns(rows, columns)) errors.push(`Columns must exactly match the export template: ${columns.join(", ")}`);
 
+    const importedSubcontractIds = new Set<string>();
     const importedLineItemIds = new Set<string>();
     rows.forEach((row, index) => {
       const label = `Row ${index + 2}`;
@@ -594,7 +595,10 @@ export default function SubcontractManagementPage({
         const id = String(row["Subcontract ID"] ?? "").trim();
         const name = String(row["Subcontract Name"] ?? "").trim();
         const status = String(row["Status"] ?? "") as SubcontractStatus;
+        const key = id.toLowerCase();
         if (!id) errors.push(`${label}: Subcontract ID is required.`);
+        if (key && importedSubcontractIds.has(key)) errors.push(`${label}: duplicate Subcontract ID “${id}”.`);
+        if (key) importedSubcontractIds.add(key);
         if (!name) errors.push(`${label}: Subcontract Name is required.`);
         if (!STATUSES.includes(status)) errors.push(`${label}: Status must be Active, On Hold or Cancelled.`);
       } else {
