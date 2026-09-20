@@ -122,27 +122,27 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
 
       definitions.forEach((definition) => {
         const values: Record<string, number> = {};
-        if (definition.type !== "Baseline Budget") {
+        if (definition.type === "Estimate At Completion") {
           lockedPeriods.forEach((period) => { values[period.id] = Number(actualByKey.get(`${code.id}|${period.id}`) ?? 0); });
         }
 
-        if (definition.type === "Baseline Budget") {
+        if (definition.type === "Baseline Budget" || definition.type === "Current Budget") {
+          const field = timephasingField(definition.type);
           if (definition.method === "Dates") {
             Object.assign(values, distribute(definition.total, periods.filter((period) => dateInRange(period, definition.start, definition.finish))));
           } else {
             periods.forEach((period) => {
-              values[period.id] = Number(storedByKey.get(`${code.id}|${period.id}`)?.baseline_budget ?? 0);
+              values[period.id] = Number(storedByKey.get(`${code.id}|${period.id}`)?.[field] ?? 0);
             });
           }
         } else if (definition.method === "Dates") {
           const remaining = definition.total - actualLockedTotal;
           Object.assign(values, distribute(remaining, futurePeriods.filter((period) => dateInRange(period, definition.start, definition.finish))));
-        } else if (definition.type === "Estimate At Completion" && definition.method === "Cost Details") {
+        } else if (definition.method === "Cost Details") {
           futurePeriods.forEach((period) => { values[period.id] = Number(ctcByKey.get(`${code.id}|${period.id}`) ?? 0); });
         } else {
-          const field = timephasingField(definition.type);
           futurePeriods.forEach((period) => {
-            values[period.id] = Number(storedByKey.get(`${code.id}|${period.id}`)?.[field] ?? 0);
+            values[period.id] = Number(storedByKey.get(`${code.id}|${period.id}`)?.cost_to_complete ?? 0);
           });
         }
 
@@ -205,7 +205,7 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
       if (!colId.startsWith("period:")) return;
       const periodId = colId.slice("period:".length);
       const period = periods.find((item) => item.id === periodId);
-      const editable = row.phasingMethod === "Manual" && (row.type === "Baseline Budget" || period?.status === "Future");
+      const editable = row.phasingMethod === "Manual" && (row.type !== "Estimate At Completion" || period?.status === "Future");
       if (!editable) { event.node.setDataValue(event.column, event.oldValue); return; }
       const parsed = Number(event.newValue ?? 0);
       if (!Number.isFinite(parsed) || parsed < 0) { event.node.setDataValue(event.column, event.oldValue); return; }
@@ -259,7 +259,7 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
       wrapHeaderText: true,
       autoHeaderHeight: true,
       type: "numericColumn",
-      editable: (params) => Boolean(params.data && params.data.phasingMethod === "Manual" && (params.data.type === "Baseline Budget" || period.status === "Future")),
+      editable: (params) => Boolean(params.data && params.data.phasingMethod === "Manual" && (params.data.type !== "Estimate At Completion" || period.status === "Future")),
       valueGetter: (params) => Number(params.data?.periodValues[period.id] ?? 0),
       valueSetter: (params) => {
         if (!params.data) return false;
@@ -270,7 +270,7 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
       },
       valueFormatter: (params) => money(params.value),
       cellStyle: (params): CellStyle | undefined => {
-        if (params.data?.type !== "Baseline Budget" && period.status !== "Future") return { backgroundColor: "#f1f5f9", fontWeight: 600 };
+        if (params.data?.type === "Estimate At Completion" && period.status !== "Future") return { backgroundColor: "#f1f5f9", fontWeight: 600 };
         if (params.data?.phasingMethod !== "Manual") return { backgroundColor: "#f8fafc" };
         return undefined;
       },
@@ -290,7 +290,7 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
         <span style={{ marginLeft: "auto", fontSize: 11, color: saving ? "#2563eb" : "#64748b" }}>{saving ? "Saving…" : "Auto-save enabled"}</span>
       </div>
       <div className="data-message" style={{ minHeight: 48 }}>
-        <span>Each Cost Code has three rows. For Current Budget and Estimate at Completion, Closed and Current periods always use Actual Cost and are read-only. Manual phasing is editable; Dates is calculated from Start/Finish Date; EAC Cost Details uses detailed CTC phasing.</span>
+        <span>Each Cost Code has three rows. Baseline Budget and Current Budget remain independently phased across all periods. For Estimate at Completion only, Closed and Current periods always use Actual Cost and are read-only; Future periods use Manual, Dates or Cost Details phasing.</span>
       </div>
       {error && <div className="data-message error"><strong>Unable to load Timephasing</strong><span>{error}</span></div>}
       {!error && loading && <div className="data-message"><span className="spinner"/>Loading Timephasing…</div>}
