@@ -78,7 +78,7 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
       setPeriods(reportingPeriods);
       setStored(phasing);
     } catch (requestError) {
-      setError(costCalculationErrorMessage(requestError));
+      setError(timephasingErrorMessage(requestError));
     } finally { setLoading(false); }
   }, [projectPublicId]);
 
@@ -140,7 +140,7 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
       showNotice(`Recalculated project summaries for ${result.cost_codes} Cost Codes, ${result.change_orders} Change Orders and ${result.subcontracts} Subcontracts.`);
       await refresh();
     } catch (requestError) {
-      setError(timephasingErrorMessage(requestError));
+      setError(costCalculationErrorMessage(requestError));
     } finally {
       setRecalculating(false);
     }
