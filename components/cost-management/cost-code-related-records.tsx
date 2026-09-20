@@ -410,12 +410,18 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
   const actualGridRows = useMemo<ActualGridRow[]>(() => orderedRows(actualRows.map((row) => ({ ...row, period_label: periodById.get(row.cost_period_id) ? periodLabel(periodById.get(row.cost_period_id)!) : "" }))), [actualRows, periodById]);
   const ctcGridRows = useMemo<CtcGridRow[]>(() => orderedRows(ctcRows.map((row) => ({ ...row, resource_source_label: row.resource_source ?? "User" }))), [ctcRows]);
   const rows: RelatedGridRow[] = mode === "actual" ? actualGridRows : ctcGridRows;
-  const ctcTotal = financialSummary.cost_to_complete;
+  const liveDetailCtcTotal = useMemo(
+    () => ctcGridRows.reduce((sum, row) => sum + ctcTotalForRow(row, futurePeriods), 0),
+    [ctcGridRows, futurePeriods],
+  );
+  const ctcTotal = costCode.eac_method === "Cost Details" ? liveDetailCtcTotal : financialSummary.cost_to_complete;
   const currentBudget = financialSummary.current_budget;
   const budgetMovement = financialSummary.budget_movement;
-  const eac = financialSummary.eac;
-  const eacMovement = financialSummary.eac_movement;
-  const variance = financialSummary.variance;
+  const eac = costCode.eac_method === "Cost Details"
+    ? financialSummary.actual_cost_to_date + liveDetailCtcTotal
+    : financialSummary.eac;
+  const eacMovement = financialSummary.previous_eac == null ? null : eac - financialSummary.previous_eac;
+  const variance = currentBudget - eac;
   const periodForecastTotals = useMemo(() => new Map(futurePeriods.map((period) => [
     period.id,
     ctcGridRows.reduce((sum, row) => sum + Number(row.period_qty[period.id] ?? 0) * Number(row.rate ?? 0), 0),
@@ -437,9 +443,9 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
     updated_at: "",
     period_qty: Object.fromEntries(futurePeriods.map((period) => [period.id, periodForecastTotals.get(period.id) ?? 0])),
     future_qty: 0,
-    future_cost: ctcTotal,
+    future_cost: liveDetailCtcTotal,
     summary_recalculated_at: financialSummary.recalculated_at,
-  }), [costCode.id, ctcTotal, financialSummary.recalculated_at, futurePeriods, periodForecastTotals, project.id]);
+  }), [costCode.id, financialSummary.recalculated_at, futurePeriods, liveDetailCtcTotal, periodForecastTotals, project.id]);
 
   const gridRows: RelatedGridRow[] = mode === "ctc" ? [forecastSubtotalRow, ...ctcGridRows] : actualGridRows;
 
