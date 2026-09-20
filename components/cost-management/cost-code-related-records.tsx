@@ -51,7 +51,6 @@ import { listResourceRates, RESOURCE_CATEGORIES, type ResourceCategory, type Res
 import { listProjectResourceRates, type ProjectResourceRate } from "@/lib/project-resource-rates";
 import { getCostCodeFinancialSummary, type CostCodeFinancialSummary } from "@/lib/cost-code-financial-summary";
 import { listBaselineDetails, type BaselineDetail } from "@/lib/cost-baseline-budget";
-import { listCostCodeTimephasingForCostCode, type CostCodeTimephasing } from "@/lib/cost-timephasing";
 
 const gridTheme = themeQuartz.withParams({ spacing: 4, rowHeight: 30, headerHeight: 34, fontSize: 12 });
 const ACTUAL_TYPES: TransactionType[] = ["FIN", "MAN", "ACC", "REV"];
@@ -295,7 +294,6 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
   const [projectResources, setProjectResources] = useState<ProjectResourceRate[]>([]);
   const [actualRows, setActualRows] = useState<ActualCostTransaction[]>([]);
   const [ctcRows, setCtcRows] = useState<CostToCompleteLedgerRow[]>([]);
-  const [ctcTimephasing, setCtcTimephasing] = useState<CostCodeTimephasing[]>([]);
   const [financialSummary, setFinancialSummary] = useState<CostCodeFinancialSummary>({
     baseline_budget: 0,
     budget_changes: 0,
@@ -381,12 +379,11 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
         setActualRows(await listActualCostTransactionsForCostCode(project.id, costCode.id));
         setCtcRows([]); setEnterpriseResources([]); setProjectResources([]);
       } else {
-        const [rows, eResources, pResources, summary, timephasingRows] = await Promise.all([
+        const [rows, eResources, pResources, summary] = await Promise.all([
           listCostToCompleteLedgerForCostCode(project.id, costCode.id),
           listResourceRates(project.enterprise_id),
           listProjectResourceRates(project.id),
           getCostCodeFinancialSummary(project.id, costCode.id),
-          listCostCodeTimephasingForCostCode(project.id, costCode.id),
         ]);
         const current = reportingPeriods.find((period) => period.status === "Current") ?? null;
         const allowedIds = new Set(
@@ -401,7 +398,6 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
           period_qty: Object.fromEntries(Object.entries(row.period_qty).filter(([periodId]) => allowedIds.has(periodId))),
         }));
         setFinancialSummary(summary);
-        setCtcTimephasing(timephasingRows);
         setCtcRows(sanitizedRows); setActualRows([]); setEnterpriseResources(eResources); setProjectResources(pResources);
       }
       setSelectedCount(0);
