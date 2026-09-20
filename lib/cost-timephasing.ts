@@ -49,14 +49,6 @@ export type CostCodeTimephasingChecks = {
   recalculated_at: string;
 };
 
-export type TimephasingRecalculationResult = {
-  project_id: string;
-  cost_codes: number;
-  periods: number;
-  rows_updated: number;
-  calculated_at: string;
-};
-
 const select = "id,project_id,cost_code_id,cost_period_id,baseline_budget,current_budget,cost_to_complete,actual_cost,created_at,updated_at";
 
 export function listCostCodeTimephasing(projectId: string) {
@@ -80,13 +72,6 @@ export function listTimephasingCostCodes(projectId: string) {
 
 export function listCostCodeTimephasingChecks(projectId: string) {
   return supabaseRequest<CostCodeTimephasingChecks[]>("rpc/get_cost_timephasing_checks", {
-    method: "POST",
-    body: JSON.stringify({ p_project_id: projectId }),
-  });
-}
-
-export function recalculateCostTimephasing(projectId: string) {
-  return supabaseRequest<TimephasingRecalculationResult>("rpc/recalculate_cost_timephasing", {
     method: "POST",
     body: JSON.stringify({ p_project_id: projectId }),
   });
