@@ -41,6 +41,9 @@ export type CostToCompletePeriodQty = {
 
 export type CostToCompleteLedgerRow = CostToCompleteDetail & {
   period_qty: Record<string, number>;
+  future_qty: number;
+  future_cost: number;
+  summary_recalculated_at: string | null;
 };
 
 export type CostToCompleteImportRow = Omit<CostToCompleteDetail, "id" | "project_id" | "row_order" | "created_at" | "updated_at"> & {
@@ -66,13 +69,24 @@ async function listLedger(projectId: string, costCodeId?: string): Promise<CostT
   if (!details.length) return [];
 
   const periodRows: CostToCompletePeriodQty[] = [];
+  const summaries = new Map<string, { future_qty: number; future_cost: number; recalculated_at: string | null }>();
   const batchSize = 100;
   for (let index = 0; index < details.length; index += batchSize) {
     const ids = details.slice(index, index + batchSize).map((row) => row.id).join(",");
-    const rows = await supabaseRequest<CostToCompletePeriodQty[]>(
-      `cost_to_complete_detail_periods?cost_to_complete_detail_id=in.(${ids})&select=id,cost_to_complete_detail_id,cost_period_id,qty`,
-    );
+    const [rows, summaryRows] = await Promise.all([
+      supabaseRequest<CostToCompletePeriodQty[]>(
+        `cost_to_complete_detail_periods?cost_to_complete_detail_id=in.(${ids})&select=id,cost_to_complete_detail_id,cost_period_id,qty`,
+      ),
+      supabaseRequest<Array<{ cost_to_complete_detail_id: string; future_qty: number | null; future_cost: number | null; recalculated_at: string | null }>>(
+        `cost_to_complete_detail_summaries?cost_to_complete_detail_id=in.(${ids})&select=cost_to_complete_detail_id,future_qty,future_cost,recalculated_at`,
+      ),
+    ]);
     periodRows.push(...rows);
+    summaryRows.forEach((summary) => summaries.set(summary.cost_to_complete_detail_id, {
+      future_qty: Number(summary.future_qty ?? 0),
+      future_cost: Number(summary.future_cost ?? 0),
+      recalculated_at: summary.recalculated_at,
+    }));
   }
 
   const byDetail = new Map<string, Record<string, number>>();
@@ -87,6 +101,9 @@ async function listLedger(projectId: string, costCodeId?: string): Promise<CostT
     row_order: row.row_order == null ? null : Number(row.row_order),
     ...Object.fromEntries(CTC_USER_NUMBER_FIELDS.map((field) => [field, row[field] == null ? null : Number(row[field])])),
     period_qty: byDetail.get(row.id) ?? {},
+    future_qty: summaries.get(row.id)?.future_qty ?? 0,
+    future_cost: summaries.get(row.id)?.future_cost ?? 0,
+    summary_recalculated_at: summaries.get(row.id)?.recalculated_at ?? null,
   }));
 }
 
@@ -105,7 +122,7 @@ export async function createCostToCompleteDetail(projectId: string, row: Omit<Co
     headers: { Prefer: "return=representation" },
     body: JSON.stringify(body),
   });
-  return { ...rows[0], rate: Number(rows[0].rate), ...Object.fromEntries(CTC_USER_NUMBER_FIELDS.map((field) => [field, rows[0][field] == null ? null : Number(rows[0][field])])), period_qty: {} } as CostToCompleteLedgerRow;
+  return { ...rows[0], rate: Number(rows[0].rate), ...Object.fromEntries(CTC_USER_NUMBER_FIELDS.map((field) => [field, rows[0][field] == null ? null : Number(rows[0][field])])), period_qty: {}, future_qty: 0, future_cost: 0, summary_recalculated_at: null } as CostToCompleteLedgerRow;
 }
 
 export async function createCostToCompleteDetails(projectId: string, inputRows: (Omit<CostToCompleteImportRow, "period_qty"> & { row_order?: number | null })[]) {
@@ -116,7 +133,7 @@ export async function createCostToCompleteDetails(projectId: string, inputRows: 
     headers: { Prefer: "return=representation" },
     body: JSON.stringify(body),
   });
-  return rows.map((row) => ({ ...row, rate: Number(row.rate), row_order: row.row_order == null ? null : Number(row.row_order), ...Object.fromEntries(CTC_USER_NUMBER_FIELDS.map((field) => [field, row[field] == null ? null : Number(row[field])])), period_qty: {} })) as CostToCompleteLedgerRow[];
+  return rows.map((row) => ({ ...row, rate: Number(row.rate), row_order: row.row_order == null ? null : Number(row.row_order), ...Object.fromEntries(CTC_USER_NUMBER_FIELDS.map((field) => [field, row[field] == null ? null : Number(row[field])])), period_qty: {}, future_qty: 0, future_cost: 0, summary_recalculated_at: null })) as CostToCompleteLedgerRow[];
 }
 
 export async function updateCostToCompleteDetail(id: string, patch: CostToCompleteEditablePatch) {
