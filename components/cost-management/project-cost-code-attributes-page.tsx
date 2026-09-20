@@ -19,7 +19,7 @@ import {
 const VALUE_COLUMNS = ["Value ID", "Value Name"];
 
 export default function ProjectCostCodeAttributesPage({ projectPublicId, category = "Cost Code" }: { projectPublicId: string; category?: ProjectAttributeCategory }) {
-  const recordLabel = category === "Change" ? "Change" : "Cost Code";
+  const recordLabel = category === "Change" ? "Change" : category === "Subcontract" ? "Subcontract" : "Cost Code";
   const [project, setProject] = useState<Project | null>(null);
   const [definitions, setDefinitions] = useState<ProjectAttributeDefinition[]>([]);
   const [loading, setLoading] = useState(true);
