@@ -8,10 +8,10 @@ import { AllEnterpriseModule } from "ag-grid-enterprise";
 import { getProjectByPublicId, type Project } from "@/lib/projects";
 import { updateCostCodeFields, type CostCodeInput, type TimephasingMethod } from "@/lib/cost-codes";
 import { listCostReportingPeriods, type CostReportingPeriod } from "@/lib/cost-reporting";
+import { costCalculationErrorMessage, recalculateProjectCostManagement } from "@/lib/cost-calculation";
 import {
   listCostCodeTimephasing,
   listTimephasingCostCodes,
-  recalculateCostTimephasing,
   setCostCodeTimephasingValue,
   timephasingErrorMessage,
   type CostCodeTimephasing,
@@ -78,7 +78,7 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
       setPeriods(reportingPeriods);
       setStored(phasing);
     } catch (requestError) {
-      setError(timephasingErrorMessage(requestError));
+      setError(costCalculationErrorMessage(requestError));
     } finally { setLoading(false); }
   }, [projectPublicId]);
 
@@ -136,8 +136,8 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
     setRecalculating(true);
     setError("");
     try {
-      const result = await recalculateCostTimephasing(project.id);
-      showNotice(`Recalculated ${result.rows_updated} phasing rows across ${result.cost_codes} Cost Codes.`);
+      const result = await recalculateProjectCostManagement(project.id);
+      showNotice(`Recalculated project summaries for ${result.cost_codes} Cost Codes, ${result.change_orders} Change Orders and ${result.subcontracts} Subcontracts.`);
       await refresh();
     } catch (requestError) {
       setError(timephasingErrorMessage(requestError));
