@@ -732,6 +732,36 @@ function CostCodeForm({ projectId, value, enterpriseAttributes, projectAttribute
     }
   }
 
+  if (!value) {
+    return <>
+      <button
+        type="button"
+        aria-label="Close Add Cost Code"
+        onClick={onClose}
+        style={{ position: "fixed", inset: 0, zIndex: 12020, border: 0, background: "rgba(15,23,42,.18)" }}
+      />
+      <aside style={{ position: "fixed", zIndex: 12021, top: 0, right: 0, bottom: 0, width: "min(430px, 94vw)", background: "#fff", borderLeft: "1px solid #dbe1e8", boxShadow: "-12px 0 30px rgba(15,23,42,.14)", display: "flex", flexDirection: "column" }}>
+        <div style={{ padding: "14px", borderBottom: "1px solid #e5e7eb", display: "flex", alignItems: "center", gap: 10 }}>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 700 }}>Add Cost Code</div>
+            <div style={{ fontSize: 11, color: "#64748b" }}>Enter the key setup information. Additional fields can be maintained from the Cost Codes grid.</div>
+          </div>
+          <button type="button" className="button secondary compact" style={{ marginLeft: "auto" }} onClick={onClose}>✕</button>
+        </div>
+        <form id="cost-code-form" onSubmit={save} style={{ flex: 1, overflow: "auto", padding: 16, display: "grid", alignContent: "start", gap: 14 }}>
+          {error && <div className="data-message error"><span>{error}</span></div>}
+          <label><span>Cost Code ID</span><input autoFocus value={form.cost_code_id} maxLength={30} required onChange={(e) => setForm({ ...form, cost_code_id: e.target.value })}/></label>
+          <label><span>Cost Code Name</span><input value={form.name} maxLength={100} required onChange={(e) => setForm({ ...form, name: e.target.value })}/></label>
+          <label><span>EAC Method</span><select value={form.eac_method} onChange={(e) => setForm({ ...form, eac_method: e.target.value as EacMethod })}>{EAC_METHODS.map((item) => <option key={item}>{item}</option>)}</select></label>
+        </form>
+        <div style={{ padding: 14, borderTop: "1px solid #e5e7eb", display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          <button type="button" className="button secondary" disabled={saving} onClick={onClose}>Cancel</button>
+          <button type="submit" form="cost-code-form" className="button primary" disabled={saving}>{saving ? "Saving…" : "Add Cost Code"}</button>
+        </div>
+      </aside>
+    </>;
+  }
+
   const sectionStyle = { background: "#fff", border: "1px solid #dfe4ea", borderRadius: 8, padding: 16 } as const;
   const headingStyle = { margin: "0 0 12px", fontSize: 13, fontWeight: 700, color: "#334155" } as const;
 
