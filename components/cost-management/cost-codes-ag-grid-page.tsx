@@ -643,8 +643,7 @@ function CreateCostCodeDrawer({ projectId, onClose, onSaved }: { projectId: stri
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
-  async function save(event: React.FormEvent) {
-    event.preventDefault();
+  async function save() {
     const trimmedId = costCodeId.trim();
     const trimmedName = name.trim();
     if (!trimmedId || !trimmedName) return;
@@ -667,99 +666,24 @@ function CreateCostCodeDrawer({ projectId, onClose, onSaved }: { projectId: stri
   }
 
   return <>
-    <button
-      aria-label="Close Add Cost Code"
-      onClick={() => !saving && onClose()}
-      style={{ position: "fixed", inset: 0, zIndex: 12020, border: 0, background: "rgba(15,23,42,.18)" }}
-    />
-    <aside style={{ position: "fixed", zIndex: 12021, top: 0, right: 0, bottom: 0, width: "min(430px, 94vw)", background: "#fff", borderLeft: "1px solid #dbe1e8", boxShadow: "-12px 0 30px rgba(15,23,42,.14)", display: "flex", flexDirection: "column" }}>
-      <div style={{ padding: "14px 16px", borderBottom: "1px solid #e5e7eb", display: "flex", alignItems: "center", gap: 10 }}>
-        <div>
-          <div style={{ fontSize: 16, fontWeight: 700 }}>Add Cost Code</div>
-          <div style={{ fontSize: 11, color: "#64748b" }}>Enter the key information required to create the Cost Code.</div>
+    <button className="drawer-scrim" aria-label="Close" onClick={() => !saving && onClose()}/>
+    <aside className="admin-drawer">
+      <header>
+        <div><span>New</span><h2>Cost Code</h2></div>
+        <button onClick={onClose} disabled={saving}>×</button>
+      </header>
+      <div className="drawer-body">
+        <div className="form-grid">
+          {error && <div className="form-error">{error}</div>}
+          <label className="form-field"><span>Cost Code ID <b>*</b></span><input autoFocus maxLength={30} value={costCodeId} onChange={(event) => setCostCodeId(event.target.value)}/></label>
+          <label className="form-field"><span>Cost Code Name <b>*</b></span><input maxLength={100} value={name} onChange={(event) => setName(event.target.value)}/></label>
+          <label className="form-field"><span>EAC Method <b>*</b></span><select value={eacMethod} onChange={(event) => setEacMethod(event.target.value as EacMethod)}>{EAC_METHODS.map((item) => <option key={item}>{item}</option>)}</select></label>
         </div>
-        <button type="button" className="button secondary compact" style={{ marginLeft: "auto" }} onClick={onClose} disabled={saving}>✕</button>
       </div>
-      <form id="create-cost-code-form" onSubmit={save} style={{ flex: 1, overflow: "auto", padding: 16, display: "grid", alignContent: "start", gap: 14 }}>
-        {error && <div className="data-message error"><span>{error}</span></div>}
-        <label><span>Cost Code ID</span><input value={costCodeId} maxLength={30} required autoFocus onChange={(event) => setCostCodeId(event.target.value)}/></label>
-        <label><span>Cost Code Name</span><input value={name} maxLength={100} required onChange={(event) => setName(event.target.value)}/></label>
-        <label><span>EAC Method</span><select value={eacMethod} onChange={(event) => setEacMethod(event.target.value as EacMethod)}>{EAC_METHODS.map((item) => <option key={item}>{item}</option>)}</select></label>
-      </form>
-      <div style={{ padding: 12, borderTop: "1px solid #e5e7eb", display: "flex", justifyContent: "flex-end", gap: 8 }}>
-        <button type="button" className="button secondary" disabled={saving} onClick={onClose}>Cancel</button>
-        <button type="submit" form="create-cost-code-form" className="button primary" disabled={saving || !costCodeId.trim() || !name.trim()}>{saving ? "Saving…" : "Create Cost Code"}</button>
-      </div>
-    </aside>
-  </>;
-}
-
-function NewCostCodeDrawer({ projectId, onClose, onSaved }: { projectId: string; onClose: () => void; onSaved: () => void }) {
-  const [costCodeId, setCostCodeId] = useState("");
-  const [name, setName] = useState("");
-  const [eacMethod, setEacMethod] = useState<EacMethod>("Cost Details");
-  const [error, setError] = useState("");
-  const [saving, setSaving] = useState(false);
-
-  async function save(event: React.FormEvent) {
-    event.preventDefault();
-    setSaving(true);
-    setError("");
-    try {
-      await createCostCode({
-        project_id: projectId,
-        ...blankForm,
-        cost_code_id: costCodeId.trim(),
-        name: name.trim(),
-        eac_method: eacMethod,
-      });
-      onSaved();
-    } catch (requestError) {
-      setError(costCodeErrorMessage(requestError));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return <>
-    <button
-      type="button"
-      aria-label="Close Add Cost Code"
-      onClick={onClose}
-      style={{ position: "fixed", inset: 0, zIndex: 12000, border: 0, background: "rgba(15,23,42,.18)" }}
-    />
-    <aside
-      style={{
-        position: "fixed",
-        zIndex: 12001,
-        top: 0,
-        right: 0,
-        bottom: 0,
-        width: "min(420px, 94vw)",
-        background: "#fff",
-        borderLeft: "1px solid #dbe1e8",
-        boxShadow: "-12px 0 30px rgba(15,23,42,.14)",
-        display: "flex",
-        flexDirection: "column",
-      }}
-    >
-      <div style={{ padding: "14px 16px", borderBottom: "1px solid #e5e7eb", display: "flex", alignItems: "center", gap: 10 }}>
-        <div>
-          <div style={{ fontSize: 16, fontWeight: 700 }}>Add Cost Code</div>
-          <div style={{ fontSize: 11, color: "#64748b" }}>Enter the key Cost Code information.</div>
-        </div>
-        <button type="button" className="button secondary compact" style={{ marginLeft: "auto" }} onClick={onClose}>✕</button>
-      </div>
-      <form onSubmit={save} style={{ flex: 1, overflow: "auto", padding: 16, display: "grid", alignContent: "start", gap: 14 }}>
-        {error && <div className="data-message error"><span>{error}</span></div>}
-        <label><span>Cost Code ID</span><input autoFocus value={costCodeId} maxLength={30} required onChange={(event) => setCostCodeId(event.target.value)}/></label>
-        <label><span>Cost Code Name</span><input value={name} maxLength={100} required onChange={(event) => setName(event.target.value)}/></label>
-        <label><span>EAC Method</span><select value={eacMethod} onChange={(event) => setEacMethod(event.target.value as EacMethod)}>{EAC_METHODS.map((item) => <option key={item}>{item}</option>)}</select></label>
-        <div style={{ marginTop: "auto", paddingTop: 8, display: "flex", justifyContent: "flex-end", gap: 8 }}>
-          <button type="button" className="button secondary" disabled={saving} onClick={onClose}>Cancel</button>
-          <button className="button primary" disabled={saving || !costCodeId.trim() || !name.trim()}>{saving ? "Saving…" : "Create Cost Code"}</button>
-        </div>
-      </form>
+      <footer>
+        <button className="button secondary" disabled={saving} onClick={onClose}>Cancel</button>
+        <button className="button primary" disabled={saving || !costCodeId.trim() || !name.trim()} onClick={() => void save()}>{saving ? "Saving…" : "Save"}</button>
+      </footer>
     </aside>
   </>;
 }
