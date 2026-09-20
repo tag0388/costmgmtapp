@@ -6,11 +6,12 @@ import type { CellStyle, CellValueChangedEvent, ColDef, ColGroupDef, ICellEditor
 import { themeQuartz } from "ag-grid-community";
 import { AllEnterpriseModule } from "ag-grid-enterprise";
 import { getProjectByPublicId, type Project } from "@/lib/projects";
-import { bulkUpdateCostCodeFields, updateCostCodeFields, type CostCodeInput, type TimephasingMethod } from "@/lib/cost-codes";
+import { updateCostCodeFields, type CostCodeInput, type TimephasingMethod } from "@/lib/cost-codes";
 import { listCostReportingPeriods, type CostReportingPeriod } from "@/lib/cost-reporting";
 import { costCalculationErrorMessage, recalculateProjectCostManagement } from "@/lib/cost-calculation";
 import { exportExcel, readExcel, type ExcelRow } from "@/lib/excel";
 import {
+  applyCostTimephasingUpdates,
   listCostCodeTimephasing,
   listCostCodeTimephasingChecks,
   listTimephasingCostCodes,
@@ -300,41 +301,44 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
   async function runImport() {
     if (!project || !importRows || importErrors.length) return;
     setImporting(true);
-    setProgress(0);
+    setProgress(10);
     setError("");
     try {
       const codeById = new Map(costCodes.map((code) => [code.cost_code_id.toLowerCase(), code]));
-      for (let index = 0; index < importRows.length; index += 1) {
-        const row = importRows[index];
+      const settings = [];
+      const values = [];
+
+      for (const row of importRows) {
         const code = codeById.get(String(row["Cost Code ID"]).trim().toLowerCase());
         if (!code) continue;
         const type = String(row["Type"]) as RowType;
         const method = String(row["Phasing Method"]) as TimephasingMethod;
-        const patch: Partial<Omit<CostCodeInput, "project_id" | "cost_code_id">> = {};
-        if (type === "Baseline Budget") {
-          patch.baseline_timephasing_method = method;
-          patch.baseline_start_date = normalizeImportDate(row["Start Date"]);
-          patch.baseline_finish_date = normalizeImportDate(row["Finish Date"]);
-        } else if (type === "Current Budget") {
-          patch.current_budget_timephasing_method = method;
-          patch.budget_start_date = normalizeImportDate(row["Start Date"]);
-          patch.budget_finish_date = normalizeImportDate(row["Finish Date"]);
-        } else {
-          patch.ctc_timephasing_method = method;
-          patch.current_start_date = normalizeImportDate(row["Start Date"]);
-          patch.current_finish_date = normalizeImportDate(row["Finish Date"]);
-        }
-        await updateCostCodeFields(code.id, patch);
+        settings.push({
+          cost_code_id: code.id,
+          row_type: type,
+          phasing_method: method,
+          start_date: normalizeImportDate(row["Start Date"]),
+          finish_date: normalizeImportDate(row["Finish Date"]),
+        });
+
         if (method === "Manual") {
           for (const period of periods) {
             if (type === "Estimate At Completion" && period.status !== "Future") continue;
             const raw = String(row[periodExcelColumn(period)] ?? "").trim();
             if (!raw) continue;
-            await setCostCodeTimephasingValue(project.id, code.id, period.id, timephasingField(type), parseExcelNumber(raw));
+            values.push({
+              cost_code_id: code.id,
+              cost_period_id: period.id,
+              row_type: type,
+              value: parseExcelNumber(raw),
+            });
           }
         }
-        setProgress(((index + 1) / Math.max(importRows.length, 1)) * 100);
       }
+
+      setProgress(50);
+      await applyCostTimephasingUpdates(project.id, settings, values);
+      setProgress(100);
       setImportRows(null);
       showNotice("Timephasing imported. Recalculate to refresh derived phasing.");
       await refresh();
@@ -354,32 +358,43 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
       if (bulkField === "phasingMethod" && bulkValue === "Cost Details" && selectedRows.some((row) => row.type !== "Estimate At Completion")) {
         throw new Error("Cost Details can only be applied to Estimate At Completion rows.");
       }
-      const groups = new Map<string, { ids: string[]; patch: Partial<Omit<CostCodeInput, "project_id" | "cost_code_id">> }>();
-      for (const row of selectedRows) {
-        const key = `${row.type}|${bulkField}`;
-        const current = groups.get(key) ?? { ids: [], patch: {} };
-        if (!current.ids.includes(row.costCode.id)) current.ids.push(row.costCode.id);
-        if (bulkField === "phasingMethod") {
-          const method = bulkValue as TimephasingMethod;
-          if (row.type === "Baseline Budget") current.patch.baseline_timephasing_method = method;
-          else if (row.type === "Current Budget") current.patch.current_budget_timephasing_method = method;
-          else current.patch.ctc_timephasing_method = method;
-        } else if (bulkField === "startDate") {
-          const value = bulkValue || null;
-          if (row.type === "Baseline Budget") current.patch.baseline_start_date = value;
-          else if (row.type === "Current Budget") current.patch.budget_start_date = value;
-          else current.patch.current_start_date = value;
-        } else {
-          const value = bulkValue || null;
-          if (row.type === "Baseline Budget") current.patch.baseline_finish_date = value;
-          else if (row.type === "Current Budget") current.patch.budget_finish_date = value;
-          else current.patch.current_finish_date = value;
+      const settings = selectedRows.map((row) => ({
+        cost_code_id: row.costCode.id,
+        row_type: row.type,
+        phasing_method: bulkField === "phasingMethod" ? bulkValue as TimephasingMethod : row.phasingMethod,
+        start_date: bulkField === "startDate" ? bulkValue || null : row.startDate,
+        finish_date: bulkField === "finishDate" ? bulkValue || null : row.finishDate,
+      }));
+      await applyCostTimephasingUpdates(project!.id, settings, []);
+
+      setCostCodes((current) => current.map((code) => {
+        let updated = code;
+        for (const row of selectedRows.filter((item) => item.costCode.id === code.id)) {
+          if (row.type === "Baseline Budget") {
+            updated = {
+              ...updated,
+              baseline_timephasing_method: bulkField === "phasingMethod" ? bulkValue as TimephasingMethod : updated.baseline_timephasing_method,
+              baseline_start_date: bulkField === "startDate" ? bulkValue || null : updated.baseline_start_date,
+              baseline_finish_date: bulkField === "finishDate" ? bulkValue || null : updated.baseline_finish_date,
+            };
+          } else if (row.type === "Current Budget") {
+            updated = {
+              ...updated,
+              current_budget_timephasing_method: bulkField === "phasingMethod" ? bulkValue as TimephasingMethod : updated.current_budget_timephasing_method,
+              budget_start_date: bulkField === "startDate" ? bulkValue || null : updated.budget_start_date,
+              budget_finish_date: bulkField === "finishDate" ? bulkValue || null : updated.budget_finish_date,
+            };
+          } else {
+            updated = {
+              ...updated,
+              ctc_timephasing_method: bulkField === "phasingMethod" ? bulkValue as TimephasingMethod : updated.ctc_timephasing_method,
+              current_start_date: bulkField === "startDate" ? bulkValue || null : updated.current_start_date,
+              current_finish_date: bulkField === "finishDate" ? bulkValue || null : updated.current_finish_date,
+            };
+          }
         }
-        groups.set(key, current);
-      }
-      const updated = (await Promise.all([...groups.values()].map((group) => bulkUpdateCostCodeFields(group.ids, group.patch)))).flat();
-      const updatedById = new Map(updated.map((code) => [code.id, code]));
-      setCostCodes((current) => current.map((code) => updatedById.get(code.id) ? { ...code, ...updatedById.get(code.id)! } : code));
+        return updated;
+      }));
       setBulkOpen(false);
       showNotice(`Updated ${selectedRows.length} Timephasing row${selectedRows.length === 1 ? "" : "s"}. Recalculate to refresh derived phasing.`);
     } catch (requestError) {
