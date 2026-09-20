@@ -14,6 +14,7 @@ import BaselineBudgetPage from "@/components/cost-management/baseline-budget-pag
 import ActualCostPage from "@/components/cost-management/actual-cost-page";
 import CostToCompletePage from "@/components/cost-management/cost-to-complete-page";
 import ChangeManagementPage from "@/components/change-management/change-management-page";
+import SubcontractManagementPage from "@/components/subcontract-management/subcontract-management-page";
 import { notFound } from "next/navigation";
 import { isModuleSlug, isSubmoduleSlug } from "@/lib/navigation";
 
@@ -36,5 +37,8 @@ export default async function ProjectContextPage({ params }: { params: Promise<{
   if (module === "change-management" && submodule === "change-management") return <ChangeManagementPage projectPublicId={projectPublicId}/>;
   if (module === "change-management" && submodule === "change-attributes") return <ProjectCostCodeAttributesPage projectPublicId={projectPublicId} category="Change"/>;
   if (module === "change-management" && submodule === "bulk-change-records") return <ChangeManagementPage projectPublicId={projectPublicId} bulkRecords/>;
+  if (module === "subcontract-management" && submodule === "subcontract-management") return <SubcontractManagementPage projectPublicId={projectPublicId}/>;
+  if (module === "subcontract-management" && submodule === "subcontract-attributes") return <ProjectCostCodeAttributesPage projectPublicId={projectPublicId} category="Subcontract"/>;
+  if (module === "subcontract-management" && submodule === "bulk-line-items") return <SubcontractManagementPage projectPublicId={projectPublicId} bulkLineItems/>;
   return null;
 }

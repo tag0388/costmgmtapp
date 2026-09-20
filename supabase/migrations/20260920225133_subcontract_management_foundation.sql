@@ -1,0 +1,3 @@
+-- Migration history synchronization only.
+-- The Subcontract Management foundation migration was re-applied idempotently during live validation.
+-- No schema changes are required here; the authoritative DDL is in 20260920223613_subcontract_management_foundation.sql.
