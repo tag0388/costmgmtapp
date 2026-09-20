@@ -318,11 +318,12 @@ export default function SubcontractManagementPage({
   const detailColumns = useMemo<Array<ColDef<DetailGridRow> | ColGroupDef<DetailGridRow>>>(() => {
     const eAttrs = lineItemAttributes.filter((attribute) => attribute.prefix === "E");
     const pAttrs = lineItemAttributes.filter((attribute) => attribute.prefix === "P");
+    const bulkPrefix: ColDef<DetailGridRow>[] = bulkLineItems ? [
+      { field: "subcontract_ref", headerName: "Subcontract ID", pinned: "left", minWidth: 135, filter: true, enableRowGroup: true },
+      { field: "subcontract_name", headerName: "Subcontract Name", minWidth: 190, filter: true, enableRowGroup: true },
+    ] : [];
     const fixed: ColDef<DetailGridRow>[] = [
-      ...(bulkLineItems ? [
-        { field: "subcontract_ref", headerName: "Subcontract ID", pinned: "left" as const, minWidth: 135, filter: true, enableRowGroup: true },
-        { field: "subcontract_name", headerName: "Subcontract Name", minWidth: 190, filter: true, enableRowGroup: true },
-      ] : []),
+      ...bulkPrefix,
       {
         colId: "cost_code_id",
         headerName: "Cost Code",
@@ -678,13 +679,13 @@ export default function SubcontractManagementPage({
       ...subcontractAttributes.map((attribute) => ({
         id: attribute.field,
         label: attribute.columnName,
-        kind: "select",
+        kind: "select" as const,
         values: [KEEP, CLEAR, ...attribute.definition.attribute_values.filter((value) => value.is_active).map((value) => value.value_id)],
       })),
     ];
     return [
-      ...(bulkLineItems ? [{ id: "subcontract_id", label: "Subcontract", kind: "select", values: subcontracts.map((row) => row.subcontract_id) }] : []),
-      { id: "cost_code_id", label: "Cost Code", kind: "select", values: costCodes.filter((code) => code.is_active).map((code) => code.cost_code_id) },
+      ...(bulkLineItems ? [{ id: "subcontract_id", label: "Subcontract", kind: "select" as const, values: subcontracts.map((row) => row.subcontract_id) }] : []),
+      { id: "cost_code_id", label: "Cost Code", kind: "select" as const, values: costCodes.filter((code) => code.is_active).map((code) => code.cost_code_id) },
       { id: "item", label: "Item", kind: "text" },
       { id: "description", label: "Description", kind: "text" },
       { id: "unit", label: "Unit", kind: "text" },
@@ -693,7 +694,7 @@ export default function SubcontractManagementPage({
       ...lineItemAttributes.map((attribute) => ({
         id: attribute.field,
         label: attribute.columnName,
-        kind: "select",
+        kind: "select" as const,
         values: [KEEP, CLEAR, ...attribute.definition.attribute_values.filter((value) => value.is_active).map((value) => value.value_id)],
       })),
     ];
