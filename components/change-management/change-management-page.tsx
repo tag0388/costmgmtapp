@@ -128,18 +128,25 @@ export default function ChangeManagementPage({ projectPublicId, bulkRecords = fa
       const currentProject = await getProjectByPublicId(projectPublicId);
       setProject(currentProject);
       if (!currentProject) throw new Error("The selected project could not be found.");
-      const [nextOrders, nextRecords, codes, enterpriseChangeDefs, projectChangeDefs, enterpriseLineItemDefs, projectLineItemDefs] = await Promise.all([
-        listChangeOrders(currentProject.id), listChangeRecords(currentProject.id), listCostCodes(currentProject.id),
+      const selectedOrderId = selectedOrder?.id ?? null;
+      const [nextOrders, codes, enterpriseChangeDefs, projectChangeDefs, enterpriseLineItemDefs, projectLineItemDefs] = await Promise.all([
+        listChangeOrders(currentProject.id), listCostCodes(currentProject.id),
         listEnterpriseAttributes(currentProject.enterprise_id, "Change"), listProjectAttributes(currentProject.id, "Change"),
         listEnterpriseAttributes(currentProject.enterprise_id, "Line Item"), listProjectAttributes(currentProject.id, "Line Item"),
       ]);
+      const resolvedOrder = selectedOrderId ? nextOrders.find((order) => order.id === selectedOrderId) ?? null : null;
+      const nextRecords = bulkRecords
+        ? await listChangeRecords(currentProject.id)
+        : resolvedOrder
+          ? await listChangeRecords(currentProject.id, resolvedOrder.id)
+          : [];
       setOrders(nextOrders); setRecords(nextRecords); setCostCodes(codes);
       setEnterpriseChangeAttributes(enterpriseChangeDefs); setProjectChangeAttributes(projectChangeDefs);
       setEnterpriseLineItemAttributes(enterpriseLineItemDefs); setProjectLineItemAttributes(projectLineItemDefs);
-      setSelectedOrder((current) => current ? nextOrders.find((order) => order.id === current.id) ?? null : null);
+      setSelectedOrder(resolvedOrder);
     } catch (requestError) { setError(changeManagementErrorMessage(requestError)); }
     finally { setLoading(false); }
-  }, [projectPublicId]);
+  }, [bulkRecords, projectPublicId, selectedOrder?.id]);
   // Data loading follows the established client-page pattern used by the existing cost modules.
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { void refresh(); }, [refresh]);
