@@ -52,6 +52,7 @@ type DetailGridRow = SubcontractDetail & {
 };
 type SubcontractForm = SubcontractInput;
 type DetailForm = Omit<SubcontractDetailInput, "row_order">;
+type BulkChoice = { id: string; label: string; kind: "select" | "text" | "number"; values?: string[] };
 
 const blankSubcontract: SubcontractForm = { subcontract_id: "", subcontract_name: "", status: "Active" };
 const blankDetail: DetailForm = { subcontract_id: "", cost_code_id: "", item: "", description: null, unit: null, qty: 0, rate: 0 };
@@ -671,7 +672,7 @@ export default function SubcontractManagementPage({
     }
   }
 
-  const bulkChoices = useMemo(() => {
+  const bulkChoices = useMemo<BulkChoice[]>(() => {
     if (!showingDetails) return [
       { id: "status", label: "Status", kind: "select", values: STATUSES as string[] },
       ...subcontractAttributes.map((attribute) => ({
