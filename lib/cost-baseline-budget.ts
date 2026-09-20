@@ -30,9 +30,10 @@ const select = [
   ...BASELINE_PROJECT_ATTRIBUTE_FIELDS,
 ].join(",");
 
-export function listBaselineDetails(projectId: string) {
+export function listBaselineDetails(projectId: string, costCodeId?: string) {
+  const costCodeFilter = costCodeId ? `&cost_code_id=eq.${encodeURIComponent(costCodeId)}` : "";
   return supabaseRequest<BaselineDetail[]>(
-    `baseline_details?project_id=eq.${encodeURIComponent(projectId)}&select=${encodeURIComponent(select)}&order=cost_code_id.asc,created_at.asc`,
+    `baseline_details?project_id=eq.${encodeURIComponent(projectId)}${costCodeFilter}&select=${encodeURIComponent(select)}&order=cost_code_id.asc,created_at.asc`,
   );
 }
 
