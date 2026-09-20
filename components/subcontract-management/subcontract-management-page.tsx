@@ -220,6 +220,7 @@ export default function SubcontractManagementPage({
   const subcontractByRef = useMemo(() => new Map(subcontracts.map((row) => [row.subcontract_id.toLowerCase(), row])), [subcontracts]);
   const codeById = useMemo(() => new Map(costCodes.map((row) => [row.id, row])), [costCodes]);
   const codeByRef = useMemo(() => new Map(costCodes.map((row) => [row.cost_code_id.toLowerCase(), row])), [costCodes]);
+  const detailById = useMemo(() => new Map(details.map((row) => [row.id, row])), [details]);
 
   const detailRows = useMemo<DetailGridRow[]>(() => details
     .filter((row) => bulkLineItems || !selectedSubcontract || row.subcontract_id === selectedSubcontract.id)
@@ -512,6 +513,11 @@ export default function SubcontractManagementPage({
         const value = Number(event.newValue);
         if (!Number.isFinite(value) || value < 0) throw new Error(`${colId === "qty" ? "Qty" : "Rate"} must be zero or greater.`);
         patch[colId] = value;
+        const liveQty = colId === "qty" ? value : Number(event.data.qty ?? 0);
+        const liveRate = colId === "rate" ? value : Number(event.data.rate ?? 0);
+        event.data.cost = liveQty * liveRate;
+        setDetails((current) => current.map((row) => row.id === event.data!.id ? { ...row, [colId]: value, cost: liveQty * liveRate } : row));
+        event.api.refreshCells({ rowNodes: [event.node], columns: ["cost"], force: true });
       } else if (colId.startsWith("e_attribute_") || colId.startsWith("p_attribute_")) {
         (patch as SubcontractAttributes)[colId as SubcontractAttributeField] = event.data[colId as SubcontractAttributeField] ?? null;
       } else return;
@@ -531,7 +537,7 @@ export default function SubcontractManagementPage({
     ...subcontractAttributes.map((attribute) => `${attribute.prefix}${String(attribute.definition.attribute_number).padStart(2, "0")} - ${attribute.definition.name}`),
   ], [subcontractAttributes]);
   const detailExcelColumns = useMemo(() => [
-    "Subcontract ID", "Cost Code ID", "Item", "Description", "Unit", "Qty", "Rate",
+    "Line Item ID", "Subcontract ID", "Cost Code ID", "Item", "Description", "Unit", "Qty", "Rate",
     ...lineItemAttributes.map((attribute) => `${attribute.prefix}${String(attribute.definition.attribute_number).padStart(2, "0")} - ${attribute.definition.name}`),
   ], [lineItemAttributes]);
   const excelColumns = showingDetails ? detailExcelColumns : subcontractExcelColumns;
@@ -539,6 +545,7 @@ export default function SubcontractManagementPage({
   function exportRows() {
     const exportData: ExcelRow[] = showingDetails
       ? detailRows.map((row) => ({
+          "Line Item ID": row.id,
           "Subcontract ID": row.subcontract_ref,
           "Cost Code ID": row.cost_code_ref,
           "Item": row.item,
@@ -571,6 +578,7 @@ export default function SubcontractManagementPage({
     const errors: string[] = [];
     if (rows.length && !exactColumns(rows, columns)) errors.push(`Columns must exactly match the export template: ${columns.join(", ")}`);
 
+    const importedLineItemIds = new Set<string>();
     rows.forEach((row, index) => {
       const label = `Row ${index + 2}`;
       if (mode === "subcontracts") {
@@ -581,9 +589,14 @@ export default function SubcontractManagementPage({
         if (!name) errors.push(`${label}: Subcontract Name is required.`);
         if (!STATUSES.includes(status)) errors.push(`${label}: Status must be Active, On Hold or Cancelled.`);
       } else {
+        const lineItemId = String(row["Line Item ID"] ?? "").trim();
+        if (lineItemId && importedLineItemIds.has(lineItemId)) errors.push(`${label}: duplicate Line Item ID “${lineItemId}”.`);
+        if (lineItemId) importedLineItemIds.add(lineItemId);
         const subcontract = subcontractByRef.get(String(row["Subcontract ID"] ?? "").trim().toLowerCase());
         const code = codeByRef.get(String(row["Cost Code ID"] ?? "").trim().toLowerCase());
+        if (lineItemId && !detailById.has(lineItemId)) errors.push(`${label}: Line Item ID does not exist in the current import scope.`);
         if (!subcontract) errors.push(`${label}: Subcontract ID does not exist in this project.`);
+        if (!bulkLineItems && selectedSubcontract && subcontract && subcontract.id !== selectedSubcontract.id) errors.push(`${label}: Subcontract ID must remain ${selectedSubcontract.subcontract_id} in this related Line Items workspace. Use Bulk Subcontract Line Items to move rows between Subcontracts.`);
         if (!code) errors.push(`${label}: Cost Code ID does not exist in this project.`);
         if (!String(row["Item"] ?? "").trim()) errors.push(`${label}: Item is required.`);
         const qty = numberValue(row["Qty"]);
@@ -638,14 +651,17 @@ export default function SubcontractManagementPage({
       } else {
         const scopeIds = bulkLineItems ? details.map((row) => row.id) : details.filter((row) => row.subcontract_id === selectedSubcontract?.id).map((row) => row.id);
         if (replace && scopeIds.length) await deleteSubcontractDetails(scopeIds);
-        const rowsToCreate: SubcontractDetailInput[] = importRows.map((row, index) => {
+
+        const rowsToCreate: SubcontractDetailInput[] = [];
+        const rowsToUpdate: Array<{ id: string; input: SubcontractDetailInput }> = [];
+        importRows.forEach((row, index) => {
           const subcontract = subcontractByRef.get(String(row["Subcontract ID"]).trim().toLowerCase())!;
           const code = codeByRef.get(String(row["Cost Code ID"]).trim().toLowerCase())!;
           const attrs = Object.fromEntries(lineItemAttributes.map((attribute) => [
             attribute.field,
             String(row[`${attribute.prefix}${String(attribute.definition.attribute_number).padStart(2, "0")} - ${attribute.definition.name}`] ?? "").trim() || null,
           ]));
-          return {
+          const input: SubcontractDetailInput = {
             subcontract_id: subcontract.id,
             cost_code_id: code.id,
             item: String(row["Item"]).trim(),
@@ -656,11 +672,24 @@ export default function SubcontractManagementPage({
             row_order: (index + 1) * 1000,
             ...attrs,
           };
+          const lineItemId = String(row["Line Item ID"] ?? "").trim();
+          if (!replace && lineItemId) rowsToUpdate.push({ id: lineItemId, input });
+          else rowsToCreate.push(input);
         });
+
+        const totalWork = Math.max(rowsToUpdate.length + rowsToCreate.length, 1);
+        let completed = 0;
+        for (const row of rowsToUpdate) {
+          await updateSubcontractDetail(row.id, row.input);
+          completed += 1;
+          setProgress((completed / totalWork) * 100);
+        }
         const batchSize = 100;
         for (let index = 0; index < rowsToCreate.length; index += batchSize) {
-          await createSubcontractDetails(project.id, rowsToCreate.slice(index, index + batchSize));
-          setProgress((Math.min(index + batchSize, rowsToCreate.length) / Math.max(rowsToCreate.length, 1)) * 100);
+          const batch = rowsToCreate.slice(index, index + batchSize);
+          await createSubcontractDetails(project.id, batch);
+          completed += batch.length;
+          setProgress((completed / totalWork) * 100);
         }
       }
       setImportRows(null);
