@@ -95,11 +95,12 @@ function orderedRows<T extends { id: string; row_order: number | null; created_a
   const fallback = new Map(byCreated.map((row, index) => [row.id, (index + 1) * 1000]));
   return [...input].sort((a, b) => (a.row_order ?? fallback.get(a.id) ?? 0) - (b.row_order ?? fallback.get(b.id) ?? 0) || a.id.localeCompare(b.id));
 }
-function ctcQtyForRow(row: CostToCompleteLedgerRow | undefined, _futurePeriods: CostReportingPeriod[]) {
-  return Number(row?.future_qty ?? 0);
+function ctcQtyForRow(row: CostToCompleteLedgerRow | undefined, futurePeriods: CostReportingPeriod[]) {
+  if (!row) return 0;
+  return futurePeriods.reduce((sum, period) => sum + Number(row.period_qty[period.id] ?? 0), 0);
 }
-function ctcTotalForRow(row: CostToCompleteLedgerRow | undefined, _futurePeriods: CostReportingPeriod[]) {
-  return Number(row?.future_cost ?? 0);
+function ctcTotalForRow(row: CostToCompleteLedgerRow | undefined, futurePeriods: CostReportingPeriod[]) {
+  return ctcQtyForRow(row, futurePeriods) * Number(row?.rate ?? 0);
 }
 function summaryNumber(value: number | null, decimals = 2) {
   return value == null ? "—" : numberFormat(value, decimals);

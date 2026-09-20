@@ -627,12 +627,88 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
         </div>
       </div>
     </div>}
-    {editing && <CostCodeForm projectId={project!.id} value={editing === "new" ? null : editing} enterpriseAttributes={activeEnterprise} projectAttributes={activeProject} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); showNotice("Cost code saved."); void refresh(); }}/>} 
+    {editing === "new" && project && <NewCostCodeDrawer projectId={project.id} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); showNotice("Cost code created."); void refresh(); }}/>}
+    {editing && editing !== "new" && <CostCodeForm projectId={project!.id} value={editing} enterpriseAttributes={activeEnterprise} projectAttributes={activeProject} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); showNotice("Cost code saved."); void refresh(); }}/>} 
     {bulkOpen && project && <BulkAttributeDialog selected={selected} enterpriseAttributes={activeEnterprise} projectAttributes={activeProject} onClose={() => setBulkOpen(false)} onSaved={() => { setBulkOpen(false); showNotice("Selected cost codes updated."); void refresh(); }}/>} 
     {importRows && <ExcelImportDialog title="Import Cost Codes" rows={importRows} columns={excelColumns} errors={importErrors} replace={replace} setReplace={setReplace} importing={importing} progress={progress} onCancel={() => !importing && setImportRows(null)} onImport={() => void runImport()}/>} 
     {showSaveView && <SaveViewDialog initialName={viewName} onClose={() => setShowSaveView(false)} onSave={(name) => { setViewName(name); window.setTimeout(() => void saveView(), 0); }}/>} 
     {notice && <div className="admin-toast">{notice}</div>}
   </div>;
+}
+
+function NewCostCodeDrawer({ projectId, onClose, onSaved }: { projectId: string; onClose: () => void; onSaved: () => void }) {
+  const [costCodeId, setCostCodeId] = useState("");
+  const [name, setName] = useState("");
+  const [eacMethod, setEacMethod] = useState<EacMethod>("Cost Details");
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  async function save(event: React.FormEvent) {
+    event.preventDefault();
+    setSaving(true);
+    setError("");
+    try {
+      await createCostCode({
+        project_id: projectId,
+        ...blankForm,
+        cost_code_id: costCodeId.trim(),
+        name: name.trim(),
+        eac_method: eacMethod,
+      });
+      onSaved();
+    } catch (requestError) {
+      setError(costCodeErrorMessage(requestError));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return <>
+    <button
+      type="button"
+      aria-label="Close Add Cost Code"
+      onClick={() => !saving && onClose()}
+      style={{ position: "fixed", inset: 0, zIndex: 12020, border: 0, background: "rgba(15,23,42,.18)" }}
+    />
+    <aside
+      role="dialog"
+      aria-modal="true"
+      aria-label="Add Cost Code"
+      style={{
+        position: "fixed",
+        zIndex: 12021,
+        top: 0,
+        right: 0,
+        bottom: 0,
+        width: "min(420px, 94vw)",
+        background: "#fff",
+        borderLeft: "1px solid #dbe1e8",
+        boxShadow: "-12px 0 30px rgba(15,23,42,.14)",
+        display: "flex",
+        flexDirection: "column",
+      }}
+    >
+      <div style={{ padding: "14px 16px", borderBottom: "1px solid #e5e7eb", display: "flex", alignItems: "center", gap: 10 }}>
+        <div>
+          <div style={{ fontSize: 16, fontWeight: 700 }}>Add Cost Code</div>
+          <div style={{ fontSize: 11, color: "#64748b" }}>Enter the key setup information.</div>
+        </div>
+        <button type="button" className="button secondary compact" style={{ marginLeft: "auto" }} disabled={saving} onClick={onClose}>✕</button>
+      </div>
+      <form onSubmit={save} style={{ flex: 1, overflow: "auto", padding: 16, display: "flex", flexDirection: "column" }}>
+        {error && <div className="data-message error" style={{ marginBottom: 12 }}><span>{error}</span></div>}
+        <div style={{ display: "grid", gap: 14 }}>
+          <label><span>Cost Code ID</span><input autoFocus value={costCodeId} maxLength={30} required onChange={(event) => setCostCodeId(event.target.value)}/></label>
+          <label><span>Cost Code Name</span><input value={name} maxLength={100} required onChange={(event) => setName(event.target.value)}/></label>
+          <label><span>EAC Method</span><select value={eacMethod} onChange={(event) => setEacMethod(event.target.value as EacMethod)}>{EAC_METHODS.map((method) => <option key={method}>{method}</option>)}</select></label>
+        </div>
+        <div style={{ marginTop: "auto", paddingTop: 18, display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          <button type="button" className="button secondary" disabled={saving} onClick={onClose}>Cancel</button>
+          <button type="submit" className="button primary" disabled={saving || !costCodeId.trim() || !name.trim()}>{saving ? "Saving…" : "Add Cost Code"}</button>
+        </div>
+      </form>
+    </aside>
+  </>;
 }
 
 function CostCodeForm({ projectId, value, enterpriseAttributes, projectAttributes, onClose, onSaved }: { projectId: string; value: CostCode | null; enterpriseAttributes: EnterpriseAttributeDefinition[]; projectAttributes: ProjectAttributeDefinition[]; onClose: () => void; onSaved: () => void }) {
