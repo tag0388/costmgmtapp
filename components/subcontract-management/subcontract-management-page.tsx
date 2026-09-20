@@ -501,6 +501,9 @@ export default function SubcontractManagementPage({
   async function detailChanged(event: CellValueChangedEvent<DetailGridRow>) {
     if (!event.data || event.newValue === event.oldValue) return;
     const colId = event.column.getColId();
+    const previousQty = colId === "qty" ? Number(event.oldValue ?? 0) : Number(event.data.qty ?? 0);
+    const previousRate = colId === "rate" ? Number(event.oldValue ?? 0) : Number(event.data.rate ?? 0);
+    const previousCost = previousQty * previousRate;
     setSaving(true);
     setError("");
     try {
@@ -526,6 +529,12 @@ export default function SubcontractManagementPage({
       event.api.refreshCells({ rowNodes: [event.node], columns: ["cost", "qty", "rate"], force: true });
     } catch (requestError) {
       event.node.setDataValue(event.column, event.oldValue);
+      if (colId === "qty" || colId === "rate") {
+        setDetails((current) => current.map((row) => row.id === event.data!.id
+          ? { ...row, qty: previousQty, rate: previousRate, cost: previousCost }
+          : row));
+        event.api.refreshCells({ rowNodes: [event.node], columns: ["cost", "qty", "rate"], force: true });
+      }
       setError(subcontractManagementErrorMessage(requestError));
     } finally {
       setSaving(false);
