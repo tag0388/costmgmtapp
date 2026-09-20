@@ -235,12 +235,12 @@ function CostCodeBudgetDetailsWorkspace({ project, costCode, onClose }: { projec
     setLoading(true);
     setError("");
     void Promise.all([
-      listBaselineDetails(project.id),
+      listBaselineDetails(project.id, costCode.id),
       getCostCodeFinancialSummary(project.id, costCode.id),
     ])
       .then(([details, summary]) => {
         if (!active) return;
-        setRows(details.filter((row) => row.cost_code_id === costCode.id));
+        setRows(details);
         setBaselineBudget(summary.baseline_budget);
       })
       .catch((requestError) => { if (active) setError(requestError instanceof Error ? requestError.message : "Unable to load Budget Details."); })
