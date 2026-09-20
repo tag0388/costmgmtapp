@@ -6,6 +6,7 @@ export type ProjectCostRecalculationResult = {
   change_orders: number;
   subcontracts: number;
   ctc_details: number;
+  timephasing_checks: number;
   timephasing: {
     project_id: string;
     cost_codes: number;
