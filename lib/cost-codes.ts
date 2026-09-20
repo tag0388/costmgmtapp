@@ -55,6 +55,7 @@ export type CostCode = {
   variance?: number;
   variance_previous?: number | null;
   variance_movement?: number | null;
+  financial_recalculated_at?: string | null;
   is_active: boolean;
   created_at: string;
   updated_at: string;
