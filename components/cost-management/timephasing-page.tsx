@@ -6,15 +6,18 @@ import type { CellStyle, CellValueChangedEvent, ColDef, ColGroupDef, ICellEditor
 import { themeQuartz } from "ag-grid-community";
 import { AllEnterpriseModule } from "ag-grid-enterprise";
 import { getProjectByPublicId, type Project } from "@/lib/projects";
-import { listCostCodes, updateCostCodeFields, type CostCode, type CostCodeInput, type TimephasingMethod } from "@/lib/cost-codes";
+import { updateCostCodeFields, type CostCodeInput, type TimephasingMethod } from "@/lib/cost-codes";
 import { listCostReportingPeriods, type CostReportingPeriod } from "@/lib/cost-reporting";
+import { costCalculationErrorMessage, recalculateProjectCostManagement } from "@/lib/cost-calculation";
 import {
-  listActualCostPeriodAmounts,
   listCostCodeTimephasing,
-  listCostToCompletePeriodAmounts,
+  listCostCodeTimephasingChecks,
+  listTimephasingCostCodes,
   setCostCodeTimephasingValue,
   timephasingErrorMessage,
   type CostCodeTimephasing,
+  type CostCodeTimephasingChecks,
+  type TimephasingCostCode,
   type TimephasingValueField,
 } from "@/lib/cost-timephasing";
 
@@ -24,7 +27,7 @@ type RowType = "Baseline Budget" | "Current Budget" | "Estimate At Completion";
 
 type GridRow = {
   id: string;
-  costCode: CostCode;
+  costCode: TimephasingCostCode;
   type: RowType;
   phasingMethod: TimephasingMethod;
   startDate: string | null;
@@ -43,25 +46,7 @@ function dateLabel(value: string) {
   const [year, month, day] = value.split("-");
   return year && month && day ? `${day}/${month}/${year.slice(-2)}` : value;
 }
-function dateInRange(period: CostReportingPeriod, start: string | null, finish: string | null) {
-  if (!start || !finish) return false;
-  return period.end_date >= start && period.start_date <= finish;
-}
 function roundMoney(value: number) { return Math.round((value + Number.EPSILON) * 100) / 100; }
-function distribute(total: number, periods: CostReportingPeriod[]) {
-  const output: Record<string, number> = {};
-  if (!periods.length) return output;
-  const cents = Math.round(total * 100);
-  const each = Math.trunc(cents / periods.length);
-  let remainder = cents - each * periods.length;
-  periods.forEach((period) => {
-    const extra = remainder > 0 ? 1 : remainder < 0 ? -1 : 0;
-    if (remainder > 0) remainder -= 1;
-    if (remainder < 0) remainder += 1;
-    output[period.id] = (each + extra) / 100;
-  });
-  return output;
-}
 function timephasingField(type: RowType): TimephasingValueField {
   if (type === "Baseline Budget") return "baseline_budget";
   if (type === "Current Budget") return "current_budget";
@@ -70,14 +55,14 @@ function timephasingField(type: RowType): TimephasingValueField {
 
 export default function CostTimephasingPage({ projectPublicId }: { projectPublicId: string }) {
   const [project, setProject] = useState<Project | null>(null);
-  const [costCodes, setCostCodes] = useState<CostCode[]>([]);
+  const [costCodes, setCostCodes] = useState<TimephasingCostCode[]>([]);
   const [periods, setPeriods] = useState<CostReportingPeriod[]>([]);
   const [stored, setStored] = useState<CostCodeTimephasing[]>([]);
-  const [actualByKey, setActualByKey] = useState<Map<string, number>>(new Map());
-  const [ctcByKey, setCtcByKey] = useState<Map<string, number>>(new Map());
-  const [search, setSearch] = useState("");
+  const [checks, setChecks] = useState<CostCodeTimephasingChecks[]>([]);
+   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [recalculating, setRecalculating] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -87,18 +72,16 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
       const currentProject = await getProjectByPublicId(projectPublicId);
       setProject(currentProject);
       if (!currentProject) throw new Error("The selected project could not be found.");
-      const [codes, reportingPeriods, phasing, actuals, ctc] = await Promise.all([
-        listCostCodes(currentProject.id),
+      const [codes, reportingPeriods, phasing, summaryChecks] = await Promise.all([
+        listTimephasingCostCodes(currentProject.id),
         listCostReportingPeriods(currentProject.id),
         listCostCodeTimephasing(currentProject.id),
-        listActualCostPeriodAmounts(currentProject.id),
-        listCostToCompletePeriodAmounts(currentProject.id),
+        listCostCodeTimephasingChecks(currentProject.id),
       ]);
       setCostCodes(codes);
       setPeriods(reportingPeriods);
       setStored(phasing);
-      setActualByKey(new Map(actuals.map((row) => [`${row.cost_code_id}|${row.cost_period_id}`, row.amount])));
-      setCtcByKey(new Map(ctc.map((row) => [`${row.cost_code_id}|${row.cost_period_id}`, row.amount])));
+      setChecks(summaryChecks);
     } catch (requestError) {
       setError(timephasingErrorMessage(requestError));
     } finally { setLoading(false); }
@@ -107,46 +90,36 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
   useEffect(() => { void refresh(); }, [refresh]);
 
   const storedByKey = useMemo(() => new Map(stored.map((row) => [`${row.cost_code_id}|${row.cost_period_id}`, row])), [stored]);
-  const lockedPeriods = useMemo(() => periods.filter((period) => period.status === "Closed" || period.status === "Current"), [periods]);
-  const futurePeriods = useMemo(() => periods.filter((period) => period.status === "Future"), [periods]);
-
+  const checksByCode = useMemo(() => new Map(checks.map((row) => [row.cost_code_id, row])), [checks]);
   const rows = useMemo<GridRow[]>(() => {
     const output: GridRow[] = [];
     costCodes.forEach((code) => {
-      const actualLockedTotal = lockedPeriods.reduce((sum, period) => sum + Number(actualByKey.get(`${code.id}|${period.id}`) ?? 0), 0);
       const definitions: Array<{ type: RowType; method: TimephasingMethod; start: string | null; finish: string | null; total: number }> = [
-        { type: "Baseline Budget", method: code.baseline_timephasing_method, start: code.baseline_start_date ?? null, finish: code.baseline_finish_date ?? null, total: Number(code.baseline_budget ?? 0) },
-        { type: "Current Budget", method: code.current_budget_timephasing_method, start: code.budget_start_date ?? null, finish: code.budget_finish_date ?? null, total: Number(code.current_budget ?? 0) },
-        { type: "Estimate At Completion", method: code.ctc_timephasing_method, start: code.current_start_date ?? null, finish: code.current_finish_date ?? null, total: Number(code.estimate_at_completion ?? 0) },
+        { type: "Baseline Budget", method: code.baseline_timephasing_method, start: code.baseline_start_date, finish: code.baseline_finish_date, total: Number(code.baseline_budget ?? 0) },
+        { type: "Current Budget", method: code.current_budget_timephasing_method, start: code.budget_start_date, finish: code.budget_finish_date, total: Number(code.current_budget ?? 0) },
+        { type: "Estimate At Completion", method: code.ctc_timephasing_method, start: code.current_start_date, finish: code.current_finish_date, total: Number(code.estimate_at_completion ?? 0) },
       ];
 
       definitions.forEach((definition) => {
         const values: Record<string, number> = {};
-        if (definition.type === "Estimate At Completion") {
-          lockedPeriods.forEach((period) => { values[period.id] = Number(actualByKey.get(`${code.id}|${period.id}`) ?? 0); });
-        }
+        periods.forEach((period) => {
+          const storedValue = storedByKey.get(`${code.id}|${period.id}`);
+          if (definition.type === "Baseline Budget") values[period.id] = Number(storedValue?.baseline_budget ?? 0);
+          else if (definition.type === "Current Budget") values[period.id] = Number(storedValue?.current_budget ?? 0);
+          else values[period.id] = Number(period.status === "Future" ? storedValue?.cost_to_complete ?? 0 : storedValue?.actual_cost ?? 0);
+        });
 
-        if (definition.type === "Baseline Budget" || definition.type === "Current Budget") {
-          const field = timephasingField(definition.type);
-          if (definition.method === "Dates") {
-            Object.assign(values, distribute(definition.total, periods.filter((period) => dateInRange(period, definition.start, definition.finish))));
-          } else {
-            periods.forEach((period) => {
-              values[period.id] = Number(storedByKey.get(`${code.id}|${period.id}`)?.[field] ?? 0);
-            });
-          }
-        } else if (definition.method === "Dates") {
-          const remaining = definition.total - actualLockedTotal;
-          Object.assign(values, distribute(remaining, futurePeriods.filter((period) => dateInRange(period, definition.start, definition.finish))));
-        } else if (definition.method === "Cost Details") {
-          futurePeriods.forEach((period) => { values[period.id] = Number(ctcByKey.get(`${code.id}|${period.id}`) ?? 0); });
-        } else {
-          futurePeriods.forEach((period) => {
-            values[period.id] = Number(storedByKey.get(`${code.id}|${period.id}`)?.cost_to_complete ?? 0);
-          });
-        }
-
-        const phasedTotal = periods.reduce((sum, period) => sum + Number(values[period.id] ?? 0), 0);
+        const summary = checksByCode.get(code.id);
+        const phasedTotal = definition.type === "Baseline Budget"
+          ? Number(summary?.baseline_phased_total ?? 0)
+          : definition.type === "Current Budget"
+            ? Number(summary?.current_budget_phased_total ?? 0)
+            : Number(summary?.eac_phased_total ?? 0);
+        const check = definition.type === "Baseline Budget"
+          ? Number(summary?.baseline_phasing_check ?? definition.total)
+          : definition.type === "Current Budget"
+            ? Number(summary?.current_budget_phasing_check ?? definition.total)
+            : Number(summary?.eac_phasing_check ?? definition.total);
         output.push({
           id: `${code.id}:${definition.type}`,
           costCode: code,
@@ -156,17 +129,37 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
           finishDate: definition.finish,
           amountTotal: definition.total,
           phasedTotal,
-          check: roundMoney(definition.total - phasedTotal),
+          check,
           periodValues: values,
         });
       });
     });
     return output;
-  }, [actualByKey, costCodes, ctcByKey, futurePeriods, lockedPeriods, periods, storedByKey]);
+  }, [checksByCode, costCodes, periods, storedByKey]);
+
+  const lastCalculated = useMemo(() => {
+    const latest = checks.reduce<string | null>((value, row) => !value || row.recalculated_at > value ? row.recalculated_at : value, null);
+    return latest ? new Date(latest).toLocaleString() : null;
+  }, [checks]);
 
   function showNotice(message: string) {
     setNotice(message);
     window.setTimeout(() => setNotice(""), 3000);
+  }
+
+  async function recalculate() {
+    if (!project) return;
+    setRecalculating(true);
+    setError("");
+    try {
+      const result = await recalculateProjectCostManagement(project.id);
+      showNotice(`Recalculated project summaries for ${result.cost_codes} Cost Codes, ${result.change_orders} Change Orders and ${result.subcontracts} Subcontracts.`);
+      await refresh();
+    } catch (requestError) {
+      setError(costCalculationErrorMessage(requestError));
+    } finally {
+      setRecalculating(false);
+    }
   }
 
   async function saveSetting(row: GridRow, colId: string, value: unknown) {
@@ -198,7 +191,7 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
     try {
       if (colId === "phasingMethod" || colId === "startDate" || colId === "finishDate") {
         await saveSetting(row, colId, event.newValue);
-        showNotice("Timephasing setting updated.");
+        showNotice("Timephasing setting updated. Recalculate to refresh derived phasing.");
         await refresh();
         return;
       }
@@ -286,11 +279,14 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
     <section className="enterprise-grid-card">
       <div className="enterprise-toolbar" style={{ flexWrap: "wrap" }}>
         <label className="enterprise-search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search Cost Codes or types…"/></label>
-        <button className="button secondary" disabled={loading || saving} onClick={() => void refresh()}>↻ Refresh</button>
-        <span style={{ marginLeft: "auto", fontSize: 11, color: saving ? "#2563eb" : "#64748b" }}>{saving ? "Saving…" : "Auto-save enabled"}</span>
+        <button className="button secondary" disabled={loading || saving || recalculating} onClick={() => void refresh()}>↻ Refresh</button>
+        <button className="button primary" disabled={!project || loading || saving || recalculating || !periods.length} onClick={() => void recalculate()}>{recalculating ? "Recalculating…" : "↻ Recalculate"}</button>
+        <span style={{ marginLeft: "auto", fontSize: 11, color: saving || recalculating ? "#2563eb" : "#64748b" }}>
+          {saving ? "Saving…" : recalculating ? "Calculating in Supabase…" : lastCalculated ? `Last calculated: ${lastCalculated}` : "Not calculated yet"}
+        </span>
       </div>
       <div className="data-message" style={{ minHeight: 48 }}>
-        <span>Each Cost Code has three rows. Baseline Budget and Current Budget remain independently phased across all periods. For Estimate at Completion only, Closed and Current periods always use Actual Cost and are read-only; Future periods use Manual, Dates or Cost Details phasing.</span>
+        <span>Each Cost Code has three rows. Recalculate runs the heavy project aggregation in Supabase and refreshes the stored period summaries. Manual Baseline and Current Budget values are preserved. For Estimate at Completion only, Closed and Current periods use Actual Cost and are read-only; Future periods use Manual, Dates or Cost Details phasing.</span>
       </div>
       {error && <div className="data-message error"><strong>Unable to load Timephasing</strong><span>{error}</span></div>}
       {!error && loading && <div className="data-message"><span className="spinner"/>Loading Timephasing…</div>}

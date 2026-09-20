@@ -50,22 +50,10 @@ export type ChangeRecordInput = Pick<ChangeRecord, "change_order_id" | "item" | 
 const orderSelect = ["id", "project_id", "change_order_id", "description", "status", "created_by", "created_at", "updated_at", ...CHANGE_ATTRIBUTE_FIELDS].join(",");
 const recordSelect = ["id", "project_id", "change_order_id", "item", "description", "change_to_budget", "change_to_eac", "cost_code_id", "created_by", "created_at", "updated_at", "row_order", ...CHANGE_ATTRIBUTE_FIELDS].join(",");
 
-export async function listChangeOrders(projectId: string) {
-  const [orders, records] = await Promise.all([
-    supabaseRequest<Omit<ChangeOrder, "change_to_budget" | "change_to_eac" | "record_count">[]>(`change_orders?project_id=eq.${encodeURIComponent(projectId)}&select=${encodeURIComponent(orderSelect)}&order=change_order_id.asc`),
-    supabaseRequest<Array<{ change_order_id: string; change_to_budget: number; change_to_eac: number }>>(`change_records?project_id=eq.${encodeURIComponent(projectId)}&select=change_order_id,change_to_budget,change_to_eac`),
-  ]);
-  const totals = new Map<string, { budget: number; eac: number; count: number }>();
-  records.forEach((record) => {
-    const total = totals.get(record.change_order_id) ?? { budget: 0, eac: 0, count: 0 };
-    total.budget += Number(record.change_to_budget ?? 0);
-    total.eac += Number(record.change_to_eac ?? 0);
-    total.count += 1;
-    totals.set(record.change_order_id, total);
-  });
-  return orders.map((order) => {
-    const total = totals.get(order.id) ?? { budget: 0, eac: 0, count: 0 };
-    return { ...order, change_to_budget: total.budget, change_to_eac: total.eac, record_count: total.count };
+export function listChangeOrders(projectId: string) {
+  return supabaseRequest<ChangeOrder[]>("rpc/get_change_orders_with_summary", {
+    method: "POST",
+    body: JSON.stringify({ p_project_id: projectId }),
   });
 }
 

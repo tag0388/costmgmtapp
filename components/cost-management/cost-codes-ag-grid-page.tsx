@@ -12,6 +12,7 @@ import { listEnterpriseAttributes, EnterpriseAttributeDefinition } from "@/lib/e
 import { deleteProjectGridView, gridViewErrorMessage, listProjectGridViews, ProjectGridView, saveProjectGridView } from "@/lib/grid-views";
 import { listProjectAttributes, ProjectAttributeDefinition } from "@/lib/project-scope-attributes";
 import { getProjectByPublicId, Project } from "@/lib/projects";
+import { costCalculationErrorMessage, recalculateProjectCostManagement } from "@/lib/cost-calculation";
 import {
   bulkUpdateCostCodeAttributes,
   CostCode,
@@ -115,6 +116,7 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
   const [deleteTarget, setDeleteTarget] = useState<CostCode | null>(null);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [recalculating, setRecalculating] = useState(false);
   const [bulkOpen, setBulkOpen] = useState(false);
   const [importRows, setImportRows] = useState<ExcelRow[] | null>(null);
   const [importErrors, setImportErrors] = useState<string[]>([]);
@@ -313,6 +315,20 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
   ], [activeEnterprise, activeProject]);
 
   function showNotice(message: string) { setNotice(message); window.setTimeout(() => setNotice(""), 3500); }
+  async function recalculate() {
+    if (!project) return;
+    setRecalculating(true);
+    setError("");
+    try {
+      const result = await recalculateProjectCostManagement(project.id);
+      showNotice(`Recalculated project summaries for ${result.cost_codes} Cost Codes, ${result.change_orders} Change Orders and ${result.subcontracts} Subcontracts.`);
+      await refresh();
+    } catch (requestError) {
+      setError(costCalculationErrorMessage(requestError));
+    } finally {
+      setRecalculating(false);
+    }
+  }
   function onGridReady(event: GridReadyEvent<CostCode>) { setGridApi(event.api); }
   function onSelectionChanged(event: SelectionChangedEvent<CostCode>) { setSelected(event.api.getSelectedRows().map((row) => row.id)); }
   function setAllGroupsOpen(open: boolean) {
@@ -321,23 +337,6 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
     ["cc-general", "cc-settings", "cc-enterprise", "cc-project", "cc-amounts"].forEach((groupId) => gridApi.setColumnGroupOpened(groupId, open));
   }
 
-  function withRecalculatedEac(row: CostCode, patch: Partial<CostCode>): CostCode {
-    const next = { ...row, ...patch };
-    const estimateAtCompletion = next.eac_method === "Manual"
-      ? Number(next.manual_eac ?? 0)
-      : Number(next.actual_cost_to_date ?? 0) + Number(next.cost_to_complete ?? 0);
-    const currentBudget = Number(next.current_budget ?? 0);
-    const previousEac = next.previous_estimate_at_completion ?? null;
-    const previousVariance = next.variance_previous ?? null;
-    const variance = currentBudget - estimateAtCompletion;
-    return {
-      ...next,
-      estimate_at_completion: estimateAtCompletion,
-      eac_movement: previousEac == null ? null : estimateAtCompletion - previousEac,
-      variance,
-      variance_movement: previousVariance == null ? null : variance - previousVariance,
-    };
-  }
 
   async function cellChanged(event: CellValueChangedEvent<CostCode>) {
     if (event.newValue === event.oldValue || !event.data) return;
@@ -359,16 +358,18 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
         if (!EAC_METHODS.includes(eacMethod)) { event.node.setDataValue(event.column, event.oldValue); return; }
         const saved = await updateCostCodeFields(row.id, { eac_method: eacMethod });
         setCostCodes((current) => current.map((item) => item.id === row.id
-          ? withRecalculatedEac(item, { eac_method: saved.eac_method, manual_eac: saved.manual_eac })
+          ? { ...item, eac_method: saved.eac_method, manual_eac: saved.manual_eac }
           : item));
+        showNotice("EAC Method saved. Recalculate to refresh financial totals.");
       } else if (colId === "estimate_at_completion") {
         if (row.eac_method !== "Manual") { event.node.setDataValue(event.column, event.oldValue); return; }
         const manualEac = Number(event.newValue ?? 0);
         if (!Number.isFinite(manualEac)) { event.node.setDataValue(event.column, event.oldValue); return; }
         const saved = await updateCostCodeFields(row.id, { manual_eac: manualEac });
         setCostCodes((current) => current.map((item) => item.id === row.id
-          ? withRecalculatedEac(item, { manual_eac: saved.manual_eac })
+          ? { ...item, manual_eac: saved.manual_eac }
           : item));
+        showNotice("Manual EAC saved. Recalculate to refresh financial totals.");
       } else if (colId.startsWith("e_attribute_") || colId.startsWith("p_attribute_")) {
         const field = colId as EnterpriseCostCodeAttributeField | ProjectCostCodeAttributeField;
         await updateCostCodeFields(row.id, { [field]: row[field] ?? null } as Partial<Omit<CostCodeInput, "project_id" | "cost_code_id">>);
@@ -565,7 +566,8 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
         <button className="button secondary" onClick={exportRows}>⇩ Export</button>
         <button className="button secondary" onClick={() => fileRef.current?.click()}>⇧ Import</button>
         <input ref={fileRef} hidden type="file" accept=".xlsx,.xls" onChange={(event) => void chooseImport(event.target.files?.[0])}/>
-        <button className="button secondary" onClick={() => void refresh()} disabled={loading}>↻ Refresh</button>
+        <button className="button secondary" onClick={() => void refresh()} disabled={loading || recalculating}>↻ Refresh</button>
+        <button className="button primary" onClick={() => void recalculate()} disabled={!project || loading || recalculating}>{recalculating ? "Recalculating…" : "↻ Recalculate"}</button>
         <button className="button danger" disabled={!selected.length} onClick={() => setBulkDeleteOpen(true)}>Delete{selected.length ? ` (${selected.length})` : ""}</button>
       </div>
       <div className="data-message" style={{ minHeight: 48 }}><span>Right-click a column header to show, hide or pin columns. Drag columns into the grouping bar above the table to create multiple group levels. Expand/Collapse becomes available when grouping is active. Cost Code Name, Description, EAC Method and attributes can be edited directly in the grid. Estimate at Completion is editable only when EAC Method is Manual. Use the related-records icon in Actions to open related records for that Cost Code.</span></div>
