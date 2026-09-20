@@ -25,7 +25,6 @@ type AttributeDefinition = EnterpriseAttributeDefinition | ProjectAttributeDefin
 type ActiveAttribute = { prefix: "E"|"P"; field: SubcontractAttributeField; definition: AttributeDefinition; columnName: string };
 type DetailRow = SubcontractDetail & { subcontract_ref: string; subcontract_name: string; cost_code_ref: string };
 type BulkChoice = { id: string; label: string; values?: string[]; kind?: "number"|"text" };
-const KEEP = "__keep__";
 const CLEAR = "__clear__";
 
 function attributeField(prefix: "E"|"P", slot: number) {
@@ -248,7 +247,7 @@ export default function SubcontractManagementPage({ projectPublicId, bulkLineIte
           const value = parseNumber(event.newValue);
           if (!Number.isFinite(value) || value < 0) throw new Error(`${colId === "qty" ? "Qty" : "Rate"} must be zero or greater.`);
           patch[colId] = value;
-        } else if (colId.startsWith("e_attribute_") || colId.startsWith("p_attribute_")) patch[colId] = row[colId] ?? null;
+        } else if (colId.startsWith("e_attribute_") || colId.startsWith("p_attribute_")) patch[colId] = row[colId as SubcontractAttributeField] ?? null;
         else return;
         const saved = await updateSubcontractDetail(row.id, patch);
         setDetails((current) => current.map((x) => x.id === row.id ? saved : x));
