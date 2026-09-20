@@ -51,6 +51,7 @@ import { listResourceRates, RESOURCE_CATEGORIES, type ResourceCategory, type Res
 import { listProjectResourceRates, type ProjectResourceRate } from "@/lib/project-resource-rates";
 import { getCostCodeFinancialSummary, type CostCodeFinancialSummary } from "@/lib/cost-code-financial-summary";
 import { listBaselineDetails, type BaselineDetail } from "@/lib/cost-baseline-budget";
+import { listCostCodeTimephasingForCostCode, type CostCodeTimephasing } from "@/lib/cost-timephasing";
 
 const gridTheme = themeQuartz.withParams({ spacing: 4, rowHeight: 30, headerHeight: 34, fontSize: 12 });
 const ACTUAL_TYPES: TransactionType[] = ["FIN", "MAN", "ACC", "REV"];
@@ -94,12 +95,11 @@ function orderedRows<T extends { id: string; row_order: number | null; created_a
   const fallback = new Map(byCreated.map((row, index) => [row.id, (index + 1) * 1000]));
   return [...input].sort((a, b) => (a.row_order ?? fallback.get(a.id) ?? 0) - (b.row_order ?? fallback.get(b.id) ?? 0) || a.id.localeCompare(b.id));
 }
-function ctcQtyForRow(row: CostToCompleteLedgerRow | undefined, futurePeriods: CostReportingPeriod[]) {
-  if (!row) return 0;
-  return futurePeriods.reduce((sum, period) => sum + Number(row.period_qty[period.id] ?? 0), 0);
+function ctcQtyForRow(row: CostToCompleteLedgerRow | undefined, _futurePeriods: CostReportingPeriod[]) {
+  return Number(row?.future_qty ?? 0);
 }
-function ctcTotalForRow(row: CostToCompleteLedgerRow | undefined, futurePeriods: CostReportingPeriod[]) {
-  return ctcQtyForRow(row, futurePeriods) * Number(row?.rate ?? 0);
+function ctcTotalForRow(row: CostToCompleteLedgerRow | undefined, _futurePeriods: CostReportingPeriod[]) {
+  return Number(row?.future_cost ?? 0);
 }
 function summaryNumber(value: number | null, decimals = 2) {
   return value == null ? "—" : numberFormat(value, decimals);
@@ -228,13 +228,21 @@ function CostCodeBudgetDetailsWorkspace({ project, costCode, onClose }: { projec
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [baselineBudget, setBaselineBudget] = useState(0);
 
   useEffect(() => {
     let active = true;
     setLoading(true);
     setError("");
-    void listBaselineDetails(project.id)
-      .then((details) => { if (active) setRows(details.filter((row) => row.cost_code_id === costCode.id)); })
+    void Promise.all([
+      listBaselineDetails(project.id),
+      getCostCodeFinancialSummary(project.id, costCode.id),
+    ])
+      .then(([details, summary]) => {
+        if (!active) return;
+        setRows(details.filter((row) => row.cost_code_id === costCode.id));
+        setBaselineBudget(summary.baseline_budget);
+      })
       .catch((requestError) => { if (active) setError(requestError instanceof Error ? requestError.message : "Unable to load Budget Details."); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
@@ -246,7 +254,7 @@ function CostCodeBudgetDetailsWorkspace({ project, costCode, onClose }: { projec
     return rows.filter((row) => [row.item_no, row.item_description, row.unit, row.qty, row.rate, row.total].some((value) => String(value ?? "").toLowerCase().includes(q)));
   }, [rows, search]);
 
-  const total = useMemo(() => rows.reduce((sum, row) => sum + Number(row.total ?? 0), 0), [rows]);
+
   const columns = useMemo<ColDef<BaselineDetail>[]>(() => [
     { field: "item_no", headerName: "Item No", minWidth: 120, filter: true },
     { field: "item_description", headerName: "Item Description", minWidth: 280, filter: true },
@@ -272,7 +280,7 @@ function CostCodeBudgetDetailsWorkspace({ project, costCode, onClose }: { projec
           <AgGridReact<BaselineDetail> theme={gridTheme} rowData={filtered} columnDefs={columns} defaultColDef={{ sortable: true, resizable: true, filter: true, minWidth: 90 }} getRowId={(params) => params.data.id} grandTotalRow="pinnedBottom" animateRows/>
         </div>
       </AgGridProvider>}
-      <div className="grid-footer"><span>{rows.length} Budget Detail row{rows.length === 1 ? "" : "s"}</span><span>Baseline Budget: {numberFormat(total, 2)}</span></div>
+      <div className="grid-footer"><span>{rows.length} Budget Detail row{rows.length === 1 ? "" : "s"}</span><span>Baseline Budget: {numberFormat(baselineBudget, 2)}</span></div>
     </section>
   </div>;
 }
@@ -286,7 +294,24 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
   const [projectResources, setProjectResources] = useState<ProjectResourceRate[]>([]);
   const [actualRows, setActualRows] = useState<ActualCostTransaction[]>([]);
   const [ctcRows, setCtcRows] = useState<CostToCompleteLedgerRow[]>([]);
-  const [financialSummary, setFinancialSummary] = useState<CostCodeFinancialSummary>({ baseline_budget: 0, budget_changes: 0, actual_cost_to_date: 0, actual_cost_in_period: 0, previous_budget: null, previous_eac: null });
+  const [ctcTimephasing, setCtcTimephasing] = useState<CostCodeTimephasing[]>([]);
+  const [financialSummary, setFinancialSummary] = useState<CostCodeFinancialSummary>({
+    baseline_budget: 0,
+    budget_changes: 0,
+    current_budget: 0,
+    previous_budget: null,
+    budget_movement: null,
+    actual_cost_to_date: 0,
+    actual_cost_in_period: 0,
+    cost_to_complete: 0,
+    eac: 0,
+    previous_eac: null,
+    eac_movement: null,
+    variance: 0,
+    variance_previous: null,
+    variance_movement: null,
+    recalculated_at: null,
+  });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -355,11 +380,12 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
         setActualRows(await listActualCostTransactionsForCostCode(project.id, costCode.id));
         setCtcRows([]); setEnterpriseResources([]); setProjectResources([]);
       } else {
-        const [rows, eResources, pResources, summary] = await Promise.all([
+        const [rows, eResources, pResources, summary, timephasingRows] = await Promise.all([
           listCostToCompleteLedgerForCostCode(project.id, costCode.id),
           listResourceRates(project.enterprise_id),
           listProjectResourceRates(project.id),
           getCostCodeFinancialSummary(project.id, costCode.id),
+          listCostCodeTimephasingForCostCode(project.id, costCode.id),
         ]);
         const current = reportingPeriods.find((period) => period.status === "Current") ?? null;
         const allowedIds = new Set(
@@ -374,6 +400,7 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
           period_qty: Object.fromEntries(Object.entries(row.period_qty).filter(([periodId]) => allowedIds.has(periodId))),
         }));
         setFinancialSummary(summary);
+        setCtcTimephasing(timephasingRows);
         setCtcRows(sanitizedRows); setActualRows([]); setEnterpriseResources(eResources); setProjectResources(pResources);
       }
       setSelectedCount(0);
@@ -386,16 +413,16 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
   const actualGridRows = useMemo<ActualGridRow[]>(() => orderedRows(actualRows.map((row) => ({ ...row, period_label: periodById.get(row.cost_period_id) ? periodLabel(periodById.get(row.cost_period_id)!) : "" }))), [actualRows, periodById]);
   const ctcGridRows = useMemo<CtcGridRow[]>(() => orderedRows(ctcRows.map((row) => ({ ...row, resource_source_label: row.resource_source ?? "User" }))), [ctcRows]);
   const rows: RelatedGridRow[] = mode === "actual" ? actualGridRows : ctcGridRows;
-  const ctcTotal = useMemo(() => ctcGridRows.reduce((sum, row) => sum + ctcTotalForRow(row, futurePeriods), 0), [ctcGridRows, futurePeriods]);
-  const currentBudget = financialSummary.baseline_budget + financialSummary.budget_changes;
-  const budgetMovement = financialSummary.previous_budget == null ? null : currentBudget - financialSummary.previous_budget;
-  const eac = financialSummary.actual_cost_to_date + ctcTotal;
-  const eacMovement = financialSummary.previous_eac == null ? null : eac - financialSummary.previous_eac;
-  const variance = currentBudget - eac;
-  const periodForecastTotals = useMemo(() => new Map(futurePeriods.map((period) => [
-    period.id,
-    ctcGridRows.reduce((sum, row) => sum + Number(row.period_qty[period.id] ?? 0) * Number(row.rate ?? 0), 0),
-  ])), [ctcGridRows, futurePeriods]);
+  const ctcTotal = financialSummary.cost_to_complete;
+  const currentBudget = financialSummary.current_budget;
+  const budgetMovement = financialSummary.budget_movement;
+  const eac = financialSummary.eac;
+  const eacMovement = financialSummary.eac_movement;
+  const variance = financialSummary.variance;
+  const periodForecastTotals = useMemo(
+    () => new Map(ctcTimephasing.map((row) => [row.cost_period_id, Number(row.cost_to_complete ?? 0)])),
+    [ctcTimephasing],
+  );
   const forecastSubtotalRow = useMemo<CtcGridRow>(() => ({
     id: "__forecast_subtotal__",
     project_id: project.id,
@@ -412,7 +439,10 @@ function RelatedRecordsWorkspace({ project, costCode, mode, onClose }: { project
     created_at: "",
     updated_at: "",
     period_qty: Object.fromEntries(futurePeriods.map((period) => [period.id, periodForecastTotals.get(period.id) ?? 0])),
-  }), [costCode.id, futurePeriods, periodForecastTotals, project.id]);
+    future_qty: 0,
+    future_cost: ctcTotal,
+    summary_recalculated_at: financialSummary.recalculated_at,
+  }), [costCode.id, ctcTotal, financialSummary.recalculated_at, futurePeriods, periodForecastTotals, project.id]);
 
   const gridRows: RelatedGridRow[] = mode === "ctc" ? [forecastSubtotalRow, ...ctcGridRows] : actualGridRows;
 
