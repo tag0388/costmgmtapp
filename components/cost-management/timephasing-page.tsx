@@ -20,6 +20,8 @@ import {
   type CostCodeTimephasing,
   type CostCodeTimephasingChecks,
   type TimephasingCostCode,
+  type TimephasingPeriodValueUpdate,
+  type TimephasingSettingUpdate,
   type TimephasingValueField,
 } from "@/lib/cost-timephasing";
 
@@ -235,7 +237,7 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
       const editable = row.phasingMethod === "Manual" && (row.type !== "Estimate At Completion" || period?.status === "Future");
       if (!editable) { event.node.setDataValue(event.column, event.oldValue); return; }
       const parsed = Number(event.newValue ?? 0);
-      if (!Number.isFinite(parsed) || (row.type !== "Estimate At Completion" && parsed < 0)) { event.node.setDataValue(event.column, event.oldValue); return; }
+      if (!Number.isFinite(parsed)) { event.node.setDataValue(event.column, event.oldValue); return; }
       const saved = await setCostCodeTimephasingValue(project.id, row.costCode.id, periodId, timephasingField(row.type), parsed);
       setStored((current) => [...current.filter((item) => !(item.cost_code_id === saved.cost_code_id && item.cost_period_id === saved.cost_period_id)), saved]);
     } catch (requestError) {
@@ -286,12 +288,14 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
       const finishDate = normalizeImportDate(row["Finish Date"]);
       if (row["Start Date"] && !/^\d{4}-\d{2}-\d{2}$/.test(startDate ?? "")) errors.push(`${label}: Start Date must be a valid date.`);
       if (row["Finish Date"] && !/^\d{4}-\d{2}-\d{2}$/.test(finishDate ?? "")) errors.push(`${label}: Finish Date must be a valid date.`);
+      if (method === "Dates" && (!startDate || !finishDate)) errors.push(`${label}: Dates phasing requires both Start Date and Finish Date.`);
+      if (startDate && finishDate && startDate > finishDate) errors.push(`${label}: Finish Date cannot be before Start Date.`);
       periods.forEach((period) => {
         const raw = String(row[periodExcelColumn(period)] ?? "").trim();
         if (!raw) return;
         const number = parseExcelNumber(raw);
         if (!Number.isFinite(number)) errors.push(`${label}: ${periodExcelColumn(period)} must be numeric.`);
-        if (type !== "Estimate At Completion" && number < 0) errors.push(`${label}: Baseline/Current Budget phasing cannot be negative.`);
+
       });
     });
     setImportRows(imported);
@@ -305,12 +309,12 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
     setError("");
     try {
       const codeById = new Map(costCodes.map((code) => [code.cost_code_id.toLowerCase(), code]));
-      const settings = [];
-      const values = [];
+      const settings: TimephasingSettingUpdate[] = [];
+      const values: TimephasingPeriodValueUpdate[] = [];
 
-      for (const row of importRows) {
+      importRows.forEach((row) => {
         const code = codeById.get(String(row["Cost Code ID"]).trim().toLowerCase());
-        if (!code) continue;
+        if (!code) return;
         const type = String(row["Type"]) as RowType;
         const method = String(row["Phasing Method"]) as TimephasingMethod;
         settings.push({
@@ -322,25 +326,25 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
         });
 
         if (method === "Manual") {
-          for (const period of periods) {
-            if (type === "Estimate At Completion" && period.status !== "Future") continue;
+          periods.forEach((period) => {
+            if (type === "Estimate At Completion" && period.status !== "Future") return;
             const raw = String(row[periodExcelColumn(period)] ?? "").trim();
-            if (!raw) continue;
+            if (!raw) return;
             values.push({
               cost_code_id: code.id,
               cost_period_id: period.id,
               row_type: type,
               value: parseExcelNumber(raw),
             });
-          }
+          });
         }
-      }
+      });
 
-      setProgress(50);
-      await applyCostTimephasingUpdates(project.id, settings, values);
+      setProgress(55);
+      const result = await applyCostTimephasingUpdates(project.id, settings, values);
       setProgress(100);
       setImportRows(null);
-      showNotice("Timephasing imported. Recalculate to refresh derived phasing.");
+      showNotice(`Imported ${result.settings_updated} Timephasing settings and ${result.period_values_updated} Manual period values. Recalculate to refresh derived phasing.`);
       await refresh();
     } catch (requestError) {
       setError(timephasingErrorMessage(requestError));
@@ -351,52 +355,38 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
 
   async function applyBulkEdit() {
     const selectedRows = rows.filter((row) => selectedRowIds.includes(row.id));
-    if (!selectedRows.length) return;
+    if (!project || !selectedRows.length) return;
     setSaving(true);
     setError("");
     try {
       if (bulkField === "phasingMethod" && bulkValue === "Cost Details" && selectedRows.some((row) => row.type !== "Estimate At Completion")) {
         throw new Error("Cost Details can only be applied to Estimate At Completion rows.");
       }
-      const settings = selectedRows.map((row) => ({
+
+      const settings: TimephasingSettingUpdate[] = selectedRows.map((row) => ({
         cost_code_id: row.costCode.id,
         row_type: row.type,
         phasing_method: bulkField === "phasingMethod" ? bulkValue as TimephasingMethod : row.phasingMethod,
         start_date: bulkField === "startDate" ? bulkValue || null : row.startDate,
         finish_date: bulkField === "finishDate" ? bulkValue || null : row.finishDate,
       }));
-      await applyCostTimephasingUpdates(project!.id, settings, []);
 
+      const result = await applyCostTimephasingUpdates(project.id, settings, []);
       setCostCodes((current) => current.map((code) => {
-        let updated = code;
-        for (const row of selectedRows.filter((item) => item.costCode.id === code.id)) {
-          if (row.type === "Baseline Budget") {
-            updated = {
-              ...updated,
-              baseline_timephasing_method: bulkField === "phasingMethod" ? bulkValue as TimephasingMethod : updated.baseline_timephasing_method,
-              baseline_start_date: bulkField === "startDate" ? bulkValue || null : updated.baseline_start_date,
-              baseline_finish_date: bulkField === "finishDate" ? bulkValue || null : updated.baseline_finish_date,
-            };
-          } else if (row.type === "Current Budget") {
-            updated = {
-              ...updated,
-              current_budget_timephasing_method: bulkField === "phasingMethod" ? bulkValue as TimephasingMethod : updated.current_budget_timephasing_method,
-              budget_start_date: bulkField === "startDate" ? bulkValue || null : updated.budget_start_date,
-              budget_finish_date: bulkField === "finishDate" ? bulkValue || null : updated.budget_finish_date,
-            };
+        let next = { ...code };
+        settings.filter((setting) => setting.cost_code_id === code.id).forEach((setting) => {
+          if (setting.row_type === "Baseline Budget") {
+            next = { ...next, baseline_timephasing_method: setting.phasing_method, baseline_start_date: setting.start_date, baseline_finish_date: setting.finish_date };
+          } else if (setting.row_type === "Current Budget") {
+            next = { ...next, current_budget_timephasing_method: setting.phasing_method, budget_start_date: setting.start_date, budget_finish_date: setting.finish_date };
           } else {
-            updated = {
-              ...updated,
-              ctc_timephasing_method: bulkField === "phasingMethod" ? bulkValue as TimephasingMethod : updated.ctc_timephasing_method,
-              current_start_date: bulkField === "startDate" ? bulkValue || null : updated.current_start_date,
-              current_finish_date: bulkField === "finishDate" ? bulkValue || null : updated.current_finish_date,
-            };
+            next = { ...next, ctc_timephasing_method: setting.phasing_method, current_start_date: setting.start_date, current_finish_date: setting.finish_date };
           }
-        }
-        return updated;
+        });
+        return next;
       }));
       setBulkOpen(false);
-      showNotice(`Updated ${selectedRows.length} Timephasing row${selectedRows.length === 1 ? "" : "s"}. Recalculate to refresh derived phasing.`);
+      showNotice(`Updated ${result.settings_updated} Timephasing rows. Recalculate to refresh derived phasing.`);
     } catch (requestError) {
       setError(timephasingErrorMessage(requestError));
     } finally {
@@ -451,7 +441,7 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
       valueSetter: (params) => {
         if (!params.data) return false;
         const parsed = Number(String(params.newValue ?? "0").replace(/,/g, ""));
-        if (!Number.isFinite(parsed) || (params.data.type !== "Estimate At Completion" && parsed < 0)) return false;
+        if (!Number.isFinite(parsed)) return false;
         params.data.periodValues[period.id] = parsed;
         return true;
       },
