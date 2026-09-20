@@ -54,6 +54,12 @@ export function listCostCodeTimephasing(projectId: string) {
   );
 }
 
+export function listCostCodeTimephasingForCostCode(projectId: string, costCodeId: string) {
+  return supabaseRequest<CostCodeTimephasing[]>(
+    `cost_code_timephasing?project_id=eq.${encodeURIComponent(projectId)}&cost_code_id=eq.${encodeURIComponent(costCodeId)}&select=${encodeURIComponent(select)}`,
+  );
+}
+
 export function listTimephasingCostCodes(projectId: string) {
   return supabaseRequest<TimephasingCostCode[]>("rpc/get_cost_timephasing_cost_codes", {
     method: "POST",
