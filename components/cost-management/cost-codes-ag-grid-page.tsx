@@ -676,6 +676,30 @@ function CostCodeForm({ projectId, value, enterpriseAttributes, projectAttribute
   const sectionStyle = { background: "#fff", border: "1px solid #dfe4ea", borderRadius: 8, padding: 16 } as const;
   const headingStyle = { margin: "0 0 12px", fontSize: 13, fontWeight: 700, color: "#334155" } as const;
 
+  if (!value) {
+    return <div style={{ position: "fixed", inset: 0, zIndex: 12000 }}>
+      <button type="button" aria-label="Close Add Cost Code" onClick={onClose} style={{ position: "absolute", inset: 0, border: 0, background: "rgba(15,23,42,.22)", cursor: "default" }}/>
+      <aside role="dialog" aria-modal="true" aria-label="Add Cost Code" style={{ position: "absolute", top: 0, right: 0, bottom: 0, width: "min(430px, 94vw)", background: "#fff", boxShadow: "-12px 0 30px rgba(15,23,42,.18)", display: "flex", flexDirection: "column" }}>
+        <header style={{ minHeight: 58, borderBottom: "1px solid #dfe4ea", display: "flex", alignItems: "center", padding: "8px 14px", gap: 10 }}>
+          <div><div style={{ fontSize: 16, fontWeight: 700 }}>Add Cost Code</div><div style={{ fontSize: 11, color: "#64748b" }}>Enter the key Cost Code setup information.</div></div>
+          <button type="button" className="button secondary compact" style={{ marginLeft: "auto" }} onClick={onClose}>Close</button>
+        </header>
+        <form id="cost-code-form" onSubmit={save} style={{ flex: 1, overflow: "auto", padding: 16 }}>
+          {error && <div className="data-message error" style={{ marginBottom: 12 }}><span>{error}</span></div>}
+          <div style={{ display: "grid", gap: 14 }}>
+            <label><span>Cost Code ID</span><input autoFocus value={form.cost_code_id} maxLength={30} required onChange={(e) => setForm({ ...form, cost_code_id: e.target.value })}/></label>
+            <label><span>Cost Code Name</span><input value={form.name} maxLength={100} required onChange={(e) => setForm({ ...form, name: e.target.value })}/></label>
+            <label><span>EAC Method</span><select value={form.eac_method} onChange={(e) => setForm({ ...form, eac_method: e.target.value as EacMethod })}>{EAC_METHODS.map((item) => <option key={item}>{item}</option>)}</select></label>
+          </div>
+        </form>
+        <footer style={{ borderTop: "1px solid #dfe4ea", padding: 12, display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          <button type="button" className="button secondary" onClick={onClose}>Cancel</button>
+          <button type="submit" form="cost-code-form" className="button primary" disabled={saving}>{saving ? "Saving…" : "Add Cost Code"}</button>
+        </footer>
+      </aside>
+    </div>;
+  }
+
   return <div style={{ position: "fixed", inset: 0, zIndex: 12000, background: "#f5f7fa", display: "flex", flexDirection: "column" }}>
     <header style={{ minHeight: 58, background: "#fff", borderBottom: "1px solid #dfe4ea", display: "flex", alignItems: "center", gap: 12, padding: "7px 14px" }}>
       <button type="button" className="button secondary compact" onClick={onClose}>← Back</button>
