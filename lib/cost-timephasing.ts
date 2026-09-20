@@ -38,6 +38,17 @@ export type TimephasingCostCode = {
 
 export type TimephasingValueField = "baseline_budget" | "current_budget" | "cost_to_complete";
 
+export type CostCodeTimephasingChecks = {
+  cost_code_id: string;
+  baseline_phased_total: number;
+  baseline_phasing_check: number;
+  current_budget_phased_total: number;
+  current_budget_phasing_check: number;
+  eac_phased_total: number;
+  eac_phasing_check: number;
+  recalculated_at: string;
+};
+
 export type TimephasingRecalculationResult = {
   project_id: string;
   cost_codes: number;
@@ -62,6 +73,13 @@ export function listCostCodeTimephasingForCostCode(projectId: string, costCodeId
 
 export function listTimephasingCostCodes(projectId: string) {
   return supabaseRequest<TimephasingCostCode[]>("rpc/get_cost_timephasing_cost_codes", {
+    method: "POST",
+    body: JSON.stringify({ p_project_id: projectId }),
+  });
+}
+
+export function listCostCodeTimephasingChecks(projectId: string) {
+  return supabaseRequest<CostCodeTimephasingChecks[]>("rpc/get_cost_timephasing_checks", {
     method: "POST",
     body: JSON.stringify({ p_project_id: projectId }),
   });
