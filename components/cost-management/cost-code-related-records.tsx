@@ -236,45 +236,279 @@ function MenuOption({ icon, label, hint, disabled, onClick }: { icon: "budget" |
 }
 
 function CostCodeBudgetDetailsWorkspace({ project, costCode, onClose }: { project: Project; costCode: CostCode; onClose: () => void }) {
+  const fileRef = useRef<HTMLInputElement>(null);
   const [rows, setRows] = useState<BaselineDetail[]>([]);
+  const [enterpriseAttributes, setEnterpriseAttributes] = useState<EnterpriseAttributeDefinition[]>([]);
+  const [projectAttributes, setProjectAttributes] = useState<ProjectAttributeDefinition[]>([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [baselineBudget, setBaselineBudget] = useState(0);
+  const [gridApi, setGridApi] = useState<GridApi<BaselineDetail> | null>(null);
+  const [selectedCount, setSelectedCount] = useState(0);
+  const [addCount, setAddCount] = useState(1);
+  const [importRows, setImportRows] = useState<ExcelRow[] | null>(null);
+  const [importErrors, setImportErrors] = useState<string[]>([]);
+  const [replace, setReplace] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [progress, setProgress] = useState(0);
 
-  useEffect(() => {
-    let active = true;
+  const attributes = useMemo(
+    () => buildAttributes(enterpriseAttributes, projectAttributes, baselineEField, baselinePField),
+    [enterpriseAttributes, projectAttributes],
+  );
+
+  const refresh = useCallback(async () => {
     setLoading(true);
     setError("");
-    void Promise.all([
-      listBaselineDetails(project.id, costCode.id),
-      getCostCodeFinancialSummary(project.id, costCode.id),
-    ])
-      .then(([details, summary]) => {
-        if (!active) return;
-        setRows(details);
-        setBaselineBudget(summary.baseline_budget);
-      })
-      .catch((requestError) => { if (active) setError(requestError instanceof Error ? requestError.message : "Unable to load Budget Details."); })
-      .finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
-  }, [project.id, costCode.id]);
+    try {
+      const [details, summary, enterpriseDefs, projectDefs] = await Promise.all([
+        listBaselineDetails(project.id, costCode.id),
+        getCostCodeFinancialSummary(project.id, costCode.id),
+        listEnterpriseAttributes(project.enterprise_id, "Line Item"),
+        listProjectAttributes(project.id, "Line Item"),
+      ]);
+      setRows(details);
+      setBaselineBudget(summary.baseline_budget);
+      setEnterpriseAttributes(enterpriseDefs);
+      setProjectAttributes(projectDefs);
+      setSelectedCount(0);
+    } catch (requestError) {
+      setError(baselineBudgetErrorMessage(requestError));
+    } finally {
+      setLoading(false);
+    }
+  }, [project.enterprise_id, project.id, costCode.id]);
+
+  useEffect(() => { void refresh(); }, [refresh]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return rows;
-    return rows.filter((row) => [row.item_no, row.item_description, row.unit, row.qty, row.rate, row.total].some((value) => String(value ?? "").toLowerCase().includes(q)));
-  }, [rows, search]);
+    return rows.filter((row) => [
+      row.item_no, row.item_description, row.unit, row.qty, row.rate, Number(row.qty ?? 0) * Number(row.rate ?? 0),
+      ...attributes.map((attribute) => valueName(attribute.definition, row[attribute.field])),
+    ].some((value) => String(value ?? "").toLowerCase().includes(q)));
+  }, [attributes, rows, search]);
 
+  const excelColumns = useMemo(() => [
+    "Item No", "Item Description", "Qty", "Unit", "Rate",
+    ...attributes.map((attribute) => attribute.columnName),
+  ], [attributes]);
 
   const columns = useMemo<ColDef<BaselineDetail>[]>(() => [
-    { field: "item_no", headerName: "Item No", minWidth: 120, filter: true },
-    { field: "item_description", headerName: "Item Description", minWidth: 280, filter: true },
-    { field: "qty", headerName: "Qty", minWidth: 110, type: "numericColumn" },
-    { field: "unit", headerName: "Unit", minWidth: 100, filter: true },
-    { field: "rate", headerName: "Rate", minWidth: 120, type: "numericColumn", valueFormatter: (params) => numberFormat(params.value, 2) },
-    { field: "total", headerName: "Total", minWidth: 135, type: "numericColumn", aggFunc: "sum", enableValue: true, valueFormatter: (params) => numberFormat(params.value, 2) },
-  ], []);
+    { field: "item_no", headerName: "Item No", minWidth: 120, filter: true, editable: true, enableRowGroup: true },
+    { field: "item_description", headerName: "Item Description", minWidth: 260, filter: true, editable: true, enableRowGroup: true },
+    {
+      field: "qty", headerName: "Qty", minWidth: 110, type: "numericColumn", editable: true,
+      valueParser: (params) => {
+        const value = parseNumber(params.newValue);
+        return Number.isFinite(value) && value >= 0 ? value : params.oldValue;
+      },
+    },
+    { field: "unit", headerName: "Unit", minWidth: 100, filter: true, editable: true, enableRowGroup: true },
+    {
+      field: "rate", headerName: "Rate", minWidth: 120, type: "numericColumn", editable: true,
+      valueParser: (params) => {
+        const value = parseNumber(params.newValue);
+        return Number.isFinite(value) && value >= 0 ? value : params.oldValue;
+      },
+      valueFormatter: (params) => numberFormat(params.value, 2),
+    },
+    {
+      colId: "total", headerName: "Total", minWidth: 135, type: "numericColumn", aggFunc: "sum", enableValue: true,
+      valueGetter: (params) => Number(params.data?.qty ?? 0) * Number(params.data?.rate ?? 0),
+      valueFormatter: (params) => numberFormat(params.value, 2),
+    },
+    ...attributes.map((attribute): ColDef<BaselineDetail> => ({
+      colId: attribute.field,
+      headerName: attribute.columnName,
+      headerTooltip: `${attribute.prefix}${String(attribute.definition.attribute_number).padStart(2, "0")} · ${attribute.definition.name}`,
+      minWidth: 150,
+      editable: true,
+      enableRowGroup: true,
+      filter: "agSetColumnFilter",
+      valueGetter: (params) => {
+        const valueId = params.data?.[attribute.field];
+        return valueId ? `${valueId} - ${valueName(attribute.definition, valueId)}` : "";
+      },
+      valueSetter: (params) => {
+        if (!params.data) return false;
+        if (!params.newValue) { params.data[attribute.field] = null; return true; }
+        const selected = attribute.definition.attribute_values.find((value) =>
+          value.value_id === params.newValue ||
+          value.value_name === params.newValue ||
+          `${value.value_id} - ${value.value_name}` === params.newValue,
+        );
+        if (!selected?.is_active) return false;
+        params.data[attribute.field] = selected.value_id;
+        return true;
+      },
+      cellEditor: "agSelectCellEditor",
+      cellEditorParams: { values: ["", ...attribute.definition.attribute_values.filter((value) => value.is_active).map((value) => `${value.value_id} - ${value.value_name}`)] },
+    })),
+  ], [attributes]);
+
+  function showNotice(message: string) {
+    setNotice(message);
+    window.setTimeout(() => setNotice(""), 3000);
+  }
+
+  async function cellChanged(event: CellValueChangedEvent<BaselineDetail>) {
+    if (!event.data || event.newValue === event.oldValue) return;
+    const colId = event.column.getColId();
+    if (colId === "total") return;
+    setSaving(true);
+    setError("");
+    try {
+      let patch: Record<string, string | number | null> = {};
+      if (colId === "item_no") patch = { item_no: String(event.newValue ?? "").trim() || null };
+      else if (colId === "item_description") patch = { item_description: String(event.newValue ?? "").trim() || null };
+      else if (colId === "unit") patch = { unit: String(event.newValue ?? "").trim() || null };
+      else if (colId === "qty" || colId === "rate") {
+        const value = Number(event.newValue ?? 0);
+        if (!Number.isFinite(value) || value < 0) throw new Error(`${colId === "qty" ? "Qty" : "Rate"} must be zero or greater.`);
+        patch = { [colId]: value };
+      } else if (colId.startsWith("e_attribute_") || colId.startsWith("p_attribute_")) {
+        patch = { [colId]: event.data[colId as BaselineAttributeField] ?? null };
+      }
+      const saved = await updateBaselineDetail(event.data.id, patch);
+      setRows((current) => current.map((row) => row.id === saved.id ? saved : row));
+      event.api.refreshCells({ rowNodes: [event.node], columns: ["total"], force: true });
+    } catch (requestError) {
+      event.node.setDataValue(event.column, event.oldValue);
+      setError(baselineBudgetErrorMessage(requestError));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function addRows() {
+    const count = Math.max(1, Math.min(100, Math.trunc(addCount) || 1));
+    setAddCount(count);
+    setSaving(true);
+    setError("");
+    try {
+      const created: BaselineDetail[] = [];
+      for (let index = 0; index < count; index += 1) {
+        created.push(await createBaselineDetail(project.id, {
+          cost_code_id: costCode.id,
+          item_no: null,
+          item_description: null,
+          qty: 0,
+          unit: null,
+          rate: 0,
+          ...Object.fromEntries(attributes.map((attribute) => [attribute.field, null])),
+        }));
+      }
+      setRows((current) => [...current, ...created]);
+      showNotice(`${count} Budget Detail row${count === 1 ? "" : "s"} added.`);
+    } catch (requestError) {
+      setError(baselineBudgetErrorMessage(requestError));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function deleteSelected() {
+    const selected = gridApi?.getSelectedRows() ?? [];
+    if (!selected.length || !window.confirm(`Delete ${selected.length} selected Budget Detail row${selected.length === 1 ? "" : "s"}?`)) return;
+    setSaving(true);
+    setError("");
+    try {
+      const ids = selected.map((row) => row.id);
+      await deleteBaselineDetails(ids);
+      setRows((current) => current.filter((row) => !ids.includes(row.id)));
+      gridApi?.deselectAll();
+      setSelectedCount(0);
+      showNotice("Selected Budget Details deleted.");
+    } catch (requestError) {
+      setError(baselineBudgetErrorMessage(requestError));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function exportRows() {
+    const data: ExcelRow[] = rows.map((row) => ({
+      "Item No": row.item_no ?? "",
+      "Item Description": row.item_description ?? "",
+      Qty: row.qty == null ? "" : String(row.qty),
+      Unit: row.unit ?? "",
+      Rate: row.rate == null ? "" : String(row.rate),
+      ...Object.fromEntries(attributes.map((attribute) => [attribute.columnName, row[attribute.field] ?? ""])),
+    }));
+    exportExcel(`${project.project_code}-${costCode.cost_code_id}-budget-details`, "Budget Details", data.length ? data : [Object.fromEntries(excelColumns.map((column) => [column, ""]))]);
+  }
+
+  async function chooseImport(file: File | undefined) {
+    if (!file) return;
+    try {
+      const incoming = await readExcel(file);
+      const errors: string[] = [];
+      if (!incoming.length) errors.push("The file does not contain any Budget Detail rows.");
+      if (incoming.length) {
+        const actual = Object.keys(incoming[0]);
+        if (actual.length !== excelColumns.length || !excelColumns.every((column, index) => actual[index] === column)) {
+          errors.push(`Columns must be exactly: ${excelColumns.join(", ")}.`);
+        }
+      }
+      incoming.forEach((row, index) => {
+        const line = index + 2;
+        const qty = parseNumber(row.Qty ?? "");
+        const rate = parseNumber(row.Rate ?? "");
+        if (Number.isNaN(qty) || qty < 0) errors.push(`Row ${line}: Qty must be zero or greater.`);
+        if (Number.isNaN(rate) || rate < 0) errors.push(`Row ${line}: Rate must be zero or greater.`);
+        attributes.forEach((attribute) => {
+          const valueId = (row[attribute.columnName] ?? "").trim();
+          if (valueId && !attribute.definition.attribute_values.some((value) => value.is_active && value.value_id.toLowerCase() === valueId.toLowerCase())) {
+            errors.push(`Row ${line}: ${attribute.columnName} must contain an active Value ID.`);
+          }
+        });
+      });
+      setImportRows(incoming);
+      setImportErrors(errors);
+      setReplace(false);
+      setProgress(0);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unable to read the file.");
+    } finally {
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  }
+
+  async function runImport() {
+    if (!importRows || importErrors.length) return;
+    setImporting(true);
+    setProgress(0);
+    setError("");
+    try {
+      if (replace && rows.length) await deleteBaselineDetails(rows.map((row) => row.id));
+      const created: BaselineDetail[] = [];
+      for (let index = 0; index < importRows.length; index += 1) {
+        const row = importRows[index];
+        created.push(await createBaselineDetail(project.id, {
+          cost_code_id: costCode.id,
+          item_no: row["Item No"]?.trim() || null,
+          item_description: row["Item Description"]?.trim() || null,
+          qty: parseNumber(row.Qty ?? ""),
+          unit: row.Unit?.trim() || null,
+          rate: parseNumber(row.Rate ?? ""),
+          ...Object.fromEntries(attributes.map((attribute) => [attribute.field, row[attribute.columnName]?.trim() || null])),
+        }));
+        setProgress(((index + 1) / Math.max(importRows.length, 1)) * 100);
+      }
+      setRows((current) => replace ? created : [...current, ...created]);
+      setImportRows(null);
+      showNotice("Budget Details imported.");
+    } catch (requestError) {
+      setImportErrors([baselineBudgetErrorMessage(requestError)]);
+    } finally {
+      setImporting(false);
+    }
+  }
 
   return <div style={{ position: "fixed", inset: 0, zIndex: 12000, background: "#f5f7fa", display: "flex", flexDirection: "column" }}>
     <header style={{ minHeight: 58, background: "#fff", borderBottom: "1px solid #dfe4ea", display: "flex", alignItems: "center", gap: 12, padding: "7px 12px" }}>
@@ -284,16 +518,41 @@ function CostCodeBudgetDetailsWorkspace({ project, costCode, onClose }: { projec
     <section className="enterprise-grid-card" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", border: 0, borderRadius: 0, boxShadow: "none" }}>
       <div className="enterprise-toolbar" style={{ flexWrap: "wrap", padding: "8px 12px", background: "#fff", borderBottom: "1px solid #e5e7eb" }}>
         <label className="enterprise-search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search budget details…"/></label>
+        <label className="add-count-control"><span>Add</span><input type="number" min={1} max={100} value={addCount} onChange={(event) => setAddCount(Number(event.target.value))}/></label>
+        <button className="button secondary" disabled={saving || importing} onClick={() => void addRows()}>+ Add Row{addCount === 1 ? "" : "s"}</button>
+        <button className="button secondary" disabled={!selectedCount || saving || importing} onClick={() => void deleteSelected()}>Delete{selectedCount ? ` (${selectedCount})` : ""}</button>
+        <button className="button secondary" onClick={exportRows}>⇩ Export</button>
+        <button className="button secondary" disabled={saving || importing} onClick={() => fileRef.current?.click()}>⇧ Import</button>
+        <input ref={fileRef} hidden type="file" accept=".xlsx,.xls" onChange={(event) => void chooseImport(event.target.files?.[0])}/>
+        <button className="button secondary" disabled={loading || saving || importing} onClick={() => void refresh()}>↻ Refresh</button>
+        <span style={{ marginLeft: "auto", fontSize: 11, color: saving || importing ? "#2563eb" : "#64748b" }}>{saving ? "Saving…" : importing ? "Importing…" : "Edits save automatically"}</span>
       </div>
+      <div className="data-message" style={{ minHeight: 42 }}><span>Budget Details are editable inline. Total is calculated live as Qty × Rate. Import / Export uses Line Item Attribute IDs. Recalculate the project to refresh the Cost Code-level Baseline Budget summary.</span></div>
       {error && <div className="data-message error"><strong>Unable to load Budget Details</strong><span>{error}</span></div>}
       {!error && loading && <div className="data-message"><span className="spinner"/>Loading Budget Details…</div>}
       {!error && !loading && <AgGridProvider modules={[AllEnterpriseModule]} licenseKey={process.env.NEXT_PUBLIC_AG_GRID_LICENSE_KEY ?? ""}>
         <div style={{ flex: 1, minHeight: 360, width: "100%", padding: "8px 12px 10px", boxSizing: "border-box" }}>
-          <AgGridReact<BaselineDetail> theme={gridTheme} rowData={filtered} columnDefs={columns} defaultColDef={{ sortable: true, resizable: true, filter: true, minWidth: 90 }} getRowId={(params) => params.data.id} grandTotalRow="pinnedBottom" animateRows/>
+          <AgGridReact<BaselineDetail>
+            theme={gridTheme}
+            rowData={filtered}
+            columnDefs={columns}
+            defaultColDef={{ sortable: true, resizable: true, filter: true, minWidth: 90 }}
+            getRowId={(params) => params.data.id}
+            rowSelection={{ mode: "multiRow" }}
+            onGridReady={(event) => setGridApi(event.api)}
+            onSelectionChanged={(event) => setSelectedCount(event.api.getSelectedRows().length)}
+            onCellValueChanged={(event) => void cellChanged(event)}
+            grandTotalRow="pinnedBottom"
+            undoRedoCellEditing
+            undoRedoCellEditingLimit={20}
+            animateRows
+          />
         </div>
       </AgGridProvider>}
-      <div className="grid-footer"><span>{rows.length} Budget Detail row{rows.length === 1 ? "" : "s"}</span><span>Baseline Budget: {numberFormat(baselineBudget, 2)}</span></div>
+      <div className="grid-footer"><span>{rows.length} Budget Detail row{rows.length === 1 ? "" : "s"} · {selectedCount} selected</span><span>Saved Cost Code Baseline Budget: {numberFormat(baselineBudget, 2)}</span></div>
     </section>
+    {importRows && <ExcelImportDialog title="Import Budget Details" rows={importRows} columns={excelColumns} errors={importErrors} replace={replace} setReplace={setReplace} importing={importing} progress={progress} onCancel={() => !importing && setImportRows(null)} onImport={() => void runImport()}/>}
+    {notice && <div className="admin-toast">{notice}</div>}
   </div>;
 }
 
