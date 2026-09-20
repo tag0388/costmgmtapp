@@ -50,7 +50,16 @@ import {
 import { listResourceRates, RESOURCE_CATEGORIES, type ResourceCategory, type ResourceRate } from "@/lib/resource-rates";
 import { listProjectResourceRates, type ProjectResourceRate } from "@/lib/project-resource-rates";
 import { getCostCodeFinancialSummary, type CostCodeFinancialSummary } from "@/lib/cost-code-financial-summary";
-import { listBaselineDetails, type BaselineDetail } from "@/lib/cost-baseline-budget";
+import {
+  baselineBudgetErrorMessage,
+  createBaselineDetail,
+  deleteBaselineDetails,
+  importBaselineDetails,
+  listBaselineDetails,
+  updateBaselineDetail,
+  type BaselineAttributeField,
+  type BaselineDetail,
+} from "@/lib/cost-baseline-budget";
 import { listCostCodeTimephasingForCostCode, type CostCodeTimephasing } from "@/lib/cost-timephasing";
 
 const gridTheme = themeQuartz.withParams({ spacing: 4, rowHeight: 30, headerHeight: 34, fontSize: 12 });
@@ -135,6 +144,8 @@ function actualEField(slot: number) { return `e_attribute_${String(slot).padStar
 function actualPField(slot: number) { return `p_attribute_${String(slot).padStart(2, "0")}` as ActualAttributeField; }
 function ctcEField(slot: number) { return `e_attribute_${String(slot).padStart(2, "0")}` as CtcAttributeField; }
 function ctcPField(slot: number) { return `p_attribute_${String(slot).padStart(2, "0")}` as CtcAttributeField; }
+function baselineEField(slot: number) { return `e_attribute_${String(slot).padStart(2, "0")}` as BaselineAttributeField; }
+function baselinePField(slot: number) { return `p_attribute_${String(slot).padStart(2, "0")}` as BaselineAttributeField; }
 function validateHeaders(rows: ExcelRow[], expected: string[]) {
   if (!rows.length) return [] as string[];
   const actual = Object.keys(rows[0]);
