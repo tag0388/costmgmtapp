@@ -1,14 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgGridProvider, AgGridReact } from "ag-grid-react";
-import type { CellStyle, CellValueChangedEvent, ColDef, ColGroupDef, ICellEditorParams, ValueGetterParams } from "ag-grid-community";
+import type { CellStyle, CellValueChangedEvent, ColDef, ColGroupDef, ICellEditorParams, SelectionChangedEvent, ValueGetterParams } from "ag-grid-community";
 import { themeQuartz } from "ag-grid-community";
 import { AllEnterpriseModule } from "ag-grid-enterprise";
 import { getProjectByPublicId, type Project } from "@/lib/projects";
-import { updateCostCodeFields, type CostCodeInput, type TimephasingMethod } from "@/lib/cost-codes";
+import { bulkUpdateCostCodeFields, updateCostCodeFields, type CostCodeInput, type TimephasingMethod } from "@/lib/cost-codes";
 import { listCostReportingPeriods, type CostReportingPeriod } from "@/lib/cost-reporting";
 import { costCalculationErrorMessage, recalculateProjectCostManagement } from "@/lib/cost-calculation";
+import { exportExcel, readExcel, type ExcelRow } from "@/lib/excel";
 import {
   listCostCodeTimephasing,
   listCostCodeTimephasingChecks,
@@ -47,6 +48,23 @@ function dateLabel(value: string) {
   return year && month && day ? `${day}/${month}/${year.slice(-2)}` : value;
 }
 function roundMoney(value: number) { return Math.round((value + Number.EPSILON) * 100) / 100; }
+function periodExcelColumn(period: CostReportingPeriod) { return `P${period.period_number} | ${dateLabel(period.end_date)}`; }
+function parseExcelNumber(value: string) {
+  const parsed = Number(String(value ?? "").replace(/,/g, "").trim());
+  return Number.isFinite(parsed) ? parsed : Number.NaN;
+}
+function normalizeImportDate(value: string) {
+  const text = String(value ?? "").trim();
+  if (!text) return null;
+  const iso = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (iso) return `${iso[1]}-${String(Number(iso[2])).padStart(2, "0")}-${String(Number(iso[3])).padStart(2, "0")}`;
+  const au = text.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{2}|\d{4})$/);
+  if (au) {
+    const year = au[3].length === 2 ? 2000 + Number(au[3]) : Number(au[3]);
+    return `${year}-${String(Number(au[2])).padStart(2, "0")}-${String(Number(au[1])).padStart(2, "0")}`;
+  }
+  return text;
+}
 function timephasingField(type: RowType): TimephasingValueField {
   if (type === "Baseline Budget") return "baseline_budget";
   if (type === "Current Budget") return "current_budget";
@@ -54,6 +72,7 @@ function timephasingField(type: RowType): TimephasingValueField {
 }
 
 export default function CostTimephasingPage({ projectPublicId }: { projectPublicId: string }) {
+  const fileRef = useRef<HTMLInputElement>(null);
   const [project, setProject] = useState<Project | null>(null);
   const [costCodes, setCostCodes] = useState<TimephasingCostCode[]>([]);
   const [periods, setPeriods] = useState<CostReportingPeriod[]>([]);
@@ -65,6 +84,14 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
   const [recalculating, setRecalculating] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [selectedRowIds, setSelectedRowIds] = useState<string[]>([]);
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkField, setBulkField] = useState<"phasingMethod" | "startDate" | "finishDate">("phasingMethod");
+  const [bulkValue, setBulkValue] = useState("");
+  const [importRows, setImportRows] = useState<ExcelRow[] | null>(null);
+  const [importErrors, setImportErrors] = useState<string[]>([]);
+  const [importing, setImporting] = useState(false);
+  const [progress, setProgress] = useState(0);
 
   const refresh = useCallback(async () => {
     setLoading(true); setError("");
@@ -203,13 +230,159 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
       const editable = row.phasingMethod === "Manual" && (row.type !== "Estimate At Completion" || period?.status === "Future");
       if (!editable) { event.node.setDataValue(event.column, event.oldValue); return; }
       const parsed = Number(event.newValue ?? 0);
-      if (!Number.isFinite(parsed) || parsed < 0) { event.node.setDataValue(event.column, event.oldValue); return; }
+      if (!Number.isFinite(parsed) || (row.type !== "Estimate At Completion" && parsed < 0)) { event.node.setDataValue(event.column, event.oldValue); return; }
       const saved = await setCostCodeTimephasingValue(project.id, row.costCode.id, periodId, timephasingField(row.type), parsed);
       setStored((current) => [...current.filter((item) => !(item.cost_code_id === saved.cost_code_id && item.cost_period_id === saved.cost_period_id)), saved]);
     } catch (requestError) {
       event.node.setDataValue(event.column, event.oldValue);
       setError(timephasingErrorMessage(requestError));
     } finally { setSaving(false); }
+  }
+
+  const excelColumns = useMemo(
+    () => ["Cost Code ID", "Cost Code Name", "Type", "Phasing Method", "Start Date", "Finish Date", ...periods.map(periodExcelColumn)],
+    [periods],
+  );
+
+  function exportTimephasing() {
+    const exportRows: ExcelRow[] = rows.map((row) => ({
+      "Cost Code ID": row.costCode.cost_code_id,
+      "Cost Code Name": row.costCode.name,
+      "Type": row.type,
+      "Phasing Method": row.phasingMethod,
+      "Start Date": row.startDate ?? "",
+      "Finish Date": row.finishDate ?? "",
+      ...Object.fromEntries(periods.map((period) => [periodExcelColumn(period), String(row.periodValues[period.id] ?? 0)])),
+    }));
+    exportExcel("Cost Management Timephasing", "Timephasing", exportRows);
+  }
+
+  async function chooseImport(file: File) {
+    const imported = await readExcel(file);
+    const errors: string[] = [];
+    const expected = excelColumns;
+    if (imported.length) {
+      const actual = Object.keys(imported[0]);
+      if (actual.length !== expected.length || !expected.every((column, index) => actual[index] === column)) {
+        errors.push(`Columns must exactly match the Timephasing export: ${expected.join(", ")}`);
+      }
+    }
+    const codeById = new Map(costCodes.map((code) => [code.cost_code_id.toLowerCase(), code]));
+    imported.forEach((row, index) => {
+      const label = `Row ${index + 2}`;
+      const code = codeById.get(String(row["Cost Code ID"] ?? "").trim().toLowerCase());
+      const type = String(row["Type"] ?? "") as RowType;
+      const method = String(row["Phasing Method"] ?? "") as TimephasingMethod;
+      if (!code) errors.push(`${label}: Cost Code ID does not exist in this project.`);
+      if (!["Baseline Budget", "Current Budget", "Estimate At Completion"].includes(type)) errors.push(`${label}: Type is invalid.`);
+      if (!METHODS.includes(method)) errors.push(`${label}: Phasing Method is invalid.`);
+      if ((type === "Baseline Budget" || type === "Current Budget") && method === "Cost Details") errors.push(`${label}: Cost Details is only valid for Estimate At Completion.`);
+      const startDate = normalizeImportDate(row["Start Date"]);
+      const finishDate = normalizeImportDate(row["Finish Date"]);
+      if (row["Start Date"] && !/^\d{4}-\d{2}-\d{2}$/.test(startDate ?? "")) errors.push(`${label}: Start Date must be a valid date.`);
+      if (row["Finish Date"] && !/^\d{4}-\d{2}-\d{2}$/.test(finishDate ?? "")) errors.push(`${label}: Finish Date must be a valid date.`);
+      periods.forEach((period) => {
+        const raw = String(row[periodExcelColumn(period)] ?? "").trim();
+        if (!raw) return;
+        const number = parseExcelNumber(raw);
+        if (!Number.isFinite(number)) errors.push(`${label}: ${periodExcelColumn(period)} must be numeric.`);
+        if (type !== "Estimate At Completion" && number < 0) errors.push(`${label}: Baseline/Current Budget phasing cannot be negative.`);
+      });
+    });
+    setImportRows(imported);
+    setImportErrors(errors);
+  }
+
+  async function runImport() {
+    if (!project || !importRows || importErrors.length) return;
+    setImporting(true);
+    setProgress(0);
+    setError("");
+    try {
+      const codeById = new Map(costCodes.map((code) => [code.cost_code_id.toLowerCase(), code]));
+      for (let index = 0; index < importRows.length; index += 1) {
+        const row = importRows[index];
+        const code = codeById.get(String(row["Cost Code ID"]).trim().toLowerCase());
+        if (!code) continue;
+        const type = String(row["Type"]) as RowType;
+        const method = String(row["Phasing Method"]) as TimephasingMethod;
+        const patch: Partial<Omit<CostCodeInput, "project_id" | "cost_code_id">> = {};
+        if (type === "Baseline Budget") {
+          patch.baseline_timephasing_method = method;
+          patch.baseline_start_date = normalizeImportDate(row["Start Date"]);
+          patch.baseline_finish_date = normalizeImportDate(row["Finish Date"]);
+        } else if (type === "Current Budget") {
+          patch.current_budget_timephasing_method = method;
+          patch.budget_start_date = normalizeImportDate(row["Start Date"]);
+          patch.budget_finish_date = normalizeImportDate(row["Finish Date"]);
+        } else {
+          patch.ctc_timephasing_method = method;
+          patch.current_start_date = normalizeImportDate(row["Start Date"]);
+          patch.current_finish_date = normalizeImportDate(row["Finish Date"]);
+        }
+        await updateCostCodeFields(code.id, patch);
+        if (method === "Manual") {
+          for (const period of periods) {
+            if (type === "Estimate At Completion" && period.status !== "Future") continue;
+            const raw = String(row[periodExcelColumn(period)] ?? "").trim();
+            if (!raw) continue;
+            await setCostCodeTimephasingValue(project.id, code.id, period.id, timephasingField(type), parseExcelNumber(raw));
+          }
+        }
+        setProgress(((index + 1) / Math.max(importRows.length, 1)) * 100);
+      }
+      setImportRows(null);
+      showNotice("Timephasing imported. Recalculate to refresh derived phasing.");
+      await refresh();
+    } catch (requestError) {
+      setError(timephasingErrorMessage(requestError));
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  async function applyBulkEdit() {
+    const selectedRows = rows.filter((row) => selectedRowIds.includes(row.id));
+    if (!selectedRows.length) return;
+    setSaving(true);
+    setError("");
+    try {
+      if (bulkField === "phasingMethod" && bulkValue === "Cost Details" && selectedRows.some((row) => row.type !== "Estimate At Completion")) {
+        throw new Error("Cost Details can only be applied to Estimate At Completion rows.");
+      }
+      const groups = new Map<string, { ids: string[]; patch: Partial<Omit<CostCodeInput, "project_id" | "cost_code_id">> }>();
+      for (const row of selectedRows) {
+        const key = `${row.type}|${bulkField}`;
+        const current = groups.get(key) ?? { ids: [], patch: {} };
+        if (!current.ids.includes(row.costCode.id)) current.ids.push(row.costCode.id);
+        if (bulkField === "phasingMethod") {
+          const method = bulkValue as TimephasingMethod;
+          if (row.type === "Baseline Budget") current.patch.baseline_timephasing_method = method;
+          else if (row.type === "Current Budget") current.patch.current_budget_timephasing_method = method;
+          else current.patch.ctc_timephasing_method = method;
+        } else if (bulkField === "startDate") {
+          const value = bulkValue || null;
+          if (row.type === "Baseline Budget") current.patch.baseline_start_date = value;
+          else if (row.type === "Current Budget") current.patch.budget_start_date = value;
+          else current.patch.current_start_date = value;
+        } else {
+          const value = bulkValue || null;
+          if (row.type === "Baseline Budget") current.patch.baseline_finish_date = value;
+          else if (row.type === "Current Budget") current.patch.budget_finish_date = value;
+          else current.patch.current_finish_date = value;
+        }
+        groups.set(key, current);
+      }
+      const updated = (await Promise.all([...groups.values()].map((group) => bulkUpdateCostCodeFields(group.ids, group.patch)))).flat();
+      const updatedById = new Map(updated.map((code) => [code.id, code]));
+      setCostCodes((current) => current.map((code) => updatedById.get(code.id) ? { ...code, ...updatedById.get(code.id)! } : code));
+      setBulkOpen(false);
+      showNotice(`Updated ${selectedRows.length} Timephasing row${selectedRows.length === 1 ? "" : "s"}. Recalculate to refresh derived phasing.`);
+    } catch (requestError) {
+      setError(timephasingErrorMessage(requestError));
+    } finally {
+      setSaving(false);
+    }
   }
 
   const columns = useMemo<Array<ColDef<GridRow> | ColGroupDef<GridRow>>>(() => {
@@ -259,7 +432,7 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
       valueSetter: (params) => {
         if (!params.data) return false;
         const parsed = Number(String(params.newValue ?? "0").replace(/,/g, ""));
-        if (!Number.isFinite(parsed) || parsed < 0) return false;
+        if (!Number.isFinite(parsed) || (params.data.type !== "Estimate At Completion" && parsed < 0)) return false;
         params.data.periodValues[period.id] = parsed;
         return true;
       },
@@ -282,6 +455,10 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
       <div className="enterprise-toolbar" style={{ flexWrap: "wrap" }}>
         <label className="enterprise-search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search Cost Codes or types…"/></label>
         <button className="button secondary" disabled={loading || saving || recalculating} onClick={() => void refresh()}>↻ Refresh</button>
+        <button className="button secondary" disabled={!selectedRowIds.length || loading || saving || recalculating} onClick={() => { setBulkField("phasingMethod"); setBulkValue(""); setBulkOpen(true); }}>Bulk Edit ({selectedRowIds.length})</button>
+        <button className="button secondary" disabled={loading || saving || recalculating} onClick={exportTimephasing}>⇩ Export</button>
+        <button className="button secondary" disabled={loading || saving || recalculating} onClick={() => fileRef.current?.click()}>⇧ Import</button>
+        <input ref={fileRef} type="file" accept=".xlsx,.xls" hidden onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void chooseImport(file); }}/>
         <button className="button primary" disabled={!project || loading || saving || recalculating || !periods.length} onClick={() => void recalculate()}>{recalculating ? "Recalculating…" : "↻ Recalculate"}</button>
         <span style={{ marginLeft: "auto", fontSize: 11, color: saving || recalculating ? "#2563eb" : "#64748b" }}>
           {saving ? "Saving…" : recalculating ? "Calculating in Supabase…" : lastCalculated ? `Last calculated: ${lastCalculated}` : "Not calculated yet"}
@@ -290,10 +467,10 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
       <div className="data-message" style={{ minHeight: 48 }}>
         <span>Each Cost Code has three rows. Recalculate runs the heavy project aggregation in Supabase and refreshes the stored period summaries. Manual Baseline and Current Budget values are preserved. For Estimate at Completion only, Closed and Current periods use Actual Cost and are read-only; Future periods use Manual, Dates or Cost Details phasing.</span>
       </div>
-      {error && <div className="data-message error"><strong>Unable to load Timephasing</strong><span>{error}</span></div>}
-      {!error && loading && <div className="data-message"><span className="spinner"/>Loading Timephasing…</div>}
-      {!error && !loading && !periods.length && <div className="data-message"><span>Create Cost Reporting Periods before using Timephasing.</span></div>}
-      {!error && !loading && periods.length > 0 && <AgGridProvider modules={[AllEnterpriseModule]} licenseKey={process.env.NEXT_PUBLIC_AG_GRID_LICENSE_KEY ?? ""}>
+      {error && <div className="data-message error"><strong>Timephasing error</strong><span>{error}</span></div>}
+      {loading && <div className="data-message"><span className="spinner"/>Loading Timephasing…</div>}
+      {!loading && !periods.length && <div className="data-message"><span>Create Cost Reporting Periods before using Timephasing.</span></div>}
+      {!loading && periods.length > 0 && <AgGridProvider modules={[AllEnterpriseModule]} licenseKey={process.env.NEXT_PUBLIC_AG_GRID_LICENSE_KEY ?? ""}>
         <div style={{ height: "calc(100vh - 250px)", minHeight: 560, width: "100%" }}>
           <AgGridReact<GridRow>
             theme={gridTheme}
@@ -303,6 +480,9 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
             quickFilterText={search}
             getRowId={(params) => params.data.id}
             onCellValueChanged={(event) => void cellChanged(event)}
+            rowSelection={{ mode: "multiRow" }}
+            selectionColumnDef={{ pinned: "left", width: 46, maxWidth: 46, suppressHeaderMenuButton: true }}
+            onSelectionChanged={(event: SelectionChangedEvent<GridRow>) => setSelectedRowIds(event.api.getSelectedRows().map((row) => row.id))}
             enableCellSpan
             undoRedoCellEditing
             undoRedoCellEditingLimit={20}
@@ -315,6 +495,36 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
         <span>Check must equal 0.00 for each row.</span>
       </div>
     </section>
+    {bulkOpen && <div className="confirm-layer">
+      <button className="confirm-scrim" onClick={() => !saving && setBulkOpen(false)} aria-label="Close bulk edit"/>
+      <div className="confirm-dialog" role="dialog" aria-modal="true" style={{ width: "min(520px, 92vw)" }}>
+        <h2>Bulk Edit {selectedRowIds.length} Timephasing Row{selectedRowIds.length === 1 ? "" : "s"}</h2>
+        <p>Apply the same Timephasing setting to all selected rows.</p>
+        <div style={{ display: "grid", gap: 10, textAlign: "left" }}>
+          <label><span>Field</span><select value={bulkField} onChange={(event) => { setBulkField(event.target.value as typeof bulkField); setBulkValue(""); }}><option value="phasingMethod">Phasing Method</option><option value="startDate">Start Date</option><option value="finishDate">Finish Date</option></select></label>
+          <label><span>Value</span>{bulkField === "phasingMethod"
+            ? <select value={bulkValue} onChange={(event) => setBulkValue(event.target.value)}><option value="">Select value…</option>{(rows.filter((row) => selectedRowIds.includes(row.id)).every((row) => row.type === "Estimate At Completion") ? METHODS : ["Manual", "Dates"]).map((method) => <option key={method}>{method}</option>)}</select>
+            : <input type="date" value={bulkValue} onChange={(event) => setBulkValue(event.target.value)}/>}</label>
+        </div>
+        <div className="confirm-actions"><button className="button secondary" disabled={saving} onClick={() => setBulkOpen(false)}>Cancel</button><button className="button primary" disabled={saving || !bulkValue} onClick={() => void applyBulkEdit()}>{saving ? "Updating…" : "Apply"}</button></div>
+      </div>
+    </div>}
+    {importRows && <TimephasingImportDialog rows={importRows} columns={excelColumns} errors={importErrors} importing={importing} progress={progress} onCancel={() => !importing && setImportRows(null)} onImport={() => void runImport()}/>}
     {notice && <div className="admin-toast">{notice}</div>}
+  </div>;
+}
+
+function TimephasingImportDialog({ rows, columns, errors, importing, progress, onCancel, onImport }: { rows: ExcelRow[]; columns: string[]; errors: string[]; importing: boolean; progress: number; onCancel: () => void; onImport: () => void }) {
+  const preview = rows.slice(0, 100);
+  return <div className="confirm-layer">
+    <button className="confirm-scrim" onClick={onCancel} aria-label="Close Timephasing import" disabled={importing}/>
+    <div className="confirm-dialog" role="dialog" aria-modal="true" style={{ width: "min(1100px, 92vw)", maxWidth: 1100 }}>
+      <h2>Import Timephasing</h2>
+      <p>{rows.length} row{rows.length === 1 ? "" : "s"} found. Import updates the matching Cost Code + Type rows; it does not create or delete Cost Codes.</p>
+      {errors.length > 0 && <div className="form-error" style={{ textAlign: "left", maxHeight: 150, overflow: "auto" }}><strong>Import cannot proceed:</strong><ul>{errors.slice(0, 50).map((error, index) => <li key={`${error}-${index}`}>{error}</li>)}</ul></div>}
+      <div className="enterprise-table-wrap" style={{ maxHeight: 360, overflow: "auto", textAlign: "left" }}><table className="enterprise-table"><thead><tr>{columns.map((column) => <th key={column}>{column}</th>)}</tr></thead><tbody>{preview.map((row, rowIndex) => <tr key={rowIndex}>{columns.map((column) => <td key={column}>{row[column] ?? ""}</td>)}</tr>)}</tbody></table></div>
+      {importing && <div style={{ marginTop: 16, textAlign: "left" }}><div style={{ height: 10, borderRadius: 6, background: "#e5e7eb", overflow: "hidden" }}><div style={{ height: "100%", width: `${Math.max(0, Math.min(100, progress))}%`, background: "#2563eb" }}/></div><small>Importing… {Math.round(progress)}%</small></div>}
+      <div className="confirm-actions"><button className="button secondary" onClick={onCancel} disabled={importing}>Cancel</button><button className="button primary" onClick={onImport} disabled={importing || !rows.length || errors.length > 0}>{importing ? "Importing…" : "Import"}</button></div>
+    </div>
   </div>;
 }
