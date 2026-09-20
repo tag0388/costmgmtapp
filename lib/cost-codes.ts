@@ -109,6 +109,15 @@ export function updateCostCodeFields(id: string, patch: Partial<Omit<CostCodeInp
   });
 }
 
+export function bulkUpdateCostCodeFields(ids: string[], patch: Partial<Omit<CostCodeInput, "project_id" | "cost_code_id">>) {
+  if (!ids.length || !Object.keys(patch).length) return Promise.resolve([] as CostCode[]);
+  return supabaseRequest<CostCode[]>(`cost_codes?id=in.(${ids.map(encodeURIComponent).join(",")})&select=${encodeURIComponent(select)}`, {
+    method: "PATCH",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify({ ...patch, updated_at: new Date().toISOString() }),
+  });
+}
+
 export function deleteCostCode(id: string) {
   return supabaseRequest(`cost_codes?id=eq.${encodeURIComponent(id)}`, {
     method: "DELETE",

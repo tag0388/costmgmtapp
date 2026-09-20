@@ -627,12 +627,65 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
         </div>
       </div>
     </div>}
-    {editing && <CostCodeForm projectId={project!.id} value={editing === "new" ? null : editing} enterpriseAttributes={activeEnterprise} projectAttributes={activeProject} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); showNotice("Cost code saved."); void refresh(); }}/>} 
+    {editing === "new" && <CreateCostCodeDrawer projectId={project!.id} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); showNotice("Cost code saved."); void refresh(); }}/>}
+    {editing && editing !== "new" && <CostCodeForm projectId={project!.id} value={editing} enterpriseAttributes={activeEnterprise} projectAttributes={activeProject} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); showNotice("Cost code saved."); void refresh(); }}/>} 
     {bulkOpen && project && <BulkAttributeDialog selected={selected} enterpriseAttributes={activeEnterprise} projectAttributes={activeProject} onClose={() => setBulkOpen(false)} onSaved={() => { setBulkOpen(false); showNotice("Selected cost codes updated."); void refresh(); }}/>} 
     {importRows && <ExcelImportDialog title="Import Cost Codes" rows={importRows} columns={excelColumns} errors={importErrors} replace={replace} setReplace={setReplace} importing={importing} progress={progress} onCancel={() => !importing && setImportRows(null)} onImport={() => void runImport()}/>} 
     {showSaveView && <SaveViewDialog initialName={viewName} onClose={() => setShowSaveView(false)} onSave={(name) => { setViewName(name); window.setTimeout(() => void saveView(), 0); }}/>} 
     {notice && <div className="admin-toast">{notice}</div>}
   </div>;
+}
+
+function CreateCostCodeDrawer({ projectId, onClose, onSaved }: { projectId: string; onClose: () => void; onSaved: () => void }) {
+  const [costCodeId, setCostCodeId] = useState("");
+  const [name, setName] = useState("");
+  const [eacMethod, setEacMethod] = useState<EacMethod>("Cost Details");
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  async function save() {
+    const trimmedId = costCodeId.trim();
+    const trimmedName = name.trim();
+    if (!trimmedId || !trimmedName) return;
+    setSaving(true);
+    setError("");
+    try {
+      await createCostCode({
+        project_id: projectId,
+        ...blankForm,
+        cost_code_id: trimmedId,
+        name: trimmedName,
+        eac_method: eacMethod,
+      });
+      onSaved();
+    } catch (requestError) {
+      setError(costCodeErrorMessage(requestError));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return <>
+    <button className="drawer-scrim" aria-label="Close" onClick={() => !saving && onClose()}/>
+    <aside className="admin-drawer">
+      <header>
+        <div><span>New</span><h2>Cost Code</h2></div>
+        <button onClick={onClose} disabled={saving}>×</button>
+      </header>
+      <div className="drawer-body">
+        <div className="form-grid">
+          {error && <div className="form-error">{error}</div>}
+          <label className="form-field"><span>Cost Code ID <b>*</b></span><input autoFocus maxLength={30} value={costCodeId} onChange={(event) => setCostCodeId(event.target.value)}/></label>
+          <label className="form-field"><span>Cost Code Name <b>*</b></span><input maxLength={100} value={name} onChange={(event) => setName(event.target.value)}/></label>
+          <label className="form-field"><span>EAC Method <b>*</b></span><select value={eacMethod} onChange={(event) => setEacMethod(event.target.value as EacMethod)}>{EAC_METHODS.map((item) => <option key={item}>{item}</option>)}</select></label>
+        </div>
+      </div>
+      <footer>
+        <button className="button secondary" disabled={saving} onClick={onClose}>Cancel</button>
+        <button className="button primary" disabled={saving || !costCodeId.trim() || !name.trim()} onClick={() => void save()}>{saving ? "Saving…" : "Save"}</button>
+      </footer>
+    </aside>
+  </>;
 }
 
 function CostCodeForm({ projectId, value, enterpriseAttributes, projectAttributes, onClose, onSaved }: { projectId: string; value: CostCode | null; enterpriseAttributes: EnterpriseAttributeDefinition[]; projectAttributes: ProjectAttributeDefinition[]; onClose: () => void; onSaved: () => void }) {
