@@ -4,3 +4,6 @@
 .system-enterprises-table{min-width:1080px}.system-enterprises-table th:nth-child(1){width:125px}.system-enterprises-table th:nth-child(2){width:190px}.system-enterprises-table th:nth-child(3){width:90px}.system-enterprises-table th:nth-child(4),.system-enterprises-table th:nth-child(5){width:80px;text-align:center}.system-enterprises-table th:nth-child(6){width:230px}.system-enterprises-table th:nth-child(7){width:120px}.system-enterprises-table th:nth-child(8){width:150px}.system-enterprises-table .count-cell{text-align:center;font-weight:700;color:#344054}
 
 .enterprise-toolbar .toolbar-add{margin-left:auto;white-space:nowrap}
+
+/* Maximise table workspace: page context is already shown in the fixed top header. */
+.enterprise-admin-page:has(> .enterprise-grid-card){gap:0}.enterprise-admin-page:has(> .enterprise-grid-card)>.enterprise-page-title{display:none}
