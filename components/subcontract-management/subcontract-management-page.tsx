@@ -554,7 +554,7 @@ export default function SubcontractManagementPage({ projectPublicId, bulkLineIte
 
   return <div className="enterprise-admin-page" style={selectedSubcontract && !bulkLineItems ? { position: "fixed", inset: 0, zIndex: 12000, background: "#f5f7fa", display: "flex", flexDirection: "column", padding: 0 } : undefined}>
     {selectedSubcontract && !bulkLineItems ? <header style={{ minHeight: 58, background: "#fff", borderBottom: "1px solid #dfe4ea", display: "flex", alignItems: "center", gap: 12, padding: "7px 12px" }}>
-      <button className="button secondary compact" onClick={() => { setSelectedSubcontract(null); setSelectedLineItemIds([]); void refresh(); }}>← Back</button>
+      <button className="button secondary compact" onClick={() => { setSelectedSubcontract(null); setSelectedLineItemIds([]); setLineItems([]); }}>← Back</button>
       <div><div style={{ fontSize: 16, fontWeight: 700 }}>Subcontract Line Items</div><div style={{ fontSize: 12, color: "#68707d" }}><strong>{selectedSubcontract.subcontract_id}</strong> · {selectedSubcontract.subcontract_name}</div></div>
       <div style={{ marginLeft: "auto", fontSize: 11, color: saving ? "#2563eb" : "#68707d" }}>{saving ? "Saving…" : "Auto-save enabled"}</div>
     </header> : <div className="enterprise-page-title"><div><h2>{title}</h2><p>{subtitle}</p></div>
