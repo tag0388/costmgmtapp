@@ -14,7 +14,6 @@ type RouteContext = { enterprisePublicId?: string; projectPublicId?: string; mod
 const userPermissions: Permission[] = ["project-admin", "enterprise-admin"];
 
 const modules: Module[] = [
-  { name: "Project Dashboard", path: "/project-dashboard", icon: "dashboard", scope: "project" },
   { name: "Project Admin", path: "/project-admin", icon: "settings", scope: "project", permission: "project-admin" },
   { name: "Cost Management", path: "/cost-management", icon: "coins", scope: "project" },
   { name: "Change Management", path: "/change-management", icon: "change", scope: "project" },
@@ -25,7 +24,6 @@ const modules: Module[] = [
 ];
 
 const menus: Record<string, MenuGroup[]> = {
-  "/project-dashboard": [{ items: [item("Overview", "overview", "dashboard")] }],
   "/project-admin": [{ label: "Project setup", items: [item("General Info", "general-info", "info"), item("Project Line-Item Attributes", "line-item-attributes", "sliders"), item("Project Calendar", "calendar", "calendar"), item("Access Control", "access-control", "users")] }],
   "/cost-management": [
     { label: "Overview", items: [item("Cost Codes", "cost-codes", "tag"), item("Timephasing", "timephasing", "chart")] },
@@ -66,10 +64,10 @@ function Icon({ name, size = 18 }: { name: string; size?: number }) { return <sv
 function parseRoute(pathname: string): RouteContext {
   const parts = pathname.split("/").filter(Boolean);
   if (parts[0] === "enterprises" && parts[1]) {
-    if (parts[2] === "projects" && parts[3]) return { enterprisePublicId: parts[1], projectPublicId: parts[3], modulePath: `/${parts[4] ?? "project-dashboard"}`, submodulePath: parts[5] };
+    if (parts[2] === "projects" && parts[3]) return { enterprisePublicId: parts[1], projectPublicId: parts[3], modulePath: `/${parts[4] ?? "cost-management"}`, submodulePath: parts[5] };
     return { enterprisePublicId: parts[1], modulePath: `/${parts[2] ?? "enterprise-admin"}`, submodulePath: parts[3] };
   }
-  return { modulePath: `/${parts[0] ?? "project-dashboard"}`, submodulePath: parts[1] };
+  return { modulePath: `/${parts[0] ?? "cost-management"}`, submodulePath: parts[1] };
 }
 
 function moduleHref(module: Module, enterprise?: Enterprise | null, project?: Project | null) {
@@ -149,8 +147,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     if (!selectedEnterprise) return;
     const project = projects.find((entry) => entry.public_id === publicId);
     if (!project) return;
-    const targetModule = activeModule.scope === "project" ? activeModule.path : "/project-dashboard";
-    const targetSubmodule = activeModule.scope === "project" ? currentSubPath : "overview";
+    const targetModule = activeModule.scope === "project" ? activeModule.path : "/cost-management";
+    const targetSubmodule = activeModule.scope === "project" ? currentSubPath : "cost-codes";
     router.push(`/enterprises/${selectedEnterprise.public_id}/projects/${project.public_id}${targetModule}/${targetSubmodule}`);
   }
 
