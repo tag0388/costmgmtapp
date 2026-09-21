@@ -14,7 +14,7 @@ import { getProjectByPublicId, Project } from "@/lib/projects";
 import { costCalculationErrorMessage, recalculateProjectCostManagement } from "@/lib/cost-calculation";
 import { deleteProjectGridView, gridViewErrorMessage, listProjectGridViews, ProjectGridView, saveProjectGridView } from "@/lib/grid-views";
 import {
-  Subcontract, SubcontractAttributeField, SubcontractAttributes, SubcontractInput, SubcontractLineItem, SubcontractLineItemInput, SubcontractStatus,
+  Subcontract, SubcontractAttributeField, SubcontractInput, SubcontractLineItem, SubcontractLineItemInput, SubcontractStatus,
   bulkUpdateSubcontractLineItems, bulkUpdateSubcontracts, createSubcontract, createSubcontractLineItem, createSubcontractLineItems,
   deleteSubcontractLineItems, deleteSubcontracts, listSubcontractLineItems, listSubcontracts,
   subcontractManagementErrorMessage, updateSubcontract, updateSubcontractLineItem,
@@ -22,7 +22,6 @@ import {
 
 const gridTheme = themeQuartz.withParams({ spacing: 4, rowHeight: 30, headerHeight: 34, fontSize: 12 });
 const STATUSES: SubcontractStatus[] = ["Active", "On Hold", "Cancelled"];
-const KEEP = "__keep__";
 const CLEAR = "__clear__";
 type AttributeDefinition = EnterpriseAttributeDefinition | ProjectAttributeDefinition;
 type ActiveAttribute = { prefix: "E" | "P"; field: SubcontractAttributeField; definition: AttributeDefinition; columnName: string };
@@ -30,6 +29,8 @@ type HeaderForm = SubcontractInput;
 type LineForm = SubcontractLineItemInput;
 type HeaderGridRow = Subcontract & { action: string };
 type LineGridRow = SubcontractLineItem & { subcontract_ref: string; subcontract_name: string; cost_code_ref: string; cost_code_label: string };
+type AnyGridRow = HeaderGridRow | LineGridRow;
+type BulkChoice = { id: string; label: string; kind: "status" | "subcontract" | "costCode" | "text" | "number" | "attribute"; attribute?: ActiveAttribute };
 
 const blankHeader: HeaderForm = { subcontract_id: "", subcontract_name: "", status: "Active" };
 
@@ -118,7 +119,7 @@ export default function SubcontractManagementPage({ projectPublicId, bulkLineIte
   const [selectedHeaderIds, setSelectedHeaderIds] = useState<string[]>([]);
   const [selectedLineIds, setSelectedLineIds] = useState<string[]>([]);
   const [insertAfterId, setInsertAfterId] = useState<string | null>(null);
-  const [gridApi, setGridApi] = useState<GridApi<HeaderGridRow | LineGridRow> | null>(null);
+  const [gridApi, setGridApi] = useState<GridApi<AnyGridRow> | null>(null);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -211,7 +212,7 @@ export default function SubcontractManagementPage({ projectPublicId, bulkLineIte
       .catch((requestError) => setError(gridViewErrorMessage(requestError)));
   }, [gridKey, project]);
 
-  const attributeColumns = useCallback((attributes: ActiveAttribute[], editable: boolean): ColDef<HeaderGridRow | LineGridRow>[] => attributes.map((attribute, index) => ({
+  const attributeColumns = useCallback((attributes: ActiveAttribute[], editable: boolean): ColDef<AnyGridRow>[] => attributes.map((attribute, index) => ({
     colId: attribute.field,
     headerName: attribute.columnName,
     headerTooltip: `${attribute.prefix}${String(attribute.definition.attribute_number).padStart(2, "0")} · ${attribute.definition.name}`,
@@ -219,8 +220,8 @@ export default function SubcontractManagementPage({ projectPublicId, bulkLineIte
     editable,
     filter: "agSetColumnFilter",
     columnGroupShow: index === 0 ? undefined : "open",
-    valueGetter: (params: ValueGetterParams<HeaderGridRow | LineGridRow>) => valueLabel(attribute.definition, params.data?.[attribute.field]),
-    valueSetter: editable ? (params: ValueSetterParams<HeaderGridRow | LineGridRow>) => {
+    valueGetter: (params: ValueGetterParams<AnyGridRow>) => valueLabel(attribute.definition, params.data?.[attribute.field]),
+    valueSetter: editable ? (params: ValueSetterParams<AnyGridRow>) => {
       if (!params.data) return false;
       if (!params.newValue) { params.data[attribute.field] = null; return true; }
       const match = attribute.definition.attribute_values.find((value) =>
@@ -384,7 +385,7 @@ export default function SubcontractManagementPage({ projectPublicId, bulkLineIte
     finally { setRecalculating(false); }
   }
 
-  const bulkChoices = useMemo(() => showingLines
+  const bulkChoices = useMemo<BulkChoice[]>(() => showingLines
     ? [
       ...(bulkLineItems ? [{ id: "subcontract_id", label: "Subcontract", kind: "subcontract" }] : []),
       { id: "cost_code_id", label: "Cost Code", kind: "costCode" },
@@ -398,7 +399,7 @@ export default function SubcontractManagementPage({ projectPublicId, bulkLineIte
       ...headerAttributes.map((a) => ({ id: a.field, label: a.columnName, kind: "attribute", attribute: a })),
     ], [bulkLineItems, headerAttributes, lineAttributes, showingLines]);
 
-  const chosenBulk = bulkChoices.find((choice) => choice.id === bulkField) as (typeof bulkChoices[number] & { attribute?: ActiveAttribute }) | undefined;
+  const chosenBulk = bulkChoices.find((choice) => choice.id === bulkField);
 
   async function applyBulkEdit() {
     if (!selectedIds.length || !chosenBulk) return;
@@ -610,7 +611,7 @@ export default function SubcontractManagementPage({ projectPublicId, bulkLineIte
             quickFilterText={search} getRowId={(params) => params.data.id} rowSelection={{ mode: "multiRow" }}
             selectionColumnDef={{ pinned: "left", width: 46, maxWidth: 46, suppressHeaderMenuButton: true }}
             onSelectionChanged={(event: SelectionChangedEvent<HeaderGridRow>) => setSelectedHeaderIds(event.api.getSelectedRows().map((row) => row.id))}
-            onGridReady={(event: GridReadyEvent<HeaderGridRow>) => setGridApi(event.api as unknown as GridApi<HeaderGridRow | LineGridRow>)}
+            onGridReady={(event: GridReadyEvent<HeaderGridRow>) => setGridApi(event.api as unknown as GridApi<AnyGridRow>)}
             rowGroupPanelShow="always" groupDisplayType="multipleColumns" groupTotalRow="bottom" grandTotalRow="pinnedBottom" groupSuppressBlankHeader animateRows
           /> : <AgGridReact<LineGridRow>
             theme={gridTheme} rowData={lineRows} columnDefs={lineColumns}
@@ -619,7 +620,7 @@ export default function SubcontractManagementPage({ projectPublicId, bulkLineIte
             selectionColumnDef={{ pinned: "left", width: 46, maxWidth: 46, suppressHeaderMenuButton: true }}
             onSelectionChanged={(event: SelectionChangedEvent<LineGridRow>) => { const rows = event.api.getSelectedRows(); setSelectedLineIds(rows.map((row) => row.id)); if (rows.length) setInsertAfterId(rows.at(-1)!.id); }}
             onCellFocused={(event) => { const row = event.api.getDisplayedRowAtIndex(event.rowIndex ?? -1)?.data; if (row) setInsertAfterId(row.id); }}
-            onGridReady={(event: GridReadyEvent<LineGridRow>) => setGridApi(event.api as unknown as GridApi<HeaderGridRow | LineGridRow>)}
+            onGridReady={(event: GridReadyEvent<LineGridRow>) => setGridApi(event.api as unknown as GridApi<AnyGridRow>)}
             onCellValueChanged={(event) => void cellChanged(event)}
             rowGroupPanelShow="always" groupDisplayType="multipleColumns" groupTotalRow="bottom" grandTotalRow="pinnedBottom" groupSuppressBlankHeader
             undoRedoCellEditing undoRedoCellEditingLimit={20} animateRows
