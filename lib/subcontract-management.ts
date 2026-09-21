@@ -33,13 +33,16 @@ export type SubcontractLineItem = {
   id: string;
   project_id: string;
   subcontract_id: string;
-  item: string;
+  item: string | null;
   description: string | null;
   unit: string | null;
   qty: number;
   rate: number;
   cost: number;
-  cost_code_id: string;
+  claimed: number | null;
+  certified: number | null;
+  remaining_to_certify: number;
+  cost_code_id: string | null;
   created_by: string | null;
   created_at: string;
   updated_at: string;
@@ -47,7 +50,7 @@ export type SubcontractLineItem = {
 } & SubcontractAttributes;
 
 export type SubcontractInput = Pick<Subcontract, "subcontract_id" | "subcontract_name" | "status"> & SubcontractAttributes;
-export type SubcontractLineItemInput = Pick<SubcontractLineItem, "subcontract_id" | "item" | "description" | "unit" | "qty" | "rate" | "cost_code_id"> &
+export type SubcontractLineItemInput = Pick<SubcontractLineItem, "subcontract_id" | "item" | "description" | "unit" | "qty" | "rate" | "claimed" | "certified" | "cost_code_id"> &
   Partial<Pick<SubcontractLineItem, "row_order">> & SubcontractAttributes;
 
 const subcontractSelect = [
@@ -56,7 +59,7 @@ const subcontractSelect = [
 ].join(",");
 
 const lineItemSelect = [
-  "id", "project_id", "subcontract_id", "item", "description", "unit", "qty", "rate", "cost", "cost_code_id",
+  "id", "project_id", "subcontract_id", "item", "description", "unit", "qty", "rate", "cost", "claimed", "certified", "remaining_to_certify", "cost_code_id",
   "created_by", "created_at", "updated_at", "row_order", ...SUBCONTRACT_ATTRIBUTE_FIELDS,
 ].join(",");
 
@@ -111,6 +114,9 @@ export function listSubcontractLineItems(projectId: string, subcontractId?: stri
     qty: Number(row.qty ?? 0),
     rate: Number(row.rate ?? 0),
     cost: Number(row.cost ?? 0),
+    claimed: row.claimed == null ? null : Number(row.claimed),
+    certified: row.certified == null ? null : Number(row.certified),
+    remaining_to_certify: Number(row.remaining_to_certify ?? row.cost ?? 0),
     row_order: row.row_order == null ? null : Number(row.row_order),
   })));
 }
@@ -120,7 +126,7 @@ export function createSubcontractLineItem(projectId: string, input: SubcontractL
     method: "POST",
     headers: { Prefer: "return=representation" },
     body: JSON.stringify({ project_id: projectId, ...input }),
-  }).then((rows) => ({ ...rows[0], qty: Number(rows[0].qty), rate: Number(rows[0].rate), cost: Number(rows[0].cost), row_order: rows[0].row_order == null ? null : Number(rows[0].row_order) }));
+  }).then((rows) => ({ ...rows[0], qty: Number(rows[0].qty), rate: Number(rows[0].rate), cost: Number(rows[0].cost), claimed: rows[0].claimed == null ? null : Number(rows[0].claimed), certified: rows[0].certified == null ? null : Number(rows[0].certified), remaining_to_certify: Number(rows[0].remaining_to_certify ?? rows[0].cost ?? 0), row_order: rows[0].row_order == null ? null : Number(rows[0].row_order) }));
 }
 
 export function createSubcontractLineItems(projectId: string, inputs: SubcontractLineItemInput[]) {
@@ -129,7 +135,7 @@ export function createSubcontractLineItems(projectId: string, inputs: Subcontrac
     method: "POST",
     headers: { Prefer: "return=representation" },
     body: JSON.stringify(inputs.map((input) => ({ project_id: projectId, ...input }))),
-  }).then((rows) => rows.map((row) => ({ ...row, qty: Number(row.qty), rate: Number(row.rate), cost: Number(row.cost), row_order: row.row_order == null ? null : Number(row.row_order) })));
+  }).then((rows) => rows.map((row) => ({ ...row, qty: Number(row.qty), rate: Number(row.rate), cost: Number(row.cost), claimed: row.claimed == null ? null : Number(row.claimed), certified: row.certified == null ? null : Number(row.certified), remaining_to_certify: Number(row.remaining_to_certify ?? row.cost ?? 0), row_order: row.row_order == null ? null : Number(row.row_order) })));
 }
 
 export function updateSubcontractLineItem(id: string, input: Partial<SubcontractLineItemInput>) {
@@ -137,7 +143,7 @@ export function updateSubcontractLineItem(id: string, input: Partial<Subcontract
     method: "PATCH",
     headers: { Prefer: "return=representation" },
     body: JSON.stringify({ ...input, updated_at: new Date().toISOString() }),
-  }).then((rows) => ({ ...rows[0], qty: Number(rows[0].qty), rate: Number(rows[0].rate), cost: Number(rows[0].cost), row_order: rows[0].row_order == null ? null : Number(rows[0].row_order) }));
+  }).then((rows) => ({ ...rows[0], qty: Number(rows[0].qty), rate: Number(rows[0].rate), cost: Number(rows[0].cost), claimed: rows[0].claimed == null ? null : Number(rows[0].claimed), certified: rows[0].certified == null ? null : Number(rows[0].certified), remaining_to_certify: Number(rows[0].remaining_to_certify ?? rows[0].cost ?? 0), row_order: rows[0].row_order == null ? null : Number(rows[0].row_order) }));
 }
 
 export function deleteSubcontractLineItems(ids: string[]) {
@@ -147,14 +153,14 @@ export function deleteSubcontractLineItems(ids: string[]) {
 
 export function bulkUpdateSubcontractLineItems(
   ids: string[],
-  patch: Partial<Pick<SubcontractLineItem, "subcontract_id" | "cost_code_id" | "unit" | "qty" | "rate">> & SubcontractAttributes,
+  patch: Partial<Pick<SubcontractLineItem, "subcontract_id" | "cost_code_id" | "unit" | "qty" | "rate" | "claimed" | "certified">> & SubcontractAttributes,
 ) {
   if (!ids.length || !Object.keys(patch).length) return Promise.resolve([] as SubcontractLineItem[]);
   return supabaseRequest<SubcontractLineItem[]>(`subcontract_details?id=in.(${ids.map(encodeURIComponent).join(",")})&select=${encodeURIComponent(lineItemSelect)}`, {
     method: "PATCH",
     headers: { Prefer: "return=representation" },
     body: JSON.stringify({ ...patch, updated_at: new Date().toISOString() }),
-  }).then((rows) => rows.map((row) => ({ ...row, qty: Number(row.qty), rate: Number(row.rate), cost: Number(row.cost), row_order: row.row_order == null ? null : Number(row.row_order) })));
+  }).then((rows) => rows.map((row) => ({ ...row, qty: Number(row.qty), rate: Number(row.rate), cost: Number(row.cost), claimed: row.claimed == null ? null : Number(row.claimed), certified: row.certified == null ? null : Number(row.certified), remaining_to_certify: Number(row.remaining_to_certify ?? row.cost ?? 0), row_order: row.row_order == null ? null : Number(row.row_order) })));
 }
 
 export function subcontractManagementErrorMessage(error: unknown) {
@@ -162,7 +168,7 @@ export function subcontractManagementErrorMessage(error: unknown) {
     if (error.code === "23505") return "That Subcontract ID is already used in this project.";
     if (error.code === "23503") return "The selected Subcontract or Cost Code is invalid, or the Subcontract still contains Line Items.";
     if (error.code === "23514" || error.code === "22P02") return "Check the required fields and make sure Qty and Rate are zero or greater.";
-    if (error.code === "23502") return "Subcontract, Item and Cost Code are required for every Line Item.";
+    if (error.code === "23502") return "Subcontract is required for every Line Item.";
     return error.message;
   }
   return error instanceof Error ? error.message : "Something went wrong while working with Subcontract Management.";
