@@ -257,7 +257,9 @@ export default function EnterpriseProjectsPage({ enterprisePublicId }: { enterpr
             aria-label={`Delete ${params.data.name}`}
             onClick={() => setDeleteIds([params.data!.id])}
           >
-            🗑
+            <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 10v6M14 10v6" />
+            </svg>
           </button>
         ) : null,
       },
@@ -548,7 +550,7 @@ export default function EnterpriseProjectsPage({ enterprisePublicId }: { enterpr
                 ? <>Are you sure you want to permanently delete <strong>{deleteProjectsList[0]?.project_code} - {deleteProjectsList[0]?.name}</strong>?</>
                 : <>Are you sure you want to permanently delete the selected <strong>{deleteIds.length} projects</strong>?</>}
             </p>
-            <p>This action cannot be undone. Deletion will also remove dependent project data where database relationships allow cascading deletion.</p>
+            <p>This action cannot be undone. If dependent project data prevents deletion, the project will remain unchanged and the delete will be blocked.</p>
             <div className="confirm-actions">
               <button className="button secondary" disabled={deleting} onClick={() => setDeleteIds(null)}>Cancel</button>
               <button className="button danger" disabled={deleting} onClick={() => void confirmDelete()}>{deleting ? "Deleting…" : "Yes, Delete"}</button>
