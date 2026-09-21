@@ -56,9 +56,9 @@ export default function EnterprisesPage() {
       <div className="enterprise-toolbar">
         <label className="enterprise-search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search code, name or domain…" aria-label="Search enterprises" /></label>
         <label className="status-filter"><span>Status</span><select value={status} onChange={(event) => setStatus(event.target.value as StatusFilter)}><option value="all">All</option><option value="active">Active</option><option value="inactive">Inactive</option></select></label>
-        <button className="button secondary" onClick={() => void refresh()} disabled={loading}>↻ Refresh</button>
         <button className="button secondary" disabled={!selected} onClick={() => selected && setEditing(selected)}>Edit</button>
         <button className="button secondary" disabled={!selected} onClick={() => selected && (selected.active ? setConfirming(selected) : void toggleStatus(selected))}>{selected?.active ? "Deactivate" : "Activate"}</button>
+        <button className="button secondary" onClick={() => void refresh()} disabled={loading}>↻ Refresh</button>
       </div>
       {error && <div className="data-message error"><strong>Unable to load enterprises</strong><span>{error}</span><button onClick={() => void refresh()}>Try again</button></div>}
       {!error && loading && <div className="data-message"><span className="spinner"/>Loading enterprises…</div>}
