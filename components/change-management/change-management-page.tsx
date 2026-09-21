@@ -475,7 +475,6 @@ export default function ChangeManagementPage({ projectPublicId, bulkRecords = fa
         <button className="button secondary" disabled={loading || recalculating} onClick={() => void refresh()}>↻ Refresh</button>
         {!selectedOrder && <button className="button primary toolbar-add" disabled={bulkRecords && !orders.length} onClick={bulkRecords ? openNewRecord : openNewOrder}>+ Add</button>}
       </div>
-      {(!selectedOrder || bulkRecords) && }
       {error && <div className="data-message error"><strong>Unable to load Change Management</strong><span>{error}</span></div>}
       {!error && loading && <div className="data-message"><span className="spinner"/>Loading Change Management…</div>}
       {!error && !loading && <AgGridProvider modules={[AllEnterpriseModule]} licenseKey={process.env.NEXT_PUBLIC_AG_GRID_LICENSE_KEY ?? ""}><div style={{ height: selectedOrder && !bulkRecords ? "auto" : 640, flex: selectedOrder && !bulkRecords ? 1 : undefined, minHeight: selectedOrder && !bulkRecords ? 360 : undefined, width: "100%", padding: selectedOrder && !bulkRecords ? "8px 12px 10px" : undefined, boxSizing: "border-box" }}>

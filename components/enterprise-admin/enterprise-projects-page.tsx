@@ -289,7 +289,6 @@ export default function EnterpriseProjectsPage({ enterprisePublicId }: { enterpr
     ];
   }, [activeAttributes]);
 
-  const selectedProjects = useMemo(() => projects.filter((project) => selectedIds.includes(project.id)), [projects, selectedIds]);
 
   function onGridReady(event: GridReadyEvent<Project>) {
     setGridApi(event.api);
