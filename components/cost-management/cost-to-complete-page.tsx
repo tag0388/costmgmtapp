@@ -377,15 +377,15 @@ export default function CostToCompletePage({ projectPublicId }: { projectPublicI
     <section className="enterprise-grid-card">
       <div className="enterprise-toolbar" style={{ flexWrap: "wrap" }}>
         <label className="enterprise-search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search Cost to Complete…" /></label>
-        <select className="button secondary" value={selectedView} onChange={(event) => applyView(event.target.value)}><option value="Default">Default View</option>{views.map((view) => <option key={view.id} value={view.id}>{view.view_name}</option>)}</select>
-        <button className="button secondary" onClick={() => setShowSaveView(true)} disabled={!gridApi}>Save View</button>
-        <button className="button secondary" onClick={() => void deleteView()} disabled={selectedView === "Default"}>Delete View</button>
         <button className="button secondary" disabled={!hasGroups} onClick={() => gridApi?.expandAll()}>Expand All</button>
         <button className="button secondary" disabled={!hasGroups} onClick={() => gridApi?.collapseAll()}>Collapse All</button>
         <button className="button secondary" onClick={() => setShowChart((current) => !current)}>{showChart ? "▴ Hide Cost Chart" : "▾ Show Cost Chart"}</button>
         <button className="button secondary" onClick={exportRows}>⇩ Export</button>
         <button className="button secondary" onClick={() => fileRef.current?.click()}>⇧ Import</button>
         <input ref={fileRef} hidden type="file" accept=".xlsx,.xls" onChange={(event) => void chooseImport(event.target.files?.[0])}/>
+        <label className="status-filter"><span>View</span><select value={selectedView} onChange={(event) => applyView(event.target.value)}><option value="Default">Default</option>{views.map((view) => <option key={view.id} value={view.id}>{view.view_name}</option>)}</select></label>
+        <button className="button secondary" onClick={() => setShowSaveView(true)} disabled={!gridApi}>Save View</button>
+        <button className="button secondary" onClick={() => void deleteView()} disabled={selectedView === "Default"}>Delete View</button>
         <button className="button secondary" disabled={loading || importing} onClick={() => void refresh()}>↻ Refresh</button>
       </div>
 
