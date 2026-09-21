@@ -309,6 +309,14 @@ export default function EnterpriseProjectsPage({ enterprisePublicId }: { enterpr
     gridApi.setFilterModel(view.grid_state.filterModel ?? null);
   }
 
+  useEffect(() => {
+    if (!gridApi || selectedView === "Default") return;
+    const view = views.find((entry) => entry.id === selectedView);
+    if (!view) return;
+    gridApi.applyColumnState({ state: view.grid_state.columnState as ColumnState[], applyOrder: true });
+    gridApi.setFilterModel(view.grid_state.filterModel ?? null);
+  }, [gridApi, selectedView, views, columnDefs]);
+
   async function saveView() {
     if (!enterprise || !gridApi) return;
     try {
@@ -523,10 +531,6 @@ export default function EnterpriseProjectsPage({ enterprisePublicId }: { enterpr
           <button className="button secondary" disabled={selectedView === "Default"} onClick={() => void deleteView()}>Delete View</button>
           <button className="button secondary" onClick={() => void refresh()} disabled={loading || saving}>↻ Refresh</button>
           <button className="button primary toolbar-add" disabled={!enterprise} onClick={() => setEditingProject("new")}>+ Add</button>
-        </div>
-
-        <div className="data-message" style={{ minHeight: 48 }}>
-          <span>Project Name, Status and Enterprise Attributes are editable inline. Project Code and System fields are read-only. Use the Columns/Filters panel on the right or right-click a column header to show, hide, pin, group or filter columns.</span>
         </div>
 
         {error && <div className="data-message error"><strong>Enterprise Projects error</strong><span>{error}</span></div>}
