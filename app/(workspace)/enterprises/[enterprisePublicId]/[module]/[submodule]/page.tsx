@@ -2,8 +2,6 @@ import "@/app/system-admin-enterprises.css";
 import "@/app/system-admin-enterprises-shell-overrides.css";
 import "@/app/enterprise-admin-settings.css";
 import "@/app/enterprise-project-attributes.css";
-import EnterpriseCalendarCopyAction from "@/components/enterprise-admin/enterprise-calendar-copy-action";
-import EnterpriseCalendarsPage from "@/components/enterprise-admin/enterprise-calendars-page";
 import EnterpriseChangeAttributesPage from "@/components/enterprise-admin/enterprise-change-attributes-page";
 import EnterpriseCostCodeAttributesPage from "@/components/enterprise-admin/enterprise-cost-code-attributes-page";
 import EnterpriseLineItemAttributesPage from "@/components/enterprise-admin/enterprise-line-item-attributes-page";
@@ -23,7 +21,6 @@ export default async function EnterpriseContextPage({ params }: { params: Promis
   if (submodule === "projects") return <EnterpriseProjectsPage enterprisePublicId={enterprisePublicId} />;
   if (submodule === "project-attributes") return <EnterpriseProjectAttributesPage enterprisePublicId={enterprisePublicId} />;
   if (submodule === "line-item-attributes") return <EnterpriseLineItemAttributesPage enterprisePublicId={enterprisePublicId} />;
-  if (submodule === "calendars") return <div style={{ display: "flex", flexDirection: "column", gap: 10 }}><div style={{ display: "flex", justifyContent: "flex-end" }}><EnterpriseCalendarCopyAction enterprisePublicId={enterprisePublicId}/></div><EnterpriseCalendarsPage enterprisePublicId={enterprisePublicId}/></div>;
   if (submodule === "cost-code-attributes") return <EnterpriseCostCodeAttributesPage enterprisePublicId={enterprisePublicId} />;
   if (submodule === "resource-rates") return <EnterpriseResourceRatesPage enterprisePublicId={enterprisePublicId} />;
   if (submodule === "change-attributes") return <EnterpriseChangeAttributesPage enterprisePublicId={enterprisePublicId} />;
