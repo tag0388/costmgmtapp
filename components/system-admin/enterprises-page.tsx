@@ -51,7 +51,7 @@ export default function EnterprisesPage() {
   }
 
   return <div className="enterprise-admin-page">
-    <div className="enterprise-page-title"><div><h2>Enterprises</h2><p>Manage enterprise records and approved email domains.</p></div><button className="button primary" onClick={() => setEditing("new")}>+ Add Enterprise</button></div>
+    <div className="enterprise-page-title"><div><h2>Enterprises</h2><p>Manage enterprise records and approved email domains.</p></div></div>
     <section className="enterprise-grid-card">
       <div className="enterprise-toolbar">
         <label className="enterprise-search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search code, name or domain…" aria-label="Search enterprises" /></label>
@@ -59,6 +59,7 @@ export default function EnterprisesPage() {
         <button className="button secondary" disabled={!selected} onClick={() => selected && setEditing(selected)}>Edit</button>
         <button className="button secondary" disabled={!selected} onClick={() => selected && (selected.active ? setConfirming(selected) : void toggleStatus(selected))}>{selected?.active ? "Deactivate" : "Activate"}</button>
         <button className="button secondary" onClick={() => void refresh()} disabled={loading}>↻ Refresh</button>
+        <button className="button primary toolbar-add" onClick={() => setEditing("new")}>+ Add</button>
       </div>
       {error && <div className="data-message error"><strong>Unable to load enterprises</strong><span>{error}</span><button onClick={() => void refresh()}>Try again</button></div>}
       {!error && loading && <div className="data-message"><span className="spinner"/>Loading enterprises…</div>}
