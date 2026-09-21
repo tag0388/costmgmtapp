@@ -600,8 +600,6 @@ export default function SubcontractManagementPage({ projectPublicId, bulkLineIte
             groupTotalRow="bottom"
             grandTotalRow="pinnedBottom"
             groupSuppressBlankHeader
-            enableCellSelection
-            enableFillHandle
             undoRedoCellEditing
             undoRedoCellEditingLimit={20}
             animateRows
@@ -616,7 +614,6 @@ export default function SubcontractManagementPage({ projectPublicId, bulkLineIte
 
     {subcontractForm && project && <SubcontractDrawer
       value={subcontractForm === "new" ? null : subcontractForm}
-      projectId={project.id}
       attributes={subcontractAttributes}
       saving={saving}
       onClose={() => setSubcontractForm(null)}
@@ -703,8 +700,8 @@ function AttributeFields({ attributes, values, setValues }: { attributes: Active
   </label>)}</>;
 }
 
-function SubcontractDrawer({ value, projectId: _projectId, attributes, saving, onClose, onSave }: {
-  value: Subcontract | null; projectId: string; attributes: ActiveAttribute[]; saving: boolean; onClose: () => void;
+function SubcontractDrawer({ value, attributes, saving, onClose, onSave }: {
+  value: Subcontract | null; attributes: ActiveAttribute[]; saving: boolean; onClose: () => void;
   onSave: (input: { subcontract_id: string; subcontract_name: string; status: SubcontractStatus } & Record<string, string | null>) => Promise<void>;
 }) {
   const [subcontractId, setSubcontractId] = useState(value?.subcontract_id ?? "");
