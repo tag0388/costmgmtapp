@@ -14,7 +14,7 @@ import { getProjectByPublicId, Project } from "@/lib/projects";
 import { costCalculationErrorMessage, recalculateProjectCostManagement } from "@/lib/cost-calculation";
 import {
   Subcontract, SubcontractAttributeField, SubcontractLineItem, SubcontractLineItemInput, SubcontractStatus,
-  bulkUpdateSubcontractLineItems, bulkUpdateSubcontracts, createSubcontract, createSubcontractLineItem,
+  bulkUpdateSubcontractLineItems, bulkUpdateSubcontracts, createSubcontract, createSubcontractLineItem, createSubcontractLineItems,
   deleteSubcontractLineItems, deleteSubcontracts, listSubcontractLineItems, listSubcontracts,
   subcontractManagementErrorMessage, updateSubcontract, updateSubcontractLineItem,
 } from "@/lib/subcontract-management";
@@ -88,6 +88,8 @@ export default function SubcontractManagementPage({ projectPublicId, bulkLineIte
   const [lineItemForm, setLineItemForm] = useState<SubcontractLineItem | "new" | null>(null);
   const [selectedSubcontractIds, setSelectedSubcontractIds] = useState<string[]>([]);
   const [selectedLineItemIds, setSelectedLineItemIds] = useState<string[]>([]);
+  const [insertAfterLineItemId, setInsertAfterLineItemId] = useState<string | null>(null);
+  const [addCount, setAddCount] = useState(1);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -164,7 +166,7 @@ export default function SubcontractManagementPage({ projectPublicId, bulkLineIte
     .sort((a, b) => (a.row_order ?? Number.MAX_SAFE_INTEGER) - (b.row_order ?? Number.MAX_SAFE_INTEGER) || a.created_at.localeCompare(b.created_at))
     .map((item) => {
       const subcontract = subcontractById.get(item.subcontract_id);
-      const code = costCodeById.get(item.cost_code_id);
+      const code = item.cost_code_id ? costCodeById.get(item.cost_code_id) : undefined;
       return {
         ...item,
         subcontract_ref: subcontract?.subcontract_id ?? "",
@@ -241,15 +243,22 @@ export default function SubcontractManagementPage({ projectPublicId, bulkLineIte
         { field: "description", headerName: "Description", minWidth: 240, editable: true, filter: true, columnGroupShow: "open" },
         { field: "unit", headerName: "Unit", minWidth: 90, editable: true, filter: "agSetColumnFilter", columnGroupShow: "open" },
         { field: "cost_code_ref", headerName: "Cost Code", minWidth: 210, editable: true, enableRowGroup: true, filter: "agSetColumnFilter",
-          cellEditor: "agSelectCellEditor", cellEditorParams: { values: costCodes.filter((code) => code.is_active).map((code) => `${code.cost_code_id} - ${code.name}`) } },
+          cellEditor: "agSelectCellEditor", cellEditorParams: { values: ["", ...costCodes.filter((code) => code.is_active).map((code) => `${code.cost_code_id} - ${code.name}`)] } },
       ]},
       { groupId: "li-value", headerName: "Value", marryChildren: true, openByDefault: true, children: [
         { field: "qty", headerName: "Qty", minWidth: 105, editable: true, type: "numericColumn", aggFunc: "sum", enableValue: true,
           valueParser: (params) => { const value = Number(String(params.newValue ?? "").replace(/,/g, "")); return Number.isFinite(value) && value >= 0 ? value : params.oldValue; } },
         { field: "rate", headerName: "Rate", minWidth: 110, editable: true, type: "numericColumn", enableValue: true,
           valueParser: (params) => { const value = Number(String(params.newValue ?? "").replace(/,/g, "")); return Number.isFinite(value) && value >= 0 ? value : params.oldValue; }, valueFormatter: (params) => money(params.value) },
-        { field: "cost", headerName: "Cost", minWidth: 125, editable: false, type: "numericColumn", aggFunc: "sum", enableValue: true,
+        { field: "cost", headerName: "Total", minWidth: 125, editable: false, type: "numericColumn", aggFunc: "sum", enableValue: true,
           valueGetter: (params) => Number(params.data?.qty ?? 0) * Number(params.data?.rate ?? 0), valueFormatter: (params) => money(params.value),
+          cellStyle: { backgroundColor: "#f8fafc", fontWeight: 600 } },
+        { field: "claimed", headerName: "Claimed", minWidth: 125, editable: true, type: "numericColumn", aggFunc: "sum", enableValue: true,
+          valueParser: (params) => { const text = String(params.newValue ?? "").trim(); if (!text) return null; const value = Number(text.replace(/,/g, "")); return Number.isFinite(value) ? value : params.oldValue; }, valueFormatter: (params) => params.value == null ? "" : money(params.value) },
+        { field: "certified", headerName: "Certified", minWidth: 125, editable: true, type: "numericColumn", aggFunc: "sum", enableValue: true,
+          valueParser: (params) => { const text = String(params.newValue ?? "").trim(); if (!text) return null; const value = Number(text.replace(/,/g, "")); return Number.isFinite(value) ? value : params.oldValue; }, valueFormatter: (params) => params.value == null ? "" : money(params.value) },
+        { field: "remaining_to_certify", headerName: "Remaining to Certify", minWidth: 165, editable: false, type: "numericColumn", aggFunc: "sum", enableValue: true,
+          valueGetter: (params) => Number(params.data?.qty ?? 0) * Number(params.data?.rate ?? 0) - Number(params.data?.certified ?? 0), valueFormatter: (params) => money(params.value),
           cellStyle: { backgroundColor: "#f8fafc", fontWeight: 600 } },
       ]},
       ...(enterprise.length ? [{ groupId: "li-enterprise", headerName: "Enterprise Line-Item Attributes", marryChildren: true, openByDefault: true, children: enterprise }] : []),
@@ -271,11 +280,14 @@ export default function SubcontractManagementPage({ projectPublicId, bulkLineIte
         patch.subcontract_id = target.id;
       } else if (colId === "cost_code_ref") {
         const reference = String(event.newValue ?? "").split(" - ", 1)[0].trim();
-        const code = costCodeByRef.get(reference.toLowerCase());
-        if (!code) throw new Error("Select a valid Cost Code.");
-        patch.cost_code_id = code.id;
+        if (!reference) patch.cost_code_id = null;
+        else {
+          const code = costCodeByRef.get(reference.toLowerCase());
+          if (!code) throw new Error("Select a valid Cost Code.");
+          patch.cost_code_id = code.id;
+        }
       } else if (colId === "item") {
-        patch.item = String(event.newValue ?? "").trim();
+        patch.item = String(event.newValue ?? "").trim() || null;
       } else if (colId === "description") {
         patch.description = String(event.newValue ?? "").trim() || null;
       } else if (colId === "unit") {
@@ -284,15 +296,64 @@ export default function SubcontractManagementPage({ projectPublicId, bulkLineIte
         const value = Number(event.newValue);
         if (!Number.isFinite(value) || value < 0) throw new Error(`${colId === "qty" ? "Qty" : "Rate"} must be zero or greater.`);
         patch[colId] = value;
+      } else if (colId === "claimed" || colId === "certified") {
+        const text = String(event.newValue ?? "").trim();
+        if (!text) patch[colId] = null;
+        else {
+          const value = Number(text.replace(/,/g, ""));
+          if (!Number.isFinite(value)) throw new Error(`${colId === "claimed" ? "Claimed" : "Certified"} must be a number.`);
+          patch[colId] = value;
+        }
       } else if (colId.startsWith("e_attribute_") || colId.startsWith("p_attribute_")) {
         (patch as Record<string, unknown>)[colId] = row[colId as SubcontractAttributeField] ?? null;
       } else return;
       const saved = await updateSubcontractLineItem(row.id, patch);
       setLineItems((current) => current.map((item) => item.id === saved.id ? saved : item));
-      event.api.refreshCells({ rowNodes: [event.node], columns: ["cost"], force: true });
+      event.api.refreshCells({ rowNodes: [event.node], columns: ["cost", "remaining_to_certify"], force: true });
       showNotice("Line Item saved. Recalculate to refresh Subcontract and Cost Code summaries.");
     } catch (requestError) {
       event.node.setDataValue(event.column, event.oldValue);
+      setError(subcontractManagementErrorMessage(requestError));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function insertionOrders(count: number) {
+    const safeCount = Math.max(1, Math.min(100, Math.trunc(count || 1)));
+    const rows = lineItemRows;
+    const anchorIndex = insertAfterLineItemId ? rows.findIndex((row) => row.id === insertAfterLineItemId) : -1;
+    const index = anchorIndex >= 0 ? anchorIndex : rows.length - 1;
+    const current = index >= 0 ? rows[index].row_order ?? (index + 1) * 1000 : 0;
+    const next = index + 1 < rows.length ? rows[index + 1].row_order ?? (index + 2) * 1000 : current + (safeCount + 1) * 1000;
+    if (next > current) return Array.from({ length: safeCount }, (_, itemIndex) => current + ((next - current) * (itemIndex + 1)) / (safeCount + 1));
+    return Array.from({ length: safeCount }, (_, itemIndex) => current + (itemIndex + 1) * 1000);
+  }
+
+  async function addLedgerRows() {
+    if (!project || !selectedSubcontract || bulkLineItems) return;
+    const safeCount = Math.max(1, Math.min(100, Math.trunc(addCount || 1)));
+    setSaving(true);
+    setError("");
+    try {
+      const orders = insertionOrders(safeCount);
+      const created = await createSubcontractLineItems(project.id, orders.map((rowOrder) => ({
+        subcontract_id: selectedSubcontract.id,
+        cost_code_id: null,
+        item: null,
+        description: null,
+        unit: null,
+        qty: 0,
+        rate: 0,
+        claimed: null,
+        certified: null,
+        row_order: rowOrder,
+        ...Object.fromEntries(lineItemAttributes.map((attribute) => [attribute.field, null])),
+      })));
+      setLineItems((current) => [...current, ...created]);
+      setInsertAfterLineItemId(created.at(-1)?.id ?? null);
+      showNotice(`${safeCount} row${safeCount === 1 ? "" : "s"} added${insertAfterLineItemId || selectedLineItemIds.length ? " below the selection" : ""}.`);
+    } catch (requestError) {
       setError(subcontractManagementErrorMessage(requestError));
     } finally {
       setSaving(false);
@@ -319,21 +380,24 @@ export default function SubcontractManagementPage({ projectPublicId, bulkLineIte
     ...subcontractAttributes.map((attribute) => `${attribute.prefix}${String(attribute.definition.attribute_number).padStart(2, "0")} - ${attribute.definition.name}`),
   ], [subcontractAttributes]);
   const lineItemExcelColumns = useMemo(() => [
-    "Line Item Record ID", "Subcontract ID", "Item", "Description", "Unit", "Qty", "Rate", "Cost Code ID",
+    "Subcontract ID", "Item", "Description", "Unit", "Qty", "Rate", "Total", "Claimed", "Certified", "Remaining to Certify", "Cost Code ID",
     ...lineItemAttributes.map((attribute) => `${attribute.prefix}${String(attribute.definition.attribute_number).padStart(2, "0")} - ${attribute.definition.name}`),
   ], [lineItemAttributes]);
 
   function exportCurrent() {
     if (showingLineItems) {
       const rows: ExcelRow[] = lineItemRows.map((row) => ({
-        "Line Item Record ID": row.id,
         "Subcontract ID": row.subcontract_ref,
-        "Item": row.item,
+        "Item": row.item ?? "",
         "Description": row.description ?? "",
         "Unit": row.unit ?? "",
         "Qty": String(row.qty),
         "Rate": String(row.rate),
-        "Cost Code ID": costCodeById.get(row.cost_code_id)?.cost_code_id ?? "",
+        "Total": String(row.cost),
+        "Claimed": row.claimed == null ? "" : String(row.claimed),
+        "Certified": row.certified == null ? "" : String(row.certified),
+        "Remaining to Certify": String(row.remaining_to_certify),
+        "Cost Code ID": row.cost_code_id ? costCodeById.get(row.cost_code_id)?.cost_code_id ?? "" : "",
         ...Object.fromEntries(lineItemAttributes.map((attribute) => [
           `${attribute.prefix}${String(attribute.definition.attribute_number).padStart(2, "0")} - ${attribute.definition.name}`,
           row[attribute.field] ?? "",
@@ -374,12 +438,15 @@ export default function SubcontractManagementPage({ projectPublicId, bulkLineIte
           const subcontractRef = String(row["Subcontract ID"] ?? "").trim();
           const costCodeRef = String(row["Cost Code ID"] ?? "").trim();
           if (!subcontractByRef.has(subcontractRef.toLowerCase())) errors.push(`${label}: Subcontract ID does not exist.`);
-          if (!String(row["Item"] ?? "").trim()) errors.push(`${label}: Item is required.`);
-          if (!costCodeByRef.has(costCodeRef.toLowerCase())) errors.push(`${label}: Cost Code ID does not exist.`);
+          if (costCodeRef && !costCodeByRef.has(costCodeRef.toLowerCase())) errors.push(`${label}: Cost Code ID does not exist.`);
           const qty = parseNumber(row["Qty"] ?? "");
           const rate = parseNumber(row["Rate"] ?? "");
           if (!Number.isFinite(qty) || qty < 0) errors.push(`${label}: Qty must be zero or greater.`);
           if (!Number.isFinite(rate) || rate < 0) errors.push(`${label}: Rate must be zero or greater.`);
+          const claimedText = String(row["Claimed"] ?? "").trim();
+          const certifiedText = String(row["Certified"] ?? "").trim();
+          if (claimedText && !Number.isFinite(parseNumber(claimedText))) errors.push(`${label}: Claimed must be a number.`);
+          if (certifiedText && !Number.isFinite(parseNumber(certifiedText))) errors.push(`${label}: Certified must be a number.`);
         }
       });
       setImportMode(mode);
@@ -414,28 +481,28 @@ export default function SubcontractManagementPage({ projectPublicId, bulkLineIte
           setProgress(((index + 1) / Math.max(importRows.length, 1)) * 100);
         }
       } else {
-        const currentById = new Map(lineItems.map((item) => [item.id, item]));
         for (let index = 0; index < importRows.length; index++) {
           const row = importRows[index];
-          const recordId = row["Line Item Record ID"]?.trim();
           const subcontract = subcontractByRef.get(row["Subcontract ID"].trim().toLowerCase())!;
-          const code = costCodeByRef.get(row["Cost Code ID"].trim().toLowerCase())!;
+          const costCodeRef = row["Cost Code ID"]?.trim() ?? "";
+          const code = costCodeRef ? costCodeByRef.get(costCodeRef.toLowerCase()) ?? null : null;
           const attrs = Object.fromEntries(lineItemAttributes.map((attribute) => [
             attribute.field,
             row[`${attribute.prefix}${String(attribute.definition.attribute_number).padStart(2, "0")} - ${attribute.definition.name}`]?.trim() || null,
           ]));
           const input: SubcontractLineItemInput = {
             subcontract_id: subcontract.id,
-            item: row["Item"].trim(),
+            item: row["Item"]?.trim() || null,
             description: row["Description"]?.trim() || null,
             unit: row["Unit"]?.trim() || null,
             qty: parseNumber(row["Qty"]),
             rate: parseNumber(row["Rate"]),
-            cost_code_id: code.id,
+            claimed: String(row["Claimed"] ?? "").trim() ? parseNumber(row["Claimed"]) : null,
+            certified: String(row["Certified"] ?? "").trim() ? parseNumber(row["Certified"]) : null,
+            cost_code_id: code?.id ?? null,
             ...attrs,
           };
-          if (recordId && currentById.has(recordId)) await updateSubcontractLineItem(recordId, input);
-          else await createSubcontractLineItem(project.id, { ...input, row_order: nextRowOrder(lineItems) + index * 1000 });
+          await createSubcontractLineItem(project.id, { ...input, row_order: nextRowOrder(lineItems) + index * 1000 });
           setProgress(((index + 1) / Math.max(importRows.length, 1)) * 100);
         }
       }
@@ -467,6 +534,8 @@ export default function SubcontractManagementPage({ projectPublicId, bulkLineIte
       { id: "unit", label: "Unit" },
       { id: "qty", label: "Qty" },
       { id: "rate", label: "Rate" },
+      { id: "claimed", label: "Claimed" },
+      { id: "certified", label: "Certified" },
       ...lineItemAttributes.map((attribute) => ({
         id: attribute.field,
         label: attribute.columnName,
@@ -499,13 +568,24 @@ export default function SubcontractManagementPage({ projectPublicId, bulkLineIte
           patch.subcontract_id = subcontract.id;
         } else if (bulkField === "cost_code_id") {
           const ref = bulkValue.split(" - ", 1)[0];
-          const code = costCodeByRef.get(ref.toLowerCase());
-          if (!code) throw new Error("Select a valid Cost Code.");
-          patch.cost_code_id = code.id;
+          if (!ref) patch.cost_code_id = null;
+          else {
+            const code = costCodeByRef.get(ref.toLowerCase());
+            if (!code) throw new Error("Select a valid Cost Code.");
+            patch.cost_code_id = code.id;
+          }
         } else if (bulkField === "qty" || bulkField === "rate") {
           const value = Number(bulkValue);
           if (!Number.isFinite(value) || value < 0) throw new Error(`${bulkField === "qty" ? "Qty" : "Rate"} must be zero or greater.`);
           patch[bulkField] = value;
+        } else if (bulkField === "claimed" || bulkField === "certified") {
+          const text = bulkValue.trim();
+          if (!text) patch[bulkField] = null;
+          else {
+            const value = Number(text.replace(/,/g, ""));
+            if (!Number.isFinite(value)) throw new Error(`${bulkField === "claimed" ? "Claimed" : "Certified"} must be a number.`);
+            patch[bulkField] = value;
+          }
         } else if (bulkField === "unit") patch.unit = bulkValue.trim() || null;
         else {
           const choice = bulkChoices.find((item) => item.id === bulkField) as { attribute?: ActiveAttribute } | undefined;
@@ -565,7 +645,7 @@ export default function SubcontractManagementPage({ projectPublicId, bulkLineIte
       <div className="enterprise-toolbar" style={{ flexWrap: "wrap" }}>
         <label className="enterprise-search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={showingLineItems ? "Search Line Items…" : "Search Subcontracts…"}/></label>
         <button className="button secondary" disabled={loading || saving || recalculating} onClick={() => void refresh()}>↻ Refresh</button>
-        {showingLineItems && <button className="button secondary" disabled={!project || !subcontracts.length || !costCodes.length} onClick={() => setLineItemForm("new")}>+ Add Line Item</button>}
+        {selectedSubcontract && !bulkLineItems ? <span style={{ display: "inline-flex", alignItems: "stretch" }}><button className="button primary" style={{ borderTopRightRadius: 0, borderBottomRightRadius: 0 }} disabled={!project || saving} onClick={() => void addLedgerRows()}>+ Add Row{addCount === 1 ? "" : "s"}</button><input aria-label="Number of rows to add" title="Rows to add (1–100)" type="number" min={1} max={100} value={addCount} onChange={(event) => setAddCount(Math.max(1, Math.min(100, Number(event.target.value) || 1)))} style={{ width: 54, border: "1px solid #cbd5e1", borderLeft: 0, borderRadius: "0 6px 6px 0", padding: "0 6px", fontSize: 12, textAlign: "center" }}/></span> : bulkLineItems && <button className="button secondary" disabled={!project || !subcontracts.length} onClick={() => setLineItemForm("new")}>+ Add Line Item</button>}
         <button className="button secondary" disabled={!selectedIds.length || saving || recalculating} onClick={() => { setBulkField(""); setBulkValue(""); setBulkOpen(true); }}>Bulk Edit ({selectedIds.length})</button>
         <button className="button secondary danger" disabled={!selectedIds.length || saving || recalculating} onClick={() => setDeletePrompt({ kind: showingLineItems ? "lineItems" : "subcontracts", ids: selectedIds })}>Bulk Delete ({selectedIds.length})</button>
         <button className="button secondary" disabled={loading || saving || recalculating} onClick={exportCurrent}>⇩ Export</button>
@@ -590,7 +670,12 @@ export default function SubcontractManagementPage({ projectPublicId, bulkLineIte
             selectionColumnDef={{ pinned: "left", width: 46, maxWidth: 46, suppressHeaderMenuButton: true }}
             onSelectionChanged={(event: SelectionChangedEvent<any>) => {
               const ids = event.api.getSelectedRows().map((row: { id: string }) => row.id);
-              if (showingLineItems) setSelectedLineItemIds(ids); else setSelectedSubcontractIds(ids);
+              if (showingLineItems) {
+                setSelectedLineItemIds(ids);
+                const selectedNodes = event.api.getSelectedNodes().filter((node) => node.data);
+                const last = [...selectedNodes].sort((a, b) => (a.rowIndex ?? -1) - (b.rowIndex ?? -1)).at(-1);
+                if (last?.data?.id) setInsertAfterLineItemId(last.data.id);
+              } else setSelectedSubcontractIds(ids);
             }}
             onGridReady={(event) => setGridApi(event.api)}
             onCellValueChanged={(event) => showingLineItems ? void lineItemChanged(event as CellValueChangedEvent<LineItemGridRow>) : undefined}
@@ -734,7 +819,9 @@ function LineItemDrawer({ value, selectedSubcontract, subcontracts, costCodes, a
   const [unit, setUnit] = useState(value?.unit ?? "");
   const [qty, setQty] = useState(String(value?.qty ?? 0));
   const [rate, setRate] = useState(String(value?.rate ?? 0));
-  const [costCodeId, setCostCodeId] = useState(value?.cost_code_id ?? costCodes.find((code) => code.is_active)?.id ?? "");
+  const [claimed, setClaimed] = useState(value?.claimed == null ? "" : String(value.claimed));
+  const [certified, setCertified] = useState(value?.certified == null ? "" : String(value.certified));
+  const [costCodeId, setCostCodeId] = useState(value?.cost_code_id ?? "");
   const [attrs, setAttrs] = useState<Record<string, string | null>>(Object.fromEntries(attributes.map((attribute) => [attribute.field, value?.[attribute.field] ?? null])));
   const parsedQty = Number(qty);
   const parsedRate = Number(rate);
@@ -744,18 +831,21 @@ function LineItemDrawer({ value, selectedSubcontract, subcontracts, costCodes, a
       <header><div><span>{value ? "Edit" : "New"}</span><h2>Subcontract Line Item</h2></div><button onClick={onClose}>×</button></header>
       <div className="drawer-body"><div className="form-grid">
         <label className="form-field"><span>Subcontract <b>*</b></span><select value={subcontractId} disabled={Boolean(selectedSubcontract)} onChange={(event) => setSubcontractId(event.target.value)}>{subcontracts.map((contract) => <option key={contract.id} value={contract.id}>{contract.subcontract_id} - {contract.subcontract_name}</option>)}</select></label>
-        <label className="form-field"><span>Cost Code <b>*</b></span><select value={costCodeId} onChange={(event) => setCostCodeId(event.target.value)}>{costCodes.filter((code) => code.is_active || code.id === costCodeId).map((code) => <option key={code.id} value={code.id}>{code.cost_code_id} - {code.name}</option>)}</select></label>
-        <label className="form-field"><span>Item <b>*</b></span><input maxLength={80} value={item} onChange={(event) => setItem(event.target.value)}/></label>
+        <label className="form-field"><span>Cost Code</span><select value={costCodeId} onChange={(event) => setCostCodeId(event.target.value)}><option value="">—</option>{costCodes.filter((code) => code.is_active || code.id === costCodeId).map((code) => <option key={code.id} value={code.id}>{code.cost_code_id} - {code.name}</option>)}</select></label>
+        <label className="form-field"><span>Item</span><input maxLength={80} value={item} onChange={(event) => setItem(event.target.value)}/></label>
         <label className="form-field"><span>Description</span><input maxLength={255} value={description ?? ""} onChange={(event) => setDescription(event.target.value)}/></label>
         <label className="form-field"><span>Unit</span><input maxLength={30} value={unit ?? ""} onChange={(event) => setUnit(event.target.value)}/></label>
         <label className="form-field"><span>Qty <b>*</b></span><input type="number" min={0} step="any" value={qty} onChange={(event) => setQty(event.target.value)}/></label>
         <label className="form-field"><span>Rate <b>*</b></span><input type="number" min={0} step="any" value={rate} onChange={(event) => setRate(event.target.value)}/></label>
-        <label className="form-field"><span>Cost</span><input value={money((Number.isFinite(parsedQty) ? parsedQty : 0) * (Number.isFinite(parsedRate) ? parsedRate : 0))} readOnly disabled/></label>
+        <label className="form-field"><span>Total</span><input value={money((Number.isFinite(parsedQty) ? parsedQty : 0) * (Number.isFinite(parsedRate) ? parsedRate : 0))} readOnly disabled/></label>
+        <label className="form-field"><span>Claimed</span><input type="number" step="any" value={claimed} onChange={(event) => setClaimed(event.target.value)}/></label>
+        <label className="form-field"><span>Certified</span><input type="number" step="any" value={certified} onChange={(event) => setCertified(event.target.value)}/></label>
+        <label className="form-field"><span>Remaining to Certify</span><input value={money((Number.isFinite(parsedQty) ? parsedQty : 0) * (Number.isFinite(parsedRate) ? parsedRate : 0) - (certified.trim() ? Number(certified) || 0 : 0))} readOnly disabled/></label>
         <AttributeFields attributes={attributes} values={attrs} setValues={(next) => setAttrs(next as Record<string, string | null>)}/>
       </div></div>
-      <footer><button className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={saving || !subcontractId || !costCodeId || !item.trim() || !Number.isFinite(parsedQty) || parsedQty < 0 || !Number.isFinite(parsedRate) || parsedRate < 0} onClick={() => void onSave({
-        subcontract_id: subcontractId, cost_code_id: costCodeId, item: item.trim(), description: description?.trim() || null, unit: unit?.trim() || null,
-        qty: parsedQty, rate: parsedRate, ...attrs,
+      <footer><button className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={saving || !subcontractId || !Number.isFinite(parsedQty) || parsedQty < 0 || !Number.isFinite(parsedRate) || parsedRate < 0 || (claimed.trim() !== "" && !Number.isFinite(Number(claimed))) || (certified.trim() !== "" && !Number.isFinite(Number(certified)))} onClick={() => void onSave({
+        subcontract_id: subcontractId, cost_code_id: costCodeId || null, item: item.trim() || null, description: description?.trim() || null, unit: unit?.trim() || null,
+        qty: parsedQty, rate: parsedRate, claimed: claimed.trim() ? Number(claimed) : null, certified: certified.trim() ? Number(certified) : null, ...attrs,
       })}>{saving ? "Saving…" : "Save"}</button></footer>
     </aside>
   </>;
