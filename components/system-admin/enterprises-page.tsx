@@ -1,14 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { createEnterprise, enterpriseErrorMessage, Enterprise, EnterpriseInput, listEnterprises, normalizeDomains, setEnterpriseActive, updateEnterprise } from "@/lib/enterprises";
+import { createEnterprise, enterpriseErrorMessage, Enterprise, EnterpriseInput, EnterpriseSummary, listEnterprisesWithCounts, normalizeDomains, setEnterpriseActive, updateEnterprise } from "@/lib/enterprises";
 import { isSupabaseConfigured } from "@/lib/supabase/browser";
 
 type StatusFilter = "all" | "active" | "inactive";
-type SortKey = "enterprise_code" | "name" | "active" | "created_at" | "created_by";
+type SortKey = "enterprise_code" | "name" | "active" | "user_count" | "project_count" | "created_at" | "created_by";
 
 export default function EnterprisesPage() {
-  const [enterprises, setEnterprises] = useState<Enterprise[]>([]);
+  const [enterprises, setEnterprises] = useState<EnterpriseSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -21,7 +21,7 @@ export default function EnterprisesPage() {
 
   const refresh = useCallback(async () => {
     setLoading(true); setError("");
-    try { setEnterprises(await listEnterprises()); }
+    try { setEnterprises(await listEnterprisesWithCounts()); }
     catch (requestError) { setError(enterpriseErrorMessage(requestError)); }
     finally { setLoading(false); }
   }, []);
@@ -51,20 +51,21 @@ export default function EnterprisesPage() {
   }
 
   return <div className="enterprise-admin-page">
-    <div className="enterprise-page-title"><div><h2>Enterprises</h2><p>Manage enterprise records and approved email domains.</p></div><button className="button primary" onClick={() => setEditing("new")}>+ Add Enterprise</button></div>
+    <div className="enterprise-page-title"><div><h2>Enterprises</h2><p>Manage enterprise records and approved email domains.</p></div></div>
     <section className="enterprise-grid-card">
       <div className="enterprise-toolbar">
         <label className="enterprise-search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search code, name or domain…" aria-label="Search enterprises" /></label>
         <label className="status-filter"><span>Status</span><select value={status} onChange={(event) => setStatus(event.target.value as StatusFilter)}><option value="all">All</option><option value="active">Active</option><option value="inactive">Inactive</option></select></label>
-        <button className="button secondary" onClick={() => void refresh()} disabled={loading}>↻ Refresh</button>
         <button className="button secondary" disabled={!selected} onClick={() => selected && setEditing(selected)}>Edit</button>
         <button className="button secondary" disabled={!selected} onClick={() => selected && (selected.active ? setConfirming(selected) : void toggleStatus(selected))}>{selected?.active ? "Deactivate" : "Activate"}</button>
+        <button className="button secondary" onClick={() => void refresh()} disabled={loading}>↻ Refresh</button>
+        <button className="button primary toolbar-add" onClick={() => setEditing("new")}>+ Add</button>
       </div>
       {error && <div className="data-message error"><strong>Unable to load enterprises</strong><span>{error}</span><button onClick={() => void refresh()}>Try again</button></div>}
       {!error && loading && <div className="data-message"><span className="spinner"/>Loading enterprises…</div>}
       {!error && !loading && rows.length === 0 && <div className="data-message"><strong>No enterprises found</strong><span>{enterprises.length ? "Try changing the search or status filter." : "Add the first enterprise when you are ready."}</span></div>}
-      {!error && !loading && rows.length > 0 && <div className="enterprise-table-wrap"><table className="enterprise-table"><thead><tr><Sortable label="Enterprise Code" column="enterprise_code" sort={sort} onSort={changeSort}/><Sortable label="Enterprise Name" column="name" sort={sort} onSort={changeSort}/><Sortable label="Status" column="active" sort={sort} onSort={changeSort}/><th>Approved Domains</th><Sortable label="Created Date" column="created_at" sort={sort} onSort={changeSort}/><Sortable label="Created By" column="created_by" sort={sort} onSort={changeSort}/></tr></thead><tbody>{rows.map((enterprise) => <tr key={enterprise.id} className={selected?.id === enterprise.id ? "selected" : ""} onClick={() => setSelected(enterprise)} onDoubleClick={() => setEditing(enterprise)} tabIndex={0} onKeyDown={(event) => event.key === "Enter" && setEditing(enterprise)}><td className="enterprise-code">{enterprise.enterprise_code}</td><td>{enterprise.name}</td><td><StatusBadge active={enterprise.active}/></td><td><div className="domain-summary">{enterprise.enterprise_domains?.filter((domain) => domain.active).length ? enterprise.enterprise_domains.filter((domain) => domain.active).map((domain) => <span key={domain.id}>{domain.domain}</span>) : <em>None</em>}</div></td><td>{formatDate(enterprise.created_at)}</td><td className="created-by" title={enterprise.created_by ?? "Not recorded"}>{enterprise.created_by ?? "—"}</td></tr>)}</tbody></table></div>}
-      <div className="grid-footer"><span>{rows.length} of {enterprises.length} enterprises</span><span>Select a row to edit · Double-click to open</span></div>
+      {!error && !loading && rows.length > 0 && <div className="enterprise-table-wrap"><table className="enterprise-table system-enterprises-table"><thead><tr><Sortable label="Enterprise Code" column="enterprise_code" sort={sort} onSort={changeSort}/><Sortable label="Enterprise Name" column="name" sort={sort} onSort={changeSort}/><Sortable label="Status" column="active" sort={sort} onSort={changeSort}/><Sortable label="Users" column="user_count" sort={sort} onSort={changeSort}/><Sortable label="Projects" column="project_count" sort={sort} onSort={changeSort}/><th>Approved Domains</th><Sortable label="Created Date" column="created_at" sort={sort} onSort={changeSort}/><Sortable label="Created By" column="created_by" sort={sort} onSort={changeSort}/></tr></thead><tbody>{rows.map((enterprise) => <tr key={enterprise.id} className={selected?.id === enterprise.id ? "selected" : ""} onClick={() => setSelected(enterprise)} onDoubleClick={() => setEditing(enterprise)} tabIndex={0} onKeyDown={(event) => event.key === "Enter" && setEditing(enterprise)}><td className="enterprise-code">{enterprise.enterprise_code}</td><td>{enterprise.name}</td><td><StatusBadge active={enterprise.active}/></td><td className="count-cell">{enterprise.user_count}</td><td className="count-cell">{enterprise.project_count}</td><td><div className="domain-summary">{enterprise.enterprise_domains?.filter((domain) => domain.active).length ? enterprise.enterprise_domains.filter((domain) => domain.active).map((domain) => <span key={domain.id}>{domain.domain}</span>) : <em>None</em>}</div></td><td>{formatDate(enterprise.created_at)}</td><td className="created-by" title={enterprise.created_by ?? "Not recorded"}>{enterprise.created_by ?? "—"}</td></tr>)}</tbody></table></div>}
+      <div className="grid-footer"><span>{rows.length} of {enterprises.length} enterprises · {rows.reduce((sum, row) => sum + row.user_count, 0)} users · {rows.reduce((sum, row) => sum + row.project_count, 0)} projects</span><span>Select a row to edit · Double-click to open</span></div>
     </section>
     {editing && <EnterpriseDrawer enterprise={editing === "new" ? null : editing} onClose={() => setEditing(null)} onSaved={async (message) => { setEditing(null); showNotice(message); await refresh(); }}/>} 
     {confirming && <ConfirmDialog enterprise={confirming} onCancel={() => setConfirming(null)} onConfirm={() => void toggleStatus(confirming)}/>} 

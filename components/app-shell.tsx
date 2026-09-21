@@ -7,7 +7,7 @@ import { Enterprise, listEnterprises } from "@/lib/enterprises";
 import { Project, listProjectsByEnterprise } from "@/lib/projects";
 
 type Permission = "project-admin" | "enterprise-admin";
-type Module = { name: string; path: string; icon: string; scope: "project" | "admin" | "personal"; permission?: Permission };
+type Module = { name: string; path: string; icon: string; scope: "project" | "admin"; permission?: Permission };
 type MenuGroup = { label?: string; permission?: Permission; items: { name: string; path: string; icon: string }[] };
 type RouteContext = { enterprisePublicId?: string; projectPublicId?: string; modulePath: string; submodulePath?: string };
 
@@ -20,20 +20,18 @@ const modules: Module[] = [
   { name: "Subcontract Management", path: "/subcontract-management", icon: "contract", scope: "project" },
   { name: "System Admin", path: "/system-admin", icon: "shield", scope: "admin" },
   { name: "Enterprise Admin", path: "/enterprise-admin", icon: "building", scope: "admin", permission: "enterprise-admin" },
-  { name: "My Profile", path: "/my-profile", icon: "user", scope: "personal" },
 ];
 
 const menus: Record<string, MenuGroup[]> = {
-  "/project-admin": [{ label: "Project setup", items: [item("General Info", "general-info", "info"), item("Project Line-Item Attributes", "line-item-attributes", "sliders"), item("Access Control", "access-control", "users")] }],
+  "/project-admin": [{ label: "Project setup", items: [item("General Info", "general-info", "info"), item("Project Line-Item Attributes", "line-item-attributes", "sliders")] }],
   "/cost-management": [
     { label: "Overview", items: [item("Cost Codes", "cost-codes", "tag"), item("Timephasing", "timephasing", "chart")] },
     { label: "Cost Module Settings", permission: "project-admin", items: [item("Cost Reporting Periods", "reporting-periods", "calendar"), item("Project Cost Code Attributes", "cost-code-attributes", "sliders"), item("Project Resource Rates", "resource-rates", "users"), item("Bulk Baseline Budget", "bulk-baseline-budget", "table"), item("Bulk Actual Cost", "bulk-actual-cost", "table"), item("Bulk Cost to Complete Details", "bulk-cost-to-complete", "table")] },
   ],
   "/change-management": [{ label: "Overview", items: [item("Change Management", "change-management", "change")] }, { label: "Change Module Settings", permission: "project-admin", items: [item("Project Change Attributes", "change-attributes", "sliders"), item("Bulk Change Records", "bulk-change-records", "table")] }],
   "/subcontract-management": [{ label: "Overview", items: [item("Subcontract Management", "subcontract-management", "contract")] }, { label: "Subcontract Module Settings", permission: "project-admin", items: [item("Project Subcontract Attributes", "subcontract-attributes", "sliders"), item("Bulk Subcontract Line Items", "bulk-line-items", "table")] }],
-  "/system-admin": [{ label: "Platform", items: [item("Enterprises", "enterprises", "building"), item("System users", "users", "users"), item("Audit activity", "audit", "clock"), item("System settings", "settings", "settings")] }],
-  "/enterprise-admin": [{ label: "General", items: [item("Enterprise Settings", "settings", "settings"), item("Enterprise Users", "users", "users"), item("Enterprise Projects", "projects", "folder"), item("Enterprise Project Attributes", "project-attributes", "sliders"), item("Enterprise Line-Item Attributes", "line-item-attributes", "sliders")] }, { label: "Cost", items: [item("Enterprise Cost Code Attributes", "cost-code-attributes", "tag"), item("Enterprise Resource Rates", "resource-rates", "users")] }, { label: "Change", items: [item("Enterprise Change Attributes", "change-attributes", "change")] }, { label: "Subcontract", items: [item("Enterprise Subcontract Attributes", "subcontract-attributes", "contract")] }],
-  "/my-profile": [{ items: [item("Profile details", "details", "user"), item("Preferences", "preferences", "sliders"), item("Security", "security", "shield")] }],
+  "/system-admin": [{ label: "Platform", items: [item("Enterprises", "enterprises", "building")] }],
+  "/enterprise-admin": [{ label: "General", items: [item("Enterprise Settings", "settings", "settings"), item("Enterprise Projects", "projects", "folder"), item("Enterprise Project Attributes", "project-attributes", "sliders"), item("Enterprise Line-Item Attributes", "line-item-attributes", "sliders")] }, { label: "Cost", items: [item("Enterprise Cost Code Attributes", "cost-code-attributes", "tag"), item("Enterprise Resource Rates", "resource-rates", "users")] }, { label: "Change", items: [item("Enterprise Change Attributes", "change-attributes", "change")] }, { label: "Subcontract", items: [item("Enterprise Subcontract Attributes", "subcontract-attributes", "contract")] }],
 };
 
 function item(name: string, path: string, icon: string) { return { name, path, icon }; }
@@ -72,7 +70,7 @@ function parseRoute(pathname: string): RouteContext {
 
 function moduleHref(module: Module, enterprise?: Enterprise | null, project?: Project | null) {
   const submodule = menus[module.path]?.[0]?.items[0]?.path ?? "overview";
-  if (module.path === "/system-admin" || module.path === "/my-profile") return `${module.path}/${submodule}`;
+  if (module.path === "/system-admin") return `${module.path}/${submodule}`;
   if (module.path === "/enterprise-admin") return enterprise ? `/enterprises/${enterprise.public_id}/enterprise-admin/${submodule}` : `${module.path}/${submodule}`;
   return enterprise && project ? `/enterprises/${enterprise.public_id}/projects/${project.public_id}${module.path}/${submodule}` : `${module.path}/${submodule}`;
 }
@@ -96,7 +94,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const selectedEnterprise = useMemo(() => enterprises.find((entry) => entry.public_id === route.enterprisePublicId) ?? enterprises.find((entry) => entry.active) ?? enterprises[0] ?? null, [enterprises, route.enterprisePublicId]);
   const selectedProject = useMemo(() => projects.find((entry) => entry.public_id === route.projectPublicId) ?? projects[0] ?? null, [projects, route.projectPublicId]);
   const workspaceTitle = activeItem?.name ?? activeModule.name;
-  const enterpriseEnabled = activeModule.path !== "/system-admin" && activeModule.path !== "/my-profile";
+  const enterpriseEnabled = activeModule.path !== "/system-admin";
   const projectEnabled = enterpriseEnabled;
 
   const loadProjects = useCallback(async (enterprise: Enterprise | null) => {
@@ -156,13 +154,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     <GlobalSidebar collapsed={globalCollapsed} open={mobileOpen} active={activeModule} enterprise={selectedEnterprise} project={selectedProject} onCollapse={() => setGlobalCollapsed((v) => !v)} onNavigate={() => setMobileOpen(false)} />
     {mobileOpen && <button aria-label="Close navigation" className="mobile-scrim" onClick={() => setMobileOpen(false)} />}
     <section className="app-stage">
-      <Header enterprises={enterprises} projects={projects} enterprise={selectedEnterprise} project={selectedProject} loading={contextLoading} enterpriseEnabled={enterpriseEnabled} projectEnabled={projectEnabled} onEnterpriseChange={changeEnterprise} onProjectChange={changeProject} focusMode={focusMode} setFocusMode={setFocusMode} onMenu={() => setMobileOpen(true)} />
+      <Header enterprises={enterprises} projects={projects} enterprise={selectedEnterprise} project={selectedProject} loading={contextLoading} enterpriseEnabled={enterpriseEnabled} projectEnabled={projectEnabled} moduleName={activeModule.name} workspaceTitle={workspaceTitle} onEnterpriseChange={changeEnterprise} onProjectChange={changeProject} focusMode={focusMode} setFocusMode={setFocusMode} onMenu={() => setMobileOpen(true)} />
       <div className="workspace-row">
         <ContextSidebar module={activeModule} groups={moduleMenu} activePath={currentSubPath} enterprise={selectedEnterprise} project={selectedProject} collapsed={contextCollapsed} onCollapse={() => setContextCollapsed((v) => !v)} />
         <main className="workspace">
-          <div className="workspace-heading">
-            <div><div className="breadcrumbs"><span>{activeModule.name}</span><span>/</span><strong>{workspaceTitle}</strong></div><h1>{workspaceTitle}</h1><p>{descriptionFor(activeModule.name, workspaceTitle)}</p></div>
-          </div>
           {children}
         </main>
       </div>
@@ -177,7 +172,7 @@ function GlobalSidebar({ collapsed, open, active, enterprise, project, onCollaps
       <NavGroup title="Project workspace" modules={modules.filter((m) => m.scope === "project")} active={active} enterprise={enterprise} project={project} collapsed={collapsed}/>
       <NavGroup title="Administration" modules={modules.filter((m) => m.scope === "admin")} active={active} enterprise={enterprise} project={project} collapsed={collapsed}/>
     </nav>
-    <div className="sidebar-footer"><Link onClick={onNavigate} href="/my-profile/details" className={`global-link ${active.path === "/my-profile" ? "active" : ""}`} title={collapsed ? "My Profile" : undefined}><span className="nav-icon"><Icon name="user"/></span><span className="nav-copy">My Profile</span></Link><div className="signed-in"><div className="avatar">AR</div><div className="user-copy"><strong>Alex Rivera</strong><span>Project Controller</span></div><button className="more-button" aria-label="User menu">•••</button></div></div>
+    <div className="sidebar-footer"><div className="signed-in development-user"><div className="avatar">CM</div><div className="user-copy"><strong>Development Mode</strong><span>Authentication to be enabled before pilot</span></div></div></div>
   </aside>;
 }
 
@@ -186,20 +181,19 @@ function NavGroup({ title, modules: entries, active, enterprise, project, collap
   return <div className="nav-group"><div className="nav-label">{title}</div>{visibleEntries.map((module) => <Link href={moduleHref(module, enterprise, project)} key={module.path} className={`global-link ${active.path === module.path ? "active" : ""}`} title={collapsed ? module.name : undefined}><span className="nav-icon"><Icon name={module.icon}/></span><span className="nav-copy">{module.name}</span>{module.permission && <span className="permission-dot" title={`${permissionLabel(module.permission)} required`}/>}</Link>)}</div>;
 }
 
-function Header({ enterprises, projects, enterprise, project, loading, enterpriseEnabled, projectEnabled, onEnterpriseChange, onProjectChange, focusMode, setFocusMode, onMenu }: { enterprises: Enterprise[]; projects: Project[]; enterprise: Enterprise | null; project: Project | null; loading: boolean; enterpriseEnabled: boolean; projectEnabled: boolean; onEnterpriseChange: (v:string)=>void; onProjectChange:(v:string)=>void; focusMode:boolean; setFocusMode:(v:boolean)=>void; onMenu:()=>void }) {
-  return <header className="top-header"><button className="icon-button mobile-menu" aria-label="Open navigation" onClick={onMenu}><Icon name="table"/></button><div className="context-selectors"><label><span>Enterprise</span><select value={enterpriseEnabled ? enterprise?.public_id ?? "" : ""} onChange={(e)=>void onEnterpriseChange(e.target.value)} disabled={loading || !enterpriseEnabled || enterprises.length === 0}><option value="">{enterpriseEnabled ? (enterprises.length ? "Select enterprise" : "No enterprises") : "No enterprise context"}</option>{enterpriseEnabled && enterprises.map((entry)=><option key={entry.public_id} value={entry.public_id}>{entry.enterprise_code} — {entry.name}</option>)}</select></label><span className="selector-divider"/><label><span>Project</span><select value={projectEnabled ? project?.public_id ?? "" : ""} onChange={(e)=>onProjectChange(e.target.value)} disabled={loading || !projectEnabled || projects.length === 0}><option value="">{projectEnabled ? (projects.length ? "Select project" : "No projects") : "No project context"}</option>{projectEnabled && projects.map((entry)=><option key={entry.public_id} value={entry.public_id}>{entry.project_code} — {entry.name}</option>)}</select></label></div><div className="header-actions"><button className={`focus-button ${focusMode ? "active" : ""}`} onClick={()=>setFocusMode(!focusMode)} title="Hide navigation for maximum table workspace"><Icon name="dashboard" size={16}/><span>{focusMode ? "Exit focus" : "Max workspace"}</span></button><button className="icon-button notification" aria-label="Notifications"><Icon name="flag" size={17}/><i/></button><button className="help-button" aria-label="Help">?</button></div></header>;
+function Header({ enterprises, projects, enterprise, project, loading, enterpriseEnabled, projectEnabled, moduleName, workspaceTitle, onEnterpriseChange, onProjectChange, focusMode, setFocusMode, onMenu }: { enterprises: Enterprise[]; projects: Project[]; enterprise: Enterprise | null; project: Project | null; loading: boolean; enterpriseEnabled: boolean; projectEnabled: boolean; moduleName:string; workspaceTitle:string; onEnterpriseChange: (v:string)=>void; onProjectChange:(v:string)=>void; focusMode:boolean; setFocusMode:(v:boolean)=>void; onMenu:()=>void }) {
+  return <header className="top-header"><button className="icon-button mobile-menu" aria-label="Open navigation" onClick={onMenu}><Icon name="table"/></button><div className="header-context">{enterpriseEnabled && <div className="context-selectors"><label><span>Enterprise</span><select value={enterprise?.public_id ?? ""} onChange={(e)=>void onEnterpriseChange(e.target.value)} disabled={loading || enterprises.length === 0}><option value="">{enterprises.length ? "Select enterprise" : "No enterprises"}</option>{enterprises.map((entry)=><option key={entry.public_id} value={entry.public_id}>{entry.enterprise_code} — {entry.name}</option>)}</select></label><span className="selector-divider"/><label><span>Project</span><select value={projectEnabled ? project?.public_id ?? "" : ""} onChange={(e)=>onProjectChange(e.target.value)} disabled={loading || !projectEnabled || projects.length === 0}><option value="">{projects.length ? "Select project" : "No projects"}</option>{projects.map((entry)=><option key={entry.public_id} value={entry.public_id}>{entry.project_code} — {entry.name}</option>)}</select></label><span className="selector-divider"/></div>}<div className="header-context-title"><span>{moduleName}</span><strong>{workspaceTitle}</strong></div></div><div className="header-actions"><button className={`focus-button ${focusMode ? "active" : ""}`} onClick={()=>setFocusMode(!focusMode)} title="Hide navigation for maximum table workspace"><Icon name="dashboard" size={16}/><span>{focusMode ? "Exit focus" : "Max workspace"}</span></button></div></header>;
 }
 
 function ContextSidebar({ module, groups, activePath, enterprise, project, collapsed, onCollapse }: { module:Module; groups:MenuGroup[]; activePath:string; enterprise: Enterprise | null; project: Project | null; collapsed:boolean; onCollapse:()=>void }) {
   const visibleGroups = groups.filter((group) => !group.permission || userPermissions.includes(group.permission));
   const hrefFor = (entryPath: string) => {
-    if (module.path === "/system-admin" || module.path === "/my-profile") return `${module.path}/${entryPath}`;
+    if (module.path === "/system-admin") return `${module.path}/${entryPath}`;
     if (module.path === "/enterprise-admin") return enterprise ? `/enterprises/${enterprise.public_id}/enterprise-admin/${entryPath}` : `${module.path}/${entryPath}`;
     return enterprise && project ? `/enterprises/${enterprise.public_id}/projects/${project.public_id}${module.path}/${entryPath}` : `${module.path}/${entryPath}`;
   };
   return <aside className={`context-sidebar ${collapsed ? "collapsed" : ""}`}><div className="context-title"><div className="module-glyph"><Icon name={module.icon}/></div><div><span>Module</span><strong>{module.name}</strong></div><button onClick={onCollapse} className="context-collapse" aria-label="Collapse module navigation">‹</button></div><nav aria-label={`${module.name} navigation`}>{visibleGroups.map((group, index) => <div className="context-group" key={group.label ?? index}>{group.label && <div className="context-label">{group.label}{group.permission && <span className="admin-label">Project Admin</span>}</div>}{group.items.map((entry) => <Link title={collapsed ? entry.name : undefined} className={`context-link ${entry.path === activePath ? "active" : ""}`} key={entry.path} href={hrefFor(entry.path)}><Icon name={entry.icon} size={17}/><span>{entry.name}</span></Link>)}</div>)}</nav><div className="context-hint"><Icon name="info" size={16}/><span>Navigation reflects your assigned project permissions.</span></div></aside>;
 }
 
-function descriptionFor(module: string, title: string) { return title === "Overview" ? `A consolidated view of ${module.toLowerCase()} performance.` : `Review and manage ${title.toLowerCase()} for the selected context.`; }
 
 function permissionLabel(permission: Permission) { return permission === "project-admin" ? "Project Admin permission" : "Enterprise Admin permission"; }

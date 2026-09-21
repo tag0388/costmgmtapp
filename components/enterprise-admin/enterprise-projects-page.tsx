@@ -160,17 +160,18 @@ export default function EnterpriseProjectsPage({ enterprisePublicId }: { enterpr
   }
 
   return <div className="enterprise-admin-page">
-    <div className="enterprise-page-title"><div><h2>Enterprise Projects</h2><p>Manage projects and enterprise project attributes within {enterprise?.name ?? "this enterprise"}.</p></div><button className="button primary" disabled={!enterprise} onClick={() => setEditing("new")}>+ Add Project</button></div>
+    <div className="enterprise-page-title"><div><h2>Enterprise Projects</h2><p>Manage projects and enterprise project attributes within {enterprise?.name ?? "this enterprise"}.</p></div></div>
     <section className="enterprise-grid-card">
       <div className="enterprise-toolbar">
         <label className="enterprise-search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search code, name or public ID…" aria-label="Search projects" /></label>
         <label className="status-filter"><span>Status</span><select value={status} onChange={(event) => setStatus(event.target.value as StatusFilter)}><option value="all">All</option><option value="active">Active</option><option value="inactive">Inactive</option></select></label>
+        <button className="button secondary" disabled={selectedProjects.length === 0} onClick={() => setEditingAttributes(true)}>Attributes{selectedProjects.length > 1 ? ` (${selectedProjects.length})` : ""}</button>
+        <button className="button danger" disabled={selectedProjects.length === 0} onClick={() => void deleteSelected(selectedProjects.map((project) => project.id))}>Delete{selectedProjects.length > 1 ? ` (${selectedProjects.length})` : ""}</button>
         <button className="button secondary" title="Export projects" onClick={exportProjects}>⇩ Export</button>
         <button className="button secondary" title="Import projects" onClick={() => fileInput.current?.click()}>⇧ Import</button>
         <input ref={fileInput} type="file" accept=".xlsx,.xls" hidden onChange={(event) => void chooseImportFile(event.target.files?.[0])}/>
         <button className="button secondary" onClick={() => void refresh()} disabled={loading}>↻ Refresh</button>
-        <button className="button secondary" disabled={selectedProjects.length === 0} onClick={() => setEditingAttributes(true)}>✎ Attributes{selectedProjects.length > 1 ? ` (${selectedProjects.length})` : ""}</button>
-        <button className="button danger" disabled={selectedProjects.length === 0} onClick={() => void deleteSelected(selectedProjects.map((project) => project.id))}>🗑 Delete{selectedProjects.length > 1 ? ` (${selectedProjects.length})` : ""}</button>
+        <button className="button primary toolbar-add" disabled={!enterprise} onClick={() => setEditing("new")}>+ Add</button>
       </div>
       {error && <div className="data-message error"><strong>Unable to load projects</strong><span>{error}</span><button onClick={() => void refresh()}>Try again</button></div>}
       {!error && loading && <div className="data-message"><span className="spinner"/>Loading projects…</div>}

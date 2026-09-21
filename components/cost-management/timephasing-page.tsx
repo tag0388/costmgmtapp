@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgGridProvider, AgGridReact } from "ag-grid-react";
-import type { CellStyle, CellValueChangedEvent, ColDef, ColGroupDef, ICellEditorParams, SelectionChangedEvent, ValueGetterParams } from "ag-grid-community";
+import type { CellStyle, CellValueChangedEvent, ColDef, ColGroupDef, ColumnState, GridApi, ICellEditorParams, SelectionChangedEvent, ValueGetterParams } from "ag-grid-community";
 import { themeQuartz } from "ag-grid-community";
 import { AllEnterpriseModule } from "ag-grid-enterprise";
 import { getProjectByPublicId, type Project } from "@/lib/projects";
@@ -10,6 +10,7 @@ import { updateCostCodeFields, type CostCodeInput, type TimephasingMethod } from
 import { listCostReportingPeriods, type CostReportingPeriod } from "@/lib/cost-reporting";
 import { costCalculationErrorMessage, recalculateProjectCostManagement } from "@/lib/cost-calculation";
 import { exportExcel, readExcel, type ExcelRow } from "@/lib/excel";
+import { deleteProjectGridView, gridViewErrorMessage, listProjectGridViews, type ProjectGridView, saveProjectGridView } from "@/lib/grid-views";
 import {
   applyCostTimephasingUpdates,
   listCostCodeTimephasing,
@@ -25,7 +26,8 @@ import {
   type TimephasingValueField,
 } from "@/lib/cost-timephasing";
 
-const gridTheme = themeQuartz.withParams({ spacing: 4, rowHeight: 30, headerHeight: 42, fontSize: 12 });
+const gridTheme = themeQuartz.withParams({ spacing: 4, rowHeight: 30, headerHeight: 34, fontSize: 12 });
+const GRID_KEY = "cost-timephasing";
 const METHODS: TimephasingMethod[] = ["Manual", "Dates", "Cost Details"];
 type RowType = "Baseline Budget" | "Current Budget" | "Estimate At Completion";
 
@@ -99,6 +101,11 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
   const [importErrors, setImportErrors] = useState<string[]>([]);
   const [importing, setImporting] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [gridApi, setGridApi] = useState<GridApi<GridRow> | null>(null);
+  const [views, setViews] = useState<ProjectGridView[]>([]);
+  const [selectedView, setSelectedView] = useState("Default");
+  const [viewName, setViewName] = useState("");
+  const [showSaveView, setShowSaveView] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true); setError("");
@@ -106,16 +113,19 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
       const currentProject = await getProjectByPublicId(projectPublicId);
       setProject(currentProject);
       if (!currentProject) throw new Error("The selected project could not be found.");
-      const [codes, reportingPeriods, phasing, summaryChecks] = await Promise.all([
+      const [codes, reportingPeriods, phasing, summaryChecks, savedViews] = await Promise.all([
         listTimephasingCostCodes(currentProject.id),
         listCostReportingPeriods(currentProject.id),
         listCostCodeTimephasing(currentProject.id),
         listCostCodeTimephasingChecks(currentProject.id),
+        listProjectGridViews(currentProject.id, GRID_KEY),
       ]);
       setCostCodes(codes);
       setPeriods(reportingPeriods);
       setStored(phasing);
       setChecks(summaryChecks);
+      setViews(savedViews);
+      setSelectedView((current) => current === "Default" || savedViews.some((view) => view.id === current) ? current : "Default");
     } catch (requestError) {
       setError(timephasingErrorMessage(requestError));
     } finally { setLoading(false); }
@@ -179,6 +189,47 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
   function showNotice(message: string) {
     setNotice(message);
     window.setTimeout(() => setNotice(""), 3000);
+  }
+
+  async function saveView() {
+    if (!project || !gridApi || !viewName.trim()) return;
+    try {
+      const saved = await saveProjectGridView(project.id, GRID_KEY, viewName, {
+        columnState: gridApi.getColumnState(),
+        filterModel: gridApi.getFilterModel() as Record<string, unknown>,
+      });
+      setViews(await listProjectGridViews(project.id, GRID_KEY));
+      setSelectedView(saved.id);
+      setShowSaveView(false);
+      setViewName("");
+      showNotice("View saved.");
+    } catch (requestError) { setError(gridViewErrorMessage(requestError)); }
+  }
+
+  function applyView(id: string) {
+    setSelectedView(id);
+    if (!gridApi) return;
+    if (id === "Default") {
+      gridApi.resetColumnState();
+      gridApi.setFilterModel(null);
+      gridApi.onFilterChanged();
+      return;
+    }
+    const view = views.find((entry) => entry.id === id);
+    if (!view) return;
+    gridApi.applyColumnState({ state: view.grid_state.columnState as ColumnState[], applyOrder: true });
+    gridApi.setFilterModel(view.grid_state.filterModel ?? null);
+    gridApi.onFilterChanged();
+  }
+
+  async function deleteView() {
+    if (!project || selectedView === "Default") return;
+    try {
+      await deleteProjectGridView(selectedView);
+      setViews(await listProjectGridViews(project.id, GRID_KEY));
+      applyView("Default");
+      showNotice("View deleted.");
+    } catch (requestError) { setError(gridViewErrorMessage(requestError)); }
   }
 
   async function recalculate() {
@@ -463,12 +514,15 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
     <section className="enterprise-grid-card">
       <div className="enterprise-toolbar" style={{ flexWrap: "wrap" }}>
         <label className="enterprise-search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search Cost Codes or types…"/></label>
-        <button className="button secondary" disabled={loading || saving || recalculating} onClick={() => void refresh()}>↻ Refresh</button>
-        <button className="button secondary" disabled={!selectedRowIds.length || loading || saving || recalculating} onClick={() => { setBulkField("phasingMethod"); setBulkValue(""); setBulkOpen(true); }}>Bulk Edit ({selectedRowIds.length})</button>
+        <button className="button secondary" disabled={!selectedRowIds.length || loading || saving || recalculating} onClick={() => { setBulkField("phasingMethod"); setBulkValue(""); setBulkOpen(true); }}>Bulk Edit{selectedRowIds.length ? ` (${selectedRowIds.length})` : ""}</button>
         <button className="button secondary" disabled={loading || saving || recalculating} onClick={exportTimephasing}>⇩ Export</button>
         <button className="button secondary" disabled={loading || saving || recalculating} onClick={() => fileRef.current?.click()}>⇧ Import</button>
         <input ref={fileRef} type="file" accept=".xlsx,.xls" hidden onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void chooseImport(file); }}/>
+        <label className="status-filter"><span>View</span><select value={selectedView} onChange={(event) => applyView(event.target.value)}><option value="Default">Default</option>{views.map((view) => <option key={view.id} value={view.id}>{view.view_name}</option>)}</select></label>
+        <button className="button secondary" disabled={!gridApi} onClick={() => { setViewName(selectedView === "Default" ? "" : views.find((view) => view.id === selectedView)?.view_name ?? ""); setShowSaveView(true); }}>Save View</button>
+        <button className="button secondary" disabled={selectedView === "Default"} onClick={() => void deleteView()}>Delete View</button>
         <button className="button primary" disabled={!project || loading || saving || recalculating || !periods.length} onClick={() => void recalculate()}>{recalculating ? "Recalculating…" : "↻ Recalculate"}</button>
+        <button className="button secondary" disabled={loading || saving || recalculating} onClick={() => void refresh()}>↻ Refresh</button>
         <span style={{ marginLeft: "auto", fontSize: 11, color: saving || recalculating ? "#2563eb" : "#64748b" }}>
           {saving ? "Saving…" : recalculating ? "Calculating in Supabase…" : lastCalculated ? `Last calculated: ${lastCalculated}` : "Not calculated yet"}
         </span>
@@ -488,6 +542,7 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
             defaultColDef={{ sortable: true, resizable: true, filter: true, minWidth: 80 }}
             quickFilterText={search}
             getRowId={(params) => params.data.id}
+            onGridReady={(event) => setGridApi(event.api)}
             onCellValueChanged={(event) => void cellChanged(event)}
             rowSelection={{ mode: "multiRow" }}
             selectionColumnDef={{ pinned: "left", width: 46, maxWidth: 46, suppressHeaderMenuButton: true }}
@@ -504,6 +559,7 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
         <span>Check must equal 0.00 for each row.</span>
       </div>
     </section>
+    {showSaveView && <div className="admin-modal-backdrop"><div className="admin-modal"><h3>Save View</h3><label className="form-field"><span>View Name</span><input autoFocus value={viewName} maxLength={80} onChange={(event) => setViewName(event.target.value)}/></label><div className="admin-modal-actions"><button className="button secondary" onClick={() => setShowSaveView(false)}>Cancel</button><button className="button primary" disabled={!viewName.trim()} onClick={() => void saveView()}>Save</button></div></div></div>}
     {bulkOpen && <div className="confirm-layer">
       <button className="confirm-scrim" onClick={() => !saving && setBulkOpen(false)} aria-label="Close bulk edit"/>
       <div className="confirm-dialog" role="dialog" aria-modal="true" style={{ width: "min(520px, 92vw)" }}>

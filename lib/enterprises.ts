@@ -12,6 +12,7 @@ export type Enterprise = {
   created_at: string;
   enterprise_domains: EnterpriseDomain[] | null;
 };
+export type EnterpriseSummary = Enterprise & { user_count: number; project_count: number };
 export type EnterpriseInput = { enterprise_code: string; name: string; logo_url: string | null; active: boolean; domains: string[] };
 export type EnterpriseSettingsInput = { name: string; logo_url: string | null; domains: string[] };
 
@@ -24,6 +25,23 @@ export function normalizeDomains(values: string[]) {
 
 export function listEnterprises() {
   return supabaseRequest<Enterprise[]>(`enterprises?select=${encodeURIComponent(enterpriseSelect)}&order=created_at.desc`);
+}
+
+export async function listEnterprisesWithCounts(): Promise<EnterpriseSummary[]> {
+  const [enterprises, users, projects] = await Promise.all([
+    listEnterprises(),
+    supabaseRequest<Array<{ enterprise_id: string }>>("enterprise_users?select=enterprise_id"),
+    supabaseRequest<Array<{ enterprise_id: string }>>("projects?select=enterprise_id"),
+  ]);
+  const userCounts = new Map<string, number>();
+  const projectCounts = new Map<string, number>();
+  users.forEach((row) => userCounts.set(row.enterprise_id, (userCounts.get(row.enterprise_id) ?? 0) + 1));
+  projects.forEach((row) => projectCounts.set(row.enterprise_id, (projectCounts.get(row.enterprise_id) ?? 0) + 1));
+  return enterprises.map((enterprise) => ({
+    ...enterprise,
+    user_count: userCounts.get(enterprise.id) ?? 0,
+    project_count: projectCounts.get(enterprise.id) ?? 0,
+  }));
 }
 
 export async function createEnterprise(input: EnterpriseInput) {

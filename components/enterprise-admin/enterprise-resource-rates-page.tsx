@@ -226,7 +226,6 @@ export default function EnterpriseResourceRatesPage({ enterprisePublicId }: { en
   return <div className="enterprise-admin-page">
     <div className="enterprise-page-title">
       <div><h2>Enterprise Resource Rates</h2><p>Manage enterprise resource IDs, categories, units and standard rates.</p></div>
-      <button className="button primary" disabled={!enterprise} onClick={() => setEditing("new")}>+ Add Resource</button>
     </div>
 
     <section className="enterprise-grid-card">
@@ -234,11 +233,12 @@ export default function EnterpriseResourceRatesPage({ enterprisePublicId }: { en
         <label className="enterprise-search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search resources…" aria-label="Search resource rates" /></label>
         <label className="status-filter"><span>Category</span><select value={category} onChange={(event) => setCategory(event.target.value as CategoryFilter)}><option value="all">All</option>{RESOURCE_CATEGORIES.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
         <label className="status-filter"><span>Status</span><select value={status} onChange={(event) => setStatus(event.target.value as StatusFilter)}><option value="all">All</option><option value="active">Active</option><option value="inactive">Inactive</option></select></label>
+        <button className="button danger" disabled={selectedRows.length === 0} onClick={() => void deleteSelected(selectedRows.map((row) => row.id))}>Delete{selectedRows.length > 1 ? ` (${selectedRows.length})` : ""}</button>
         <button className="button secondary" title="Export resource rates" onClick={exportResources}>⇩ Export</button>
         <button className="button secondary" title="Import resource rates" onClick={() => fileInput.current?.click()}>⇧ Import</button>
         <input ref={fileInput} type="file" accept=".xlsx,.xls" hidden onChange={(event) => void chooseImportFile(event.target.files?.[0])}/>
         <button className="button secondary" onClick={() => void refresh()} disabled={loading}>↻ Refresh</button>
-        <button className="button danger" disabled={selectedRows.length === 0} onClick={() => void deleteSelected(selectedRows.map((row) => row.id))}>🗑 Delete{selectedRows.length > 1 ? ` (${selectedRows.length})` : ""}</button>
+        <button className="button primary toolbar-add" disabled={!enterprise} onClick={() => setEditing("new")}>+ Add</button>
       </div>
 
       {error && <div className="data-message error"><strong>Unable to load resource rates</strong><span>{error}</span><button onClick={() => void refresh()}>Try again</button></div>}
