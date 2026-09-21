@@ -295,8 +295,7 @@ export default function BaselineBudgetPage({ projectPublicId }: { projectPublicI
         <button className="button secondary" disabled={loading || importing} onClick={() => void refresh()}>↻ Refresh</button>
       </div>
 
-      <div className="data-message" style={{ minHeight: 48 }}><span>Item No and Item Description may be blank or duplicated. Merge appends rows; Delete Existing Data replaces the full Baseline detail ledger. Only active, configured Line Item attributes are shown. Total is calculated automatically from Qty × Rate and is not imported or exported.</span></div>
-      {error && <div className="data-message error"><strong>Unable to load Baseline Budget</strong><span>{error}</span></div>}
+            {error && <div className="data-message error"><strong>Unable to load Baseline Budget</strong><span>{error}</span></div>}
       {!error && loading && <div className="data-message"><span className="spinner"/>Loading Baseline Budget…</div>}
       {!error && !loading && <AgGridProvider modules={[AllEnterpriseModule]} licenseKey={process.env.NEXT_PUBLIC_AG_GRID_LICENSE_KEY ?? ""}>
         <div style={{ height: 640, width: "100%" }}>
