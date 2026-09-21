@@ -1,10 +1,10 @@
 export const routeMap = {
-  "project-admin": ["general-info", "line-item-attributes", "calendar", "access-control"],
+  "project-admin": ["general-info", "line-item-attributes", "access-control"],
   "cost-management": ["cost-codes", "timephasing", "reporting-periods", "cost-code-attributes", "resource-rates", "bulk-baseline-budget", "bulk-actual-cost", "bulk-cost-to-complete"],
   "change-management": ["change-management", "change-attributes", "bulk-change-records"],
   "subcontract-management": ["subcontract-management", "subcontract-attributes", "bulk-line-items"],
   "system-admin": ["enterprises", "users", "audit", "settings"],
-  "enterprise-admin": ["settings", "users", "projects", "project-attributes", "line-item-attributes", "calendars", "cost-code-attributes", "resource-rates", "change-attributes", "subcontract-attributes"],
+  "enterprise-admin": ["settings", "users", "projects", "project-attributes", "line-item-attributes", "cost-code-attributes", "resource-rates", "change-attributes", "subcontract-attributes"],
   "my-profile": ["details", "preferences", "security"],
 } as const;
 
