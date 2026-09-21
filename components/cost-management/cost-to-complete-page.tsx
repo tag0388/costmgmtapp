@@ -406,8 +406,7 @@ export default function CostToCompletePage({ projectPublicId }: { projectPublicI
         </div>
       </div>}
 
-      <div className="data-message" style={{ minHeight: 42, fontSize: 12 }}><span>Read-only view. Use Import / Export to maintain data. Resource Source: ERes = Enterprise Resource Rate, PRes = Project Resource Rate, blank = User.</span></div>
-      {error && <div className="data-message error"><strong>Unable to load Cost to Complete</strong><span>{error}</span></div>}
+            {error && <div className="data-message error"><strong>Unable to load Cost to Complete</strong><span>{error}</span></div>}
       {!error && loading && <div className="data-message"><span className="spinner"/>Loading Cost to Complete…</div>}
       {!error && !loading && periods.length === 0 && <div className="data-message"><strong>No Cost Reporting Periods</strong><span>Set up Cost Reporting Periods before maintaining Cost to Complete details.</span></div>}
       {!error && !loading && periods.length > 0 && <AgGridProvider modules={[AllEnterpriseModule]} licenseKey={process.env.NEXT_PUBLIC_AG_GRID_LICENSE_KEY ?? ""}>

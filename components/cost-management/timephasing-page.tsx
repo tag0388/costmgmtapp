@@ -527,10 +527,7 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
           {saving ? "Saving…" : recalculating ? "Calculating in Supabase…" : lastCalculated ? `Last calculated: ${lastCalculated}` : "Not calculated yet"}
         </span>
       </div>
-      <div className="data-message" style={{ minHeight: 48 }}>
-        <span>Each Cost Code has three rows. Recalculate runs the heavy project aggregation in Supabase and refreshes the stored period summaries. Manual Baseline and Current Budget values are preserved. For Estimate at Completion only, Closed and Current periods use Actual Cost and are read-only; Future periods use Manual, Dates or Cost Details phasing.</span>
-      </div>
-      {error && <div className="data-message error"><strong>Timephasing error</strong><span>{error}</span></div>}
+            {error && <div className="data-message error"><strong>Timephasing error</strong><span>{error}</span></div>}
       {loading && <div className="data-message"><span className="spinner"/>Loading Timephasing…</div>}
       {!loading && !periods.length && <div className="data-message"><span>Create Cost Reporting Periods before using Timephasing.</span></div>}
       {!loading && periods.length > 0 && <AgGridProvider modules={[AllEnterpriseModule]} licenseKey={process.env.NEXT_PUBLIC_AG_GRID_LICENSE_KEY ?? ""}>

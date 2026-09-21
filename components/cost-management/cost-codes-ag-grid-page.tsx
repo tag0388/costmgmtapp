@@ -571,8 +571,7 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
         <button className="button secondary" onClick={() => void refresh()} disabled={loading || recalculating}>↻ Refresh</button>
         <button className="button primary toolbar-add" disabled={!project} onClick={() => setEditing("new")}>+ Add</button>
       </div>
-      <div className="data-message" style={{ minHeight: 48 }}><span>Right-click a column header to show, hide or pin columns. Drag columns into the grouping bar above the table to create multiple group levels. Expand/Collapse becomes available when grouping is active. Cost Code Name, Description, EAC Method and attributes can be edited directly in the grid. Estimate at Completion is editable only when EAC Method is Manual. Use the related-records icon in Actions to open related records for that Cost Code.</span></div>
-      {error && <div className="data-message error"><strong>Unable to load cost codes</strong><span>{error}</span></div>}
+            {error && <div className="data-message error"><strong>Unable to load cost codes</strong><span>{error}</span></div>}
       {!error && loading && <div className="data-message"><span className="spinner"/>Loading cost codes…</div>}
       {!error && !loading && <AgGridProvider modules={[AllEnterpriseModule]} licenseKey={process.env.NEXT_PUBLIC_AG_GRID_LICENSE_KEY ?? ""}>
         <div style={{ height: 640, width: "100%" }}>

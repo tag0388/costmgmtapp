@@ -167,7 +167,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
 function GlobalSidebar({ collapsed, open, active, enterprise, project, onCollapse, onNavigate }: { collapsed: boolean; open: boolean; active: Module; enterprise: Enterprise | null; project: Project | null; onCollapse: () => void; onNavigate: () => void }) {
   return <aside className={`global-sidebar ${collapsed ? "collapsed" : ""} ${open ? "mobile-open" : ""}`}>
-    <div className="brand"><div className="brand-mark">C<span>M</span></div><div className="brand-copy"><strong>Costwise</strong><span>Project controls</span></div><button className="icon-button collapse-control" aria-label="Collapse global navigation" onClick={onCollapse}><Icon name="change" size={16}/></button></div>
+    <div className="brand"><div className="brand-mark" aria-label="Costwise"><span className="brand-c">C</span><span className="brand-w">W</span></div><div className="brand-copy"><strong>Costwise</strong><span>Project controls</span></div><button className="global-collapse" aria-label={collapsed ? "Expand global navigation" : "Collapse global navigation"} title={collapsed ? "Expand navigation" : "Collapse navigation"} onClick={onCollapse}>{collapsed ? "›" : "‹"}</button></div>
     <nav className="global-nav" aria-label="Global navigation" onClick={onNavigate}>
       <NavGroup title="Project workspace" modules={modules.filter((m) => m.scope === "project")} active={active} enterprise={enterprise} project={project} collapsed={collapsed}/>
       <NavGroup title="Administration" modules={modules.filter((m) => m.scope === "admin")} active={active} enterprise={enterprise} project={project} collapsed={collapsed}/>

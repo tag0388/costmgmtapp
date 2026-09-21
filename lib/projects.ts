@@ -14,6 +14,7 @@ export type Project = {
   description: string | null;
   created_by: string | null;
   created_at: string;
+  modified_by: string | null;
   updated_at: string;
   e_attribute_01: string | null;
   e_attribute_02: string | null;
@@ -60,7 +61,7 @@ export type ProjectEnterpriseAttributeChanges = Partial<Record<ProjectEnterprise
 export type ProjectImportRow = Omit<ProjectInput, "enterprise_id"> & ProjectEnterpriseAttributeChanges;
 
 const attributeColumns = Array.from({ length: 20 }, (_, index) => `e_attribute_${String(index + 1).padStart(2, "0")}`).join(",");
-const projectSelect = `id,public_id,enterprise_id,project_code,name,status,start_date,finish_date,description,created_by,created_at,updated_at,${attributeColumns}`;
+const projectSelect = `id,public_id,enterprise_id,project_code,name,status,start_date,finish_date,description,created_by,created_at,modified_by,updated_at,${attributeColumns}`;
 
 export function listProjectsByEnterprise(enterpriseId: string) {
   return supabaseRequest<Project[]>(`projects?enterprise_id=eq.${encodeURIComponent(enterpriseId)}&select=${encodeURIComponent(projectSelect)}&order=project_code.asc`);
@@ -80,6 +81,29 @@ export function updateProject(projectId: string, input: Omit<ProjectInput, "ente
   return supabaseRequest<Project[]>(`projects?id=eq.${encodeURIComponent(projectId)}&select=${encodeURIComponent(projectSelect)}`, {
     method: "PATCH", headers: { Prefer: "return=representation" }, body: JSON.stringify({ ...input, updated_at: new Date().toISOString() }),
   }).then((rows) => rows[0]);
+}
+
+export function updateProjectFields(
+  projectId: string,
+  changes: Partial<Omit<ProjectInput, "enterprise_id" | "project_code"> & ProjectEnterpriseAttributeChanges>,
+) {
+  return supabaseRequest<Project[]>(`projects?id=eq.${encodeURIComponent(projectId)}&select=${encodeURIComponent(projectSelect)}`, {
+    method: "PATCH",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify({ ...changes, updated_at: new Date().toISOString() }),
+  }).then((rows) => rows[0]);
+}
+
+export function bulkUpdateProjects(
+  projectIds: string[],
+  changes: Partial<Omit<ProjectInput, "enterprise_id" | "project_code" | "name"> & ProjectEnterpriseAttributeChanges>,
+) {
+  if (!projectIds.length || !Object.keys(changes).length) return Promise.resolve([] as Project[]);
+  return supabaseRequest<Project[]>(`projects?id=in.(${projectIds.join(",")})&select=${encodeURIComponent(projectSelect)}`, {
+    method: "PATCH",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify({ ...changes, updated_at: new Date().toISOString() }),
+  });
 }
 
 export function updateProjectGeneralInfo(projectId: string, input: ProjectGeneralInfoInput) {
