@@ -642,18 +642,18 @@ export default function SubcontractManagementPage({ projectPublicId, bulkLineIte
     </div>}
 
     <section className="enterprise-grid-card" style={selectedSubcontract && !bulkLineItems ? { flex: 1, minHeight: 0, borderRadius: 0, borderLeft: 0, borderRight: 0 } : undefined}>
-      <div className="enterprise-toolbar" style={{ flexWrap: "wrap" }}>
+      <div className="enterprise-toolbar" style={{ flexWrap: "wrap", padding: selectedSubcontract && !bulkLineItems ? "8px 12px" : undefined, background: selectedSubcontract && !bulkLineItems ? "#fff" : undefined, borderBottom: selectedSubcontract && !bulkLineItems ? "1px solid #e5e7eb" : undefined }}>
         <label className="enterprise-search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={showingLineItems ? "Search Line Items…" : "Search Subcontracts…"}/></label>
-        <button className="button secondary" disabled={loading || saving || recalculating} onClick={() => void refresh()}>↻ Refresh</button>
-        {selectedSubcontract && !bulkLineItems ? <span style={{ display: "inline-flex", alignItems: "stretch" }}><button className="button primary" style={{ borderTopRightRadius: 0, borderBottomRightRadius: 0 }} disabled={!project || saving} onClick={() => void addLedgerRows()}>+ Add Row{addCount === 1 ? "" : "s"}</button><input aria-label="Number of rows to add" title="Rows to add (1–100)" type="number" min={1} max={100} value={addCount} onChange={(event) => setAddCount(Math.max(1, Math.min(100, Number(event.target.value) || 1)))} style={{ width: 54, border: "1px solid #cbd5e1", borderLeft: 0, borderRadius: "0 6px 6px 0", padding: "0 6px", fontSize: 12, textAlign: "center" }}/></span> : bulkLineItems && <button className="button secondary" disabled={!project || !subcontracts.length} onClick={() => setLineItemForm("new")}>+ Add Line Item</button>}
-        <button className="button secondary" disabled={!selectedIds.length || saving || recalculating} onClick={() => { setBulkField(""); setBulkValue(""); setBulkOpen(true); }}>Bulk Edit ({selectedIds.length})</button>
-        <button className="button secondary danger" disabled={!selectedIds.length || saving || recalculating} onClick={() => setDeletePrompt({ kind: showingLineItems ? "lineItems" : "subcontracts", ids: selectedIds })}>Bulk Delete ({selectedIds.length})</button>
+        {selectedSubcontract && !bulkLineItems ? <span style={{ display: "inline-flex", alignItems: "stretch" }}><button className="button primary" style={{ borderTopRightRadius: 0, borderBottomRightRadius: 0 }} disabled={!project || saving || recalculating} onClick={() => void addLedgerRows()}>+ Add Row{addCount === 1 ? "" : "s"}</button><input aria-label="Number of rows to add" title="Rows to add (1–100)" type="number" min={1} max={100} value={addCount} onChange={(event) => setAddCount(Math.max(1, Math.min(100, Number(event.target.value) || 1)))} style={{ width: 54, border: "1px solid #cbd5e1", borderLeft: 0, borderRadius: "0 6px 6px 0", padding: "0 6px", fontSize: 12, textAlign: "center" }}/></span> : bulkLineItems && <button className="button secondary" disabled={!project || !subcontracts.length} onClick={() => setLineItemForm("new")}>+ Add Line Item</button>}
+        <button className="button secondary" disabled={!selectedIds.length || saving || recalculating} onClick={() => { setBulkField(""); setBulkValue(""); setBulkOpen(true); }}>Bulk Edit{selectedIds.length ? ` (${selectedIds.length})` : ""}</button>
+        <button className="button danger" disabled={!selectedIds.length || saving || recalculating} onClick={() => setDeletePrompt({ kind: showingLineItems ? "lineItems" : "subcontracts", ids: selectedIds })}>Delete{selectedIds.length ? ` (${selectedIds.length})` : ""}</button>
+        <button className="button secondary" disabled={!gridApi} onClick={() => gridApi?.expandAll()}>Expand All</button>
+        <button className="button secondary" disabled={!gridApi} onClick={() => gridApi?.collapseAll()}>Collapse All</button>
         <button className="button secondary" disabled={loading || saving || recalculating} onClick={exportCurrent}>⇩ Export</button>
         <button className="button secondary" disabled={loading || saving || recalculating} onClick={() => fileRef.current?.click()}>⇧ Import</button>
         <input ref={fileRef} hidden type="file" accept=".xlsx,.xls" onChange={(event) => { const file = event.target.files?.[0]; if (file) void chooseImport(file); }}/>
         <button className="button primary" disabled={!project || loading || saving || recalculating} onClick={() => void recalculate()}>{recalculating ? "Recalculating…" : "↻ Recalculate"}</button>
-        <button className="button secondary compact" disabled={!gridApi} onClick={() => gridApi?.expandAll()}>Expand</button>
-        <button className="button secondary compact" disabled={!gridApi} onClick={() => gridApi?.collapseAll()}>Collapse</button>
+        <button className="button secondary" disabled={loading || saving || recalculating} onClick={() => void refresh()}>↻ Refresh</button>
       </div>
 
       {error && <div className="data-message error"><strong>Subcontract Management error</strong><span>{error}</span></div>}
@@ -678,6 +678,11 @@ export default function SubcontractManagementPage({ projectPublicId, bulkLineIte
               } else setSelectedSubcontractIds(ids);
             }}
             onGridReady={(event) => setGridApi(event.api)}
+            onCellFocused={(event) => {
+              if (!showingLineItems || bulkLineItems || event.rowIndex == null) return;
+              const node = event.api.getDisplayedRowAtIndex(event.rowIndex);
+              if (node?.data?.id) setInsertAfterLineItemId(node.data.id);
+            }}
             onCellValueChanged={(event) => showingLineItems ? void lineItemChanged(event as CellValueChangedEvent<LineItemGridRow>) : undefined}
             getRowId={(params) => params.data.id}
             rowGroupPanelShow="always"
