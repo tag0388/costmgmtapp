@@ -2,124 +2,86 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgGridProvider, AgGridReact } from "ag-grid-react";
-import type { CellValueChangedEvent, ColDef, ColGroupDef, ColumnState, GridApi, SelectionChangedEvent, ValueGetterParams, ValueSetterParams } from "ag-grid-community";
+import type { CellValueChangedEvent, ColDef, SelectionChangedEvent } from "ag-grid-community";
 import { themeQuartz } from "ag-grid-community";
 import { AllEnterpriseModule } from "ag-grid-enterprise";
 import ExcelImportDialog from "@/components/shared/excel-import-dialog";
-import { CostCode, listCostCodes } from "@/lib/cost-codes";
-import { ExcelRow, exportExcel, readExcel } from "@/lib/excel";
-import { EnterpriseAttributeDefinition, listEnterpriseAttributes } from "@/lib/enterprise-attributes";
-import { ProjectAttributeDefinition, listProjectAttributes } from "@/lib/project-scope-attributes";
-import { getProjectByPublicId, Project } from "@/lib/projects";
-import { costCalculationErrorMessage, recalculateProjectCostManagement } from "@/lib/cost-calculation";
-import { deleteProjectGridView, gridViewErrorMessage, listProjectGridViews, ProjectGridView, saveProjectGridView } from "@/lib/grid-views";
+import { listCostCodes, type CostCode } from "@/lib/cost-codes";
+import { exportExcel, readExcel, type ExcelRow } from "@/lib/excel";
+import { listEnterpriseAttributes, type EnterpriseAttributeDefinition } from "@/lib/enterprise-attributes";
+import { listProjectAttributes, type ProjectAttributeDefinition } from "@/lib/project-scope-attributes";
+import { getProjectByPublicId, type Project } from "@/lib/projects";
+import { recalculateProjectCostManagement, costCalculationErrorMessage } from "@/lib/cost-calculation";
 import {
-  Subcontract, SubcontractAttributeField, SubcontractInput, SubcontractLineItem, SubcontractLineItemInput, SubcontractStatus,
-  bulkUpdateSubcontractLineItems, bulkUpdateSubcontracts, createSubcontract, createSubcontractLineItem, createSubcontractLineItems,
-  deleteSubcontractLineItems, deleteSubcontracts, listSubcontractLineItems, listSubcontracts,
-  subcontractManagementErrorMessage, updateSubcontract, updateSubcontractLineItem,
+  createSubcontract, updateSubcontract, deleteSubcontracts, bulkUpdateSubcontracts,
+  createSubcontractLineItem, createSubcontractLineItems, updateSubcontractLineItem,
+  deleteSubcontractLineItems, bulkUpdateSubcontractLineItems,
+  listSubcontracts, listSubcontractLineItems, subcontractManagementErrorMessage,
+  type Subcontract, type SubcontractLineItem, type SubcontractInput,
+  type SubcontractLineItemInput, type SubcontractStatus, type SubcontractAttributeField,
 } from "@/lib/subcontract-management";
 
-const gridTheme = themeQuartz.withParams({ spacing: 4, rowHeight: 30, headerHeight: 34, fontSize: 12 });
+const theme = themeQuartz.withParams({ spacing: 4, rowHeight: 30, headerHeight: 34, fontSize: 12 });
 const STATUSES: SubcontractStatus[] = ["Active", "On Hold", "Cancelled"];
 const CLEAR = "__clear__";
+
 type AttributeDefinition = EnterpriseAttributeDefinition | ProjectAttributeDefinition;
-type ActiveAttribute = { prefix: "E" | "P"; field: SubcontractAttributeField; definition: AttributeDefinition; columnName: string };
-type HeaderForm = SubcontractInput;
-type LineForm = SubcontractLineItemInput;
-type HeaderGridRow = Subcontract & { action: string };
-type LineGridRow = SubcontractLineItem & { subcontract_ref: string; subcontract_name: string; cost_code_ref: string; cost_code_label: string };
-type AnyGridRow = HeaderGridRow | LineGridRow;
-type BulkChoice = { id: string; label: string; kind: "status" | "subcontract" | "costCode" | "text" | "number" | "attribute"; attribute?: ActiveAttribute };
+type AttributeMeta = { field: SubcontractAttributeField; label: string; definition: AttributeDefinition };
+type LineRow = SubcontractLineItem & { subcontract_ref: string; cost_code_ref: string; cost_code_label: string };
 
-const blankHeader: HeaderForm = { subcontract_id: "", subcontract_name: "", status: "Active" };
-
-function field(prefix: "E" | "P", slot: number) {
-  return `${prefix.toLowerCase()}_attribute_${String(slot).padStart(2, "0")}` as SubcontractAttributeField;
+function attributeField(prefix: "e" | "p", slot: number) {
+  return `${prefix}_attribute_${String(slot).padStart(2, "0")}` as SubcontractAttributeField;
 }
 function buildAttributes(enterprise: EnterpriseAttributeDefinition[], project: ProjectAttributeDefinition[]) {
-  const entries = [
-    ...enterprise.filter((item) => item.is_active).map((definition) => ({ prefix: "E" as const, definition })),
-    ...project.filter((item) => item.is_active).map((definition) => ({ prefix: "P" as const, definition })),
-  ];
-  const names = new Map<string, number>();
-  entries.forEach(({ definition }) => names.set(definition.name.toLowerCase(), (names.get(definition.name.toLowerCase()) ?? 0) + 1));
-  return entries.map(({ prefix, definition }): ActiveAttribute => ({
-    prefix,
-    definition,
-    field: field(prefix, definition.attribute_number),
-    columnName: (names.get(definition.name.toLowerCase()) ?? 0) > 1
-      ? `${definition.name} (${prefix}${String(definition.attribute_number).padStart(2, "0")})`
-      : definition.name,
-  }));
+  return [
+    ...enterprise.filter((x) => x.is_active).map((definition) => ({ field: attributeField("e", definition.attribute_number), label: definition.name, definition })),
+    ...project.filter((x) => x.is_active).map((definition) => ({ field: attributeField("p", definition.attribute_number), label: definition.name, definition })),
+  ] satisfies AttributeMeta[];
 }
-function valueLabel(definition: AttributeDefinition, value: string | null | undefined) {
+function attributeLabel(definition: AttributeDefinition, value: string | null | undefined) {
   if (!value) return "";
-  const match = definition.attribute_values.find((item) => item.value_id.toLowerCase() === value.toLowerCase());
-  return match ? `${match.value_id} - ${match.value_name}` : value;
+  const found = definition.attribute_values.find((x) => x.value_id.toLowerCase() === value.toLowerCase());
+  return found ? `${found.value_id} - ${found.value_name}` : value;
 }
 function money(value: unknown) {
   return new Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(value ?? 0));
 }
-function number(value: unknown, decimals = 4) {
-  const parsed = Number(value ?? 0);
-  return Number.isFinite(parsed) ? new Intl.NumberFormat(undefined, { maximumFractionDigits: decimals }).format(parsed) : "";
-}
-function parseNumber(value: unknown) {
-  const parsed = Number(String(value ?? "").replace(/,/g, "").trim());
-  return Number.isFinite(parsed) ? parsed : Number.NaN;
+function qty(value: unknown) {
+  return new Intl.NumberFormat(undefined, { maximumFractionDigits: 4 }).format(Number(value ?? 0));
 }
 function exactColumns(rows: ExcelRow[], columns: string[]) {
   if (!rows.length) return true;
   const actual = Object.keys(rows[0]);
-  return actual.length === columns.length && columns.every((column, index) => actual[index] === column);
+  return actual.length === columns.length && columns.every((column, i) => actual[i] === column);
 }
-function nextOrder(rows: SubcontractLineItem[], afterId: string | null) {
-  const ordered = [...rows].sort((a, b) => (a.row_order ?? Number.MAX_SAFE_INTEGER) - (b.row_order ?? Number.MAX_SAFE_INTEGER) || a.created_at.localeCompare(b.created_at));
-  if (!ordered.length) return 1000;
-  if (!afterId) return (ordered.at(-1)?.row_order ?? ordered.length * 1000) + 1000;
-  const index = ordered.findIndex((row) => row.id === afterId);
-  if (index < 0) return (ordered.at(-1)?.row_order ?? ordered.length * 1000) + 1000;
-  const current = ordered[index].row_order ?? (index + 1) * 1000;
-  const next = ordered[index + 1]?.row_order;
-  return next == null ? current + 1000 : (current + next) / 2;
-}
-
-function ActionIcon({ type }: { type: "edit" | "delete" | "records" }) {
-  if (type === "edit") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4l11-11-4-4L4 16v4Zm10-13 4 4M13.5 6.5l4 4"/></svg>;
-  if (type === "delete") return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m-9 0 1 13h10l1-13M10 11v5m4-5v5"/></svg>;
-  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l4 4v14H6V3Zm9 0v5h4M9 12h7M9 16h7"/></svg>;
-}
-
-function AttributeFields({ attributes, form, setForm }: { attributes: ActiveAttribute[]; form: HeaderForm; setForm: (form: HeaderForm) => void }) {
-  return <>{attributes.map((attribute) => <label className="form-field" key={attribute.field}>
-    <span>{attribute.columnName}<small>{attribute.prefix}{String(attribute.definition.attribute_number).padStart(2, "0")}</small></span>
-    <select value={String(form[attribute.field] ?? "")} onChange={(event) => setForm({ ...form, [attribute.field]: event.target.value || null })}>
-      <option value="">—</option>
-      {attribute.definition.attribute_values.filter((value) => value.is_active || value.value_id === form[attribute.field]).map((value) =>
-        <option key={value.id} value={value.value_id}>{value.value_id} - {value.value_name}{value.is_active ? "" : " (Inactive)"}</option>)}
-    </select>
-  </label>)}</>;
+function parseNumber(value: unknown) {
+  return Number(String(value ?? "").replace(/,/g, "").trim());
 }
 
 export default function SubcontractManagementPage({ projectPublicId, bulkLineItems = false }: { projectPublicId: string; bulkLineItems?: boolean }) {
-  const fileRef = useRef<HTMLInputElement>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
   const [project, setProject] = useState<Project | null>(null);
   const [subcontracts, setSubcontracts] = useState<Subcontract[]>([]);
   const [lineItems, setLineItems] = useState<SubcontractLineItem[]>([]);
   const [costCodes, setCostCodes] = useState<CostCode[]>([]);
-  const [enterpriseSubcontractAttributes, setEnterpriseSubcontractAttributes] = useState<EnterpriseAttributeDefinition[]>([]);
-  const [projectSubcontractAttributes, setProjectSubcontractAttributes] = useState<ProjectAttributeDefinition[]>([]);
-  const [enterpriseLineItemAttributes, setEnterpriseLineItemAttributes] = useState<EnterpriseAttributeDefinition[]>([]);
-  const [projectLineItemAttributes, setProjectLineItemAttributes] = useState<ProjectAttributeDefinition[]>([]);
+  const [enterpriseSubAttrs, setEnterpriseSubAttrs] = useState<EnterpriseAttributeDefinition[]>([]);
+  const [projectSubAttrs, setProjectSubAttrs] = useState<ProjectAttributeDefinition[]>([]);
+  const [enterpriseLineAttrs, setEnterpriseLineAttrs] = useState<EnterpriseAttributeDefinition[]>([]);
+  const [projectLineAttrs, setProjectLineAttrs] = useState<ProjectAttributeDefinition[]>([]);
   const [selectedSubcontract, setSelectedSubcontract] = useState<Subcontract | null>(null);
-  const [headerForm, setHeaderForm] = useState<HeaderForm | null>(null);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [headerForm, setHeaderForm] = useState<SubcontractInput | null>(null);
   const [editingHeader, setEditingHeader] = useState<Subcontract | null>(null);
-  const [lineForm, setLineForm] = useState<LineForm | null>(null);
-  const [selectedHeaderIds, setSelectedHeaderIds] = useState<string[]>([]);
-  const [selectedLineIds, setSelectedLineIds] = useState<string[]>([]);
-  const [insertAfterId, setInsertAfterId] = useState<string | null>(null);
-  const [gridApi, setGridApi] = useState<GridApi<any> | null>(null);
+  const [lineForm, setLineForm] = useState<SubcontractLineItemInput | null>(null);
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkField, setBulkField] = useState("");
+  const [bulkValue, setBulkValue] = useState("");
+  const [deleteIds, setDeleteIds] = useState<string[] | null>(null);
+  const [importRows, setImportRows] = useState<ExcelRow[] | null>(null);
+  const [importErrors, setImportErrors] = useState<string[]>([]);
+  const [replace, setReplace] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [progress, setProgress] = useState(0);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -127,248 +89,172 @@ export default function SubcontractManagementPage({ projectPublicId, bulkLineIte
   const [error, setError] = useState("");
   const [formError, setFormError] = useState("");
   const [notice, setNotice] = useState("");
-  const [bulkOpen, setBulkOpen] = useState(false);
-  const [bulkField, setBulkField] = useState("");
-  const [bulkValue, setBulkValue] = useState("");
-  const [deletePrompt, setDeletePrompt] = useState<{ kind: "headers" | "lines"; ids: string[] } | null>(null);
-  const [importRows, setImportRows] = useState<ExcelRow[] | null>(null);
-  const [importErrors, setImportErrors] = useState<string[]>([]);
-  const [importing, setImporting] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [replace, setReplace] = useState(false);
-  const [views, setViews] = useState<ProjectGridView[]>([]);
-  const [selectedView, setSelectedView] = useState("Default");
-  const [showSaveView, setShowSaveView] = useState(false);
-  const [viewName, setViewName] = useState("");
 
   const refresh = useCallback(async () => {
     setLoading(true); setError("");
     try {
-      const currentProject = await getProjectByPublicId(projectPublicId);
-      setProject(currentProject);
-      if (!currentProject) throw new Error("The selected project could not be found.");
-      const selectedId = selectedSubcontract?.id ?? null;
-      const [headers, codes, enterpriseHeaderDefs, projectHeaderDefs, enterpriseLineDefs, projectLineDefs] = await Promise.all([
-        listSubcontracts(currentProject.id),
-        listCostCodes(currentProject.id),
-        listEnterpriseAttributes(currentProject.enterprise_id, "Subcontract"),
-        listProjectAttributes(currentProject.id, "Subcontract"),
-        listEnterpriseAttributes(currentProject.enterprise_id, "Line Item"),
-        listProjectAttributes(currentProject.id, "Line Item"),
+      const current = await getProjectByPublicId(projectPublicId);
+      setProject(current);
+      if (!current) throw new Error("The selected project could not be found.");
+      const [headers, codes, esa, psa, ela, pla] = await Promise.all([
+        listSubcontracts(current.id),
+        listCostCodes(current.id),
+        listEnterpriseAttributes(current.enterprise_id, "Subcontract"),
+        listProjectAttributes(current.id, "Subcontract"),
+        listEnterpriseAttributes(current.enterprise_id, "Line Item"),
+        listProjectAttributes(current.id, "Line Item"),
       ]);
-      const resolved = selectedId ? headers.find((row) => row.id === selectedId) ?? null : null;
-      const lines = bulkLineItems
-        ? await listSubcontractLineItems(currentProject.id)
-        : resolved ? await listSubcontractLineItems(currentProject.id, resolved.id) : [];
-      setSubcontracts(headers);
-      setCostCodes(codes);
-      setEnterpriseSubcontractAttributes(enterpriseHeaderDefs);
-      setProjectSubcontractAttributes(projectHeaderDefs);
-      setEnterpriseLineItemAttributes(enterpriseLineDefs);
-      setProjectLineItemAttributes(projectLineDefs);
-      setSelectedSubcontract(resolved);
-      setLineItems(lines);
-    } catch (requestError) {
-      setError(subcontractManagementErrorMessage(requestError));
-    } finally {
-      setLoading(false);
-    }
+      setSubcontracts(headers); setCostCodes(codes);
+      setEnterpriseSubAttrs(esa); setProjectSubAttrs(psa); setEnterpriseLineAttrs(ela); setProjectLineAttrs(pla);
+      const selected = selectedSubcontract ? headers.find((x) => x.id === selectedSubcontract.id) ?? null : null;
+      setSelectedSubcontract(selected);
+      setLineItems(bulkLineItems ? await listSubcontractLineItems(current.id) : selected ? await listSubcontractLineItems(current.id, selected.id) : []);
+      setSelectedIds([]);
+    } catch (e) { setError(subcontractManagementErrorMessage(e)); }
+    finally { setLoading(false); }
   }, [bulkLineItems, projectPublicId, selectedSubcontract?.id]);
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { void refresh(); }, [refresh]);
 
-  const headerAttributes = useMemo(() => buildAttributes(enterpriseSubcontractAttributes, projectSubcontractAttributes), [enterpriseSubcontractAttributes, projectSubcontractAttributes]);
-  const lineAttributes = useMemo(() => buildAttributes(enterpriseLineItemAttributes, projectLineItemAttributes), [enterpriseLineItemAttributes, projectLineItemAttributes]);
-  const subcontractById = useMemo(() => new Map(subcontracts.map((row) => [row.id, row])), [subcontracts]);
-  const subcontractByRef = useMemo(() => new Map(subcontracts.map((row) => [row.subcontract_id.toLowerCase(), row])), [subcontracts]);
-  const codeById = useMemo(() => new Map(costCodes.map((row) => [row.id, row])), [costCodes]);
-  const codeByRef = useMemo(() => new Map(costCodes.map((row) => [row.cost_code_id.toLowerCase(), row])), [costCodes]);
+  const headerAttributes = useMemo(() => buildAttributes(enterpriseSubAttrs, projectSubAttrs), [enterpriseSubAttrs, projectSubAttrs]);
+  const lineAttributes = useMemo(() => buildAttributes(enterpriseLineAttrs, projectLineAttrs), [enterpriseLineAttrs, projectLineAttrs]);
+  const subcontractById = useMemo(() => new Map(subcontracts.map((x) => [x.id, x])), [subcontracts]);
+  const subcontractByRef = useMemo(() => new Map(subcontracts.map((x) => [x.subcontract_id.toLowerCase(), x])), [subcontracts]);
+  const costCodeById = useMemo(() => new Map(costCodes.map((x) => [x.id, x])), [costCodes]);
+  const costCodeByRef = useMemo(() => new Map(costCodes.map((x) => [x.cost_code_id.toLowerCase(), x])), [costCodes]);
+  const showingLines = bulkLineItems || Boolean(selectedSubcontract);
 
-  const showingLines = bulkLineItems || selectedSubcontract !== null;
-  const gridKey = showingLines ? (bulkLineItems ? "bulk-subcontract-line-items" : "subcontract-line-items") : "subcontracts";
-  const selectedIds = showingLines ? selectedLineIds : selectedHeaderIds;
+  const rows = useMemo<LineRow[]>(() => lineItems.map((row) => {
+    const sc = subcontractById.get(row.subcontract_id);
+    const cc = costCodeById.get(row.cost_code_id);
+    return {
+      ...row,
+      qty: Number(row.qty), rate: Number(row.rate), cost: Number(row.cost),
+      subcontract_ref: sc?.subcontract_id ?? "",
+      cost_code_ref: cc?.cost_code_id ?? "",
+      cost_code_label: cc ? `${cc.cost_code_id} - ${cc.name}` : "",
+    };
+  }), [costCodeById, lineItems, subcontractById]);
 
-  const lineRows = useMemo<LineGridRow[]>(() => lineItems
-    .filter((row) => bulkLineItems || !selectedSubcontract || row.subcontract_id === selectedSubcontract.id)
-    .sort((a, b) => (a.row_order ?? Number.MAX_SAFE_INTEGER) - (b.row_order ?? Number.MAX_SAFE_INTEGER) || a.created_at.localeCompare(b.created_at))
-    .map((row) => {
-      const subcontract = subcontractById.get(row.subcontract_id);
-      const code = codeById.get(row.cost_code_id);
-      return {
-        ...row,
-        qty: Number(row.qty),
-        rate: Number(row.rate),
-        cost: Number(row.cost),
-        subcontract_ref: subcontract?.subcontract_id ?? "",
-        subcontract_name: subcontract?.subcontract_name ?? "",
-        cost_code_ref: code?.cost_code_id ?? "",
-        cost_code_label: code ? `${code.cost_code_id} - ${code.name}` : "",
-      };
-    }), [bulkLineItems, codeById, lineItems, selectedSubcontract, subcontractById]);
-
-  useEffect(() => {
-    if (!project) return;
-    void listProjectGridViews(project.id, gridKey).then((rows) => { setViews(rows); setSelectedView("Default"); })
-      .catch((requestError) => setError(gridViewErrorMessage(requestError)));
-  }, [gridKey, project]);
-
-  const attributeColumns = useCallback((attributes: ActiveAttribute[], editable: boolean): ColDef<any>[] => attributes.map((attribute, index) => ({
-    colId: attribute.field,
-    headerName: attribute.columnName,
-    headerTooltip: `${attribute.prefix}${String(attribute.definition.attribute_number).padStart(2, "0")} · ${attribute.definition.name}`,
+  const attributeColumns = useCallback((attrs: AttributeMeta[], editable: boolean): ColDef<any>[] => attrs.map((attr) => ({
+    colId: attr.field,
+    headerName: attr.label,
     minWidth: 145,
-    editable,
     filter: "agSetColumnFilter",
-    columnGroupShow: index === 0 ? undefined : "open",
-    valueGetter: (params: ValueGetterParams<any>) => valueLabel(attribute.definition, params.data?.[attribute.field]),
-    valueSetter: editable ? (params: ValueSetterParams<any>) => {
+    editable,
+    valueGetter: (params) => attributeLabel(attr.definition, params.data?.[attr.field]),
+    valueSetter: editable ? (params) => {
       if (!params.data) return false;
-      if (!params.newValue) { params.data[attribute.field] = null; return true; }
-      const match = attribute.definition.attribute_values.find((value) =>
-        value.value_id === params.newValue || value.value_name === params.newValue || `${value.value_id} - ${value.value_name}` === params.newValue);
+      if (!params.newValue) { params.data[attr.field] = null; return true; }
+      const match = attr.definition.attribute_values.find((x) => x.value_id === params.newValue || `${x.value_id} - ${x.value_name}` === params.newValue);
       if (!match?.is_active) return false;
-      params.data[attribute.field] = match.value_id;
+      params.data[attr.field] = match.value_id;
       return true;
     } : undefined,
     cellEditor: editable ? "agSelectCellEditor" : undefined,
-    cellEditorParams: editable ? { values: ["", ...attribute.definition.attribute_values.filter((value) => value.is_active).map((value) => `${value.value_id} - ${value.value_name}`)] } : undefined,
+    cellEditorParams: editable ? { values: ["", ...attr.definition.attribute_values.filter((x) => x.is_active).map((x) => `${x.value_id} - ${x.value_name}`)] } : undefined,
   })), []);
 
-  const headerColumns = useMemo<Array<ColDef<HeaderGridRow> | ColGroupDef<HeaderGridRow>>>(() => {
-    const enterprise = attributeColumns(headerAttributes.filter((a) => a.prefix === "E"), false) as ColDef<HeaderGridRow>[];
-    const projectCols = attributeColumns(headerAttributes.filter((a) => a.prefix === "P"), false) as ColDef<HeaderGridRow>[];
-    return [
-      { groupId: "sc-general", headerName: "General Info", marryChildren: true, openByDefault: true, children: [
-        { field: "subcontract_id", headerName: "Subcontract ID", pinned: "left", minWidth: 150, filter: true },
-        { field: "subcontract_name", headerName: "Subcontract Name", pinned: "left", minWidth: 240, filter: true },
-        { field: "status", headerName: "Status", minWidth: 110, filter: "agSetColumnFilter", columnGroupShow: "open" },
-      ]},
-      { groupId: "sc-financial", headerName: "Financial Summary", marryChildren: true, openByDefault: true, children: [
-        { field: "total_cost", headerName: "Total Cost", minWidth: 130, type: "numericColumn", aggFunc: "sum", enableValue: true, valueFormatter: (params) => money(params.value) },
-        { field: "record_count", headerName: "Line Items", minWidth: 100, type: "numericColumn", columnGroupShow: "open" },
-      ]},
-      ...(enterprise.length ? [{ groupId: "sc-enterprise", headerName: "Enterprise Subcontract Attributes", marryChildren: true, openByDefault: false, children: enterprise }] : []),
-      ...(projectCols.length ? [{ groupId: "sc-project", headerName: "Project Subcontract Attributes", marryChildren: true, openByDefault: false, children: projectCols }] : []),
-      { headerName: "Actions", pinned: "right", width: 120, minWidth: 120, maxWidth: 120, sortable: false, filter: false, suppressHeaderMenuButton: true,
-        cellRenderer: (params: { data?: Subcontract }) => params.data ? <div className="change-row-actions" onMouseDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>
-          <button className="change-icon-button" title="Open Line Items" onClick={() => { setSelectedSubcontract(params.data!); setSelectedHeaderIds([]); }}><ActionIcon type="records"/></button>
-          <button className="change-icon-button" title="Edit Subcontract" onClick={() => { setEditingHeader(params.data!); setHeaderForm({ subcontract_id: params.data!.subcontract_id, subcontract_name: params.data!.subcontract_name, status: params.data!.status, ...Object.fromEntries(headerAttributes.map((a) => [a.field, params.data![a.field] ?? null])) }); }}><ActionIcon type="edit"/></button>
-          <button className="change-icon-button danger" title="Delete Subcontract" onClick={() => setDeletePrompt({ kind: "headers", ids: [params.data!.id] })}><ActionIcon type="delete"/></button>
-        </div> : null },
-    ];
-  }, [attributeColumns, headerAttributes]);
+  const headerColumns = useMemo<ColDef<Subcontract>[]>(() => [
+    { field: "subcontract_id", headerName: "Subcontract ID", pinned: "left", minWidth: 150, filter: true },
+    { field: "subcontract_name", headerName: "Subcontract Name", pinned: "left", minWidth: 240, filter: true },
+    { field: "status", headerName: "Status", minWidth: 110, filter: "agSetColumnFilter" },
+    { field: "total_cost", headerName: "Total Cost", minWidth: 130, type: "numericColumn", aggFunc: "sum", enableValue: true, valueFormatter: (p) => money(p.value) },
+    { field: "record_count", headerName: "Line Items", minWidth: 100, type: "numericColumn" },
+    ...attributeColumns(headerAttributes, false) as ColDef<Subcontract>[],
+    {
+      headerName: "Actions", pinned: "right", width: 150, sortable: false, filter: false, suppressHeaderMenuButton: true,
+      cellRenderer: (params: { data?: Subcontract }) => params.data ? <div className="change-row-actions">
+        <button className="button secondary compact" onClick={() => { setSelectedSubcontract(params.data!); setSelectedIds([]); }}>Line Items</button>
+        <button className="change-icon-button" title="Edit" onClick={() => {
+          const row = params.data!;
+          setEditingHeader(row);
+          setHeaderForm({ subcontract_id: row.subcontract_id, subcontract_name: row.subcontract_name, status: row.status, ...Object.fromEntries(headerAttributes.map((a) => [a.field, row[a.field] ?? null])) });
+        }}>✎</button>
+      </div> : null,
+    },
+  ], [attributeColumns, headerAttributes]);
 
-  const lineColumns = useMemo<Array<ColDef<LineGridRow> | ColGroupDef<LineGridRow>>>(() => {
-    const enterprise = attributeColumns(lineAttributes.filter((a) => a.prefix === "E"), true) as ColDef<LineGridRow>[];
-    const projectCols = attributeColumns(lineAttributes.filter((a) => a.prefix === "P"), true) as ColDef<LineGridRow>[];
-    const base: ColDef<LineGridRow>[] = [
-      ...(bulkLineItems ? [{ field: "subcontract_ref" as const, headerName: "Subcontract ID", pinned: "left" as const, minWidth: 150, filter: true }] : []),
-      { field: "item", headerName: "Item", pinned: "left", minWidth: 120, editable: true, filter: true },
-      { field: "description", headerName: "Description", minWidth: 240, editable: true, filter: true },
-      {
-        field: "cost_code_label", headerName: "Cost Code", minWidth: 220, editable: true, filter: "agSetColumnFilter",
-        cellEditor: "agSelectCellEditor",
-        cellEditorParams: { values: costCodes.filter((code) => code.is_active).map((code) => `${code.cost_code_id} - ${code.name}`) },
-        valueSetter: (params: ValueSetterParams<LineGridRow>) => {
-          if (!params.data) return false;
-          const reference = String(params.newValue ?? "").split(" - ", 1)[0].trim();
-          const code = codeByRef.get(reference.toLowerCase());
-          if (!code) return false;
-          params.data.cost_code_id = code.id;
-          params.data.cost_code_ref = code.cost_code_id;
-          params.data.cost_code_label = `${code.cost_code_id} - ${code.name}`;
-          return true;
-        },
+  const lineColumns = useMemo<ColDef<LineRow>[]>(() => [
+    ...(bulkLineItems ? [{ field: "subcontract_ref" as const, headerName: "Subcontract ID", pinned: "left" as const, minWidth: 150, filter: true }] : []),
+    { field: "item", headerName: "Item", pinned: "left", minWidth: 120, editable: true },
+    { field: "description", headerName: "Description", minWidth: 240, editable: true },
+    {
+      field: "cost_code_label", headerName: "Cost Code", minWidth: 220, editable: true,
+      cellEditor: "agSelectCellEditor",
+      cellEditorParams: { values: costCodes.filter((x) => x.is_active).map((x) => `${x.cost_code_id} - ${x.name}`) },
+      valueSetter: (params) => {
+        if (!params.data) return false;
+        const ref = String(params.newValue ?? "").split(" - ")[0].trim();
+        const cc = costCodeByRef.get(ref.toLowerCase());
+        if (!cc) return false;
+        params.data.cost_code_id = cc.id;
+        params.data.cost_code_ref = cc.cost_code_id;
+        params.data.cost_code_label = `${cc.cost_code_id} - ${cc.name}`;
+        return true;
       },
-      { field: "unit", headerName: "Unit", minWidth: 90, editable: true },
-      { field: "qty", headerName: "Qty", minWidth: 105, type: "numericColumn", editable: true, aggFunc: "sum", enableValue: true, valueParser: (params) => parseNumber(params.newValue), valueFormatter: (params) => number(params.value) },
-      { field: "rate", headerName: "Rate", minWidth: 110, type: "numericColumn", editable: true, valueParser: (params) => parseNumber(params.newValue), valueFormatter: (params) => money(params.value) },
-      { field: "cost", headerName: "Cost", minWidth: 125, type: "numericColumn", editable: false, aggFunc: "sum", enableValue: true, valueGetter: (params) => Number(params.data?.qty ?? 0) * Number(params.data?.rate ?? 0), valueFormatter: (params) => money(params.value), cellStyle: { backgroundColor: "#f8fafc", fontWeight: 600 } },
-    ];
-    return [
-      { groupId: "scl-general", headerName: "Line Item", marryChildren: true, openByDefault: true, children: base },
-      ...(enterprise.length ? [{ groupId: "scl-enterprise", headerName: "Enterprise Line-Item Attributes", marryChildren: true, openByDefault: false, children: enterprise }] : []),
-      ...(projectCols.length ? [{ groupId: "scl-project", headerName: "Project Line-Item Attributes", marryChildren: true, openByDefault: false, children: projectCols }] : []),
-    ];
-  }, [attributeColumns, bulkLineItems, codeByRef, costCodes, lineAttributes]);
+    },
+    { field: "unit", headerName: "Unit", minWidth: 90, editable: true },
+    { field: "qty", headerName: "Qty", minWidth: 100, editable: true, type: "numericColumn", aggFunc: "sum", valueParser: (p) => parseNumber(p.newValue), valueFormatter: (p) => qty(p.value) },
+    { field: "rate", headerName: "Rate", minWidth: 110, editable: true, type: "numericColumn", valueParser: (p) => parseNumber(p.newValue), valueFormatter: (p) => money(p.value) },
+    { field: "cost", headerName: "Cost", minWidth: 120, editable: false, type: "numericColumn", aggFunc: "sum", valueGetter: (p) => Number(p.data?.qty ?? 0) * Number(p.data?.rate ?? 0), valueFormatter: (p) => money(p.value), cellStyle: { backgroundColor: "#f8fafc", fontWeight: 600 } },
+    ...attributeColumns(lineAttributes, true) as ColDef<LineRow>[],
+  ], [attributeColumns, bulkLineItems, costCodeByRef, costCodes, lineAttributes]);
 
-  async function cellChanged(event: CellValueChangedEvent<LineGridRow>) {
+  async function lineChanged(event: CellValueChangedEvent<LineRow>) {
     if (!event.data || event.newValue === event.oldValue) return;
-    const colId = event.column.getColId();
     setSaving(true); setError("");
     try {
-      const patch: Partial<LineForm> = {};
-      if (colId === "item") {
-        const item = String(event.newValue ?? "").trim();
-        if (!item) throw new Error("Item is required.");
-        patch.item = item;
-      } else if (colId === "description") patch.description = String(event.newValue ?? "").trim() || null;
-      else if (colId === "unit") patch.unit = String(event.newValue ?? "").trim() || null;
-      else if (colId === "qty" || colId === "rate") {
-        const value = Number(event.newValue);
-        if (!Number.isFinite(value) || value < 0) throw new Error(`${colId === "qty" ? "Qty" : "Rate"} must be zero or greater.`);
-        patch[colId] = value;
-      } else if (colId === "cost_code_label") {
-        patch.cost_code_id = event.data.cost_code_id;
-      } else if (colId.startsWith("e_attribute_") || colId.startsWith("p_attribute_")) {
-        (patch as Record<string, unknown>)[colId] = event.data[colId as SubcontractAttributeField] ?? null;
-      } else return;
-      const saved = await updateSubcontractLineItem(event.data.id, patch);
-      setLineItems((current) => current.map((row) => row.id === saved.id ? { ...row, ...saved, qty: Number(saved.qty), rate: Number(saved.rate), cost: Number(saved.cost) } : row));
-      if (colId === "qty" || colId === "rate") event.api.refreshCells({ rowNodes: [event.node], columns: ["cost"], force: true });
-    } catch (requestError) {
-      event.node.setDataValue(event.column, event.oldValue);
-      setError(subcontractManagementErrorMessage(requestError));
-    } finally { setSaving(false); }
+      const col = event.column.getColId();
+      const patch: Record<string, unknown> = {};
+      if (col === "item") {
+        const value = String(event.newValue ?? "").trim(); if (!value) throw new Error("Item is required."); patch.item = value;
+      } else if (col === "description" || col === "unit") patch[col] = String(event.newValue ?? "").trim() || null;
+      else if (col === "qty" || col === "rate") {
+        const value = Number(event.newValue); if (!Number.isFinite(value) || value < 0) throw new Error(`${col} must be zero or greater.`); patch[col] = value;
+      } else if (col === "cost_code_label") patch.cost_code_id = event.data.cost_code_id;
+      else if (col.startsWith("e_attribute_") || col.startsWith("p_attribute_")) patch[col] = event.data[col as SubcontractAttributeField] ?? null;
+      else return;
+      const saved = await updateSubcontractLineItem(event.data.id, patch as Partial<SubcontractLineItemInput>);
+      setLineItems((current) => current.map((x) => x.id === saved.id ? saved : x));
+      if (col === "qty" || col === "rate") event.api.refreshCells({ rowNodes: [event.node], columns: ["cost"], force: true });
+    } catch (e) { event.node.setDataValue(event.column, event.oldValue); setError(subcontractManagementErrorMessage(e)); }
+    finally { setSaving(false); }
   }
 
-  function openNewHeader() {
-    setEditingHeader(null);
-    setHeaderForm({ ...blankHeader, ...Object.fromEntries(headerAttributes.map((a) => [a.field, null])) });
-    setFormError("");
+  function newHeader() {
+    setEditingHeader(null); setFormError("");
+    setHeaderForm({ subcontract_id: "", subcontract_name: "", status: "Active", ...Object.fromEntries(headerAttributes.map((a) => [a.field, null])) });
   }
-  function openNewLine() {
-    const subcontract = selectedSubcontract ?? subcontracts[0] ?? null;
-    const code = costCodes.find((item) => item.is_active) ?? costCodes[0] ?? null;
-    if (!subcontract || !code) {
-      setError("Create a Subcontract and at least one active Cost Code before adding line items.");
-      return;
-    }
-    setLineForm({
-      subcontract_id: subcontract.id,
-      cost_code_id: code.id,
-      item: "",
-      description: null,
-      unit: null,
-      qty: 0,
-      rate: 0,
-      row_order: nextOrder(lineItems, insertAfterId),
-      ...Object.fromEntries(lineAttributes.map((a) => [a.field, null])),
-    });
+  function newLine() {
+    const sc = selectedSubcontract ?? subcontracts[0];
+    const cc = costCodes.find((x) => x.is_active) ?? costCodes[0];
+    if (!sc || !cc) { setError("Create a Subcontract and Cost Code before adding line items."); return; }
+    setLineForm({ subcontract_id: sc.id, cost_code_id: cc.id, item: "", description: null, unit: null, qty: 0, rate: 0 });
     setFormError("");
   }
 
   async function saveHeader() {
     if (!project || !headerForm) return;
     if (!headerForm.subcontract_id.trim() || !headerForm.subcontract_name.trim()) { setFormError("Subcontract ID and Subcontract Name are required."); return; }
-    setSaving(true); setFormError("");
+    setSaving(true);
     try {
       if (editingHeader) await updateSubcontract(editingHeader.id, headerForm);
       else await createSubcontract(project.id, headerForm);
       setHeaderForm(null); setEditingHeader(null); showNotice("Subcontract saved."); await refresh();
-    } catch (requestError) { setFormError(subcontractManagementErrorMessage(requestError)); }
+    } catch (e) { setFormError(subcontractManagementErrorMessage(e)); }
     finally { setSaving(false); }
   }
 
   async function saveLine() {
     if (!project || !lineForm) return;
     if (!lineForm.item.trim()) { setFormError("Item is required."); return; }
-    setSaving(true); setFormError("");
+    setSaving(true);
     try {
-      const saved = await createSubcontractLineItem(project.id, lineForm);
-      setLineItems((current) => [...current, saved]);
-      setLineForm(null); showNotice("Subcontract line item added.");
-    } catch (requestError) { setFormError(subcontractManagementErrorMessage(requestError)); }
+      await createSubcontractLineItem(project.id, lineForm);
+      setLineForm(null); showNotice("Line item added."); await refresh();
+    } catch (e) { setFormError(subcontractManagementErrorMessage(e)); }
     finally { setSaving(false); }
   }
 
@@ -377,133 +263,94 @@ export default function SubcontractManagementPage({ projectPublicId, bulkLineIte
   async function recalculate() {
     if (!project) return;
     setRecalculating(true); setError("");
-    try {
-      const result = await recalculateProjectCostManagement(project.id);
-      showNotice(`Recalculated project summaries for ${result.subcontracts} Subcontracts.`);
-      await refresh();
-    } catch (requestError) { setError(costCalculationErrorMessage(requestError)); }
+    try { await recalculateProjectCostManagement(project.id); showNotice("Subcontract and Cost Code summaries recalculated."); await refresh(); }
+    catch (e) { setError(costCalculationErrorMessage(e)); }
     finally { setRecalculating(false); }
   }
 
-  const bulkChoices = useMemo<BulkChoice[]>(() => showingLines
+  const bulkChoices = useMemo(() => showingLines
     ? [
-      ...(bulkLineItems ? [{ id: "subcontract_id", label: "Subcontract", kind: "subcontract" }] : []),
-      { id: "cost_code_id", label: "Cost Code", kind: "costCode" },
-      { id: "unit", label: "Unit", kind: "text" },
-      { id: "qty", label: "Qty", kind: "number" },
-      { id: "rate", label: "Rate", kind: "number" },
-      ...lineAttributes.map((a): BulkChoice => ({ id: a.field, label: a.columnName, kind: "attribute", attribute: a })),
-    ]
-    : [
-      { id: "status", label: "Status", kind: "status" },
-      ...headerAttributes.map((a): BulkChoice => ({ id: a.field, label: a.columnName, kind: "attribute", attribute: a })),
-    ], [bulkLineItems, headerAttributes, lineAttributes, showingLines]);
+        ...(bulkLineItems ? [{ id: "subcontract_id", label: "Subcontract" }] : []),
+        { id: "cost_code_id", label: "Cost Code" }, { id: "unit", label: "Unit" }, { id: "qty", label: "Qty" }, { id: "rate", label: "Rate" },
+        ...lineAttributes.map((a) => ({ id: a.field, label: a.label })),
+      ]
+    : [{ id: "status", label: "Status" }, ...headerAttributes.map((a) => ({ id: a.field, label: a.label }))],
+  [bulkLineItems, headerAttributes, lineAttributes, showingLines]);
 
-  const chosenBulk = bulkChoices.find((choice) => choice.id === bulkField);
-
-  async function applyBulkEdit() {
-    if (!selectedIds.length || !chosenBulk) return;
+  async function applyBulk() {
+    if (!selectedIds.length || !bulkField) return;
     setSaving(true); setError("");
     try {
       if (showingLines) {
         const patch: Record<string, unknown> = {};
-        if (chosenBulk.kind === "subcontract") {
-          const subcontract = subcontractByRef.get(bulkValue.toLowerCase());
-          if (!subcontract) throw new Error("Select a valid Subcontract.");
-          patch.subcontract_id = subcontract.id;
-        } else if (chosenBulk.kind === "costCode") {
-          const code = codeByRef.get(bulkValue.toLowerCase());
-          if (!code) throw new Error("Select a valid Cost Code.");
-          patch.cost_code_id = code.id;
-        } else if (chosenBulk.kind === "number") {
-          const value = Number(bulkValue);
-          if (!Number.isFinite(value) || value < 0) throw new Error("Enter a valid value of zero or greater.");
-          patch[bulkField] = value;
-        } else if (chosenBulk.kind === "attribute") {
-          patch[bulkField] = bulkValue === CLEAR ? null : bulkValue;
-        } else patch[bulkField] = bulkValue.trim() || null;
+        if (bulkField === "subcontract_id") {
+          const sc = subcontractByRef.get(bulkValue.toLowerCase()); if (!sc) throw new Error("Select a valid Subcontract."); patch.subcontract_id = sc.id;
+        } else if (bulkField === "cost_code_id") {
+          const cc = costCodeByRef.get(bulkValue.toLowerCase()); if (!cc) throw new Error("Select a valid Cost Code."); patch.cost_code_id = cc.id;
+        } else if (bulkField === "qty" || bulkField === "rate") {
+          const value = Number(bulkValue); if (!Number.isFinite(value) || value < 0) throw new Error("Enter a value of zero or greater."); patch[bulkField] = value;
+        } else patch[bulkField] = bulkValue === CLEAR ? null : bulkValue;
         await bulkUpdateSubcontractLineItems(selectedIds, patch as never);
       } else {
-        const patch: Record<string, unknown> = {};
-        patch[bulkField] = chosenBulk.kind === "attribute" && bulkValue === CLEAR ? null : bulkValue;
-        await bulkUpdateSubcontracts(selectedIds, patch as never);
+        await bulkUpdateSubcontracts(selectedIds, { [bulkField]: bulkValue === CLEAR ? null : bulkValue } as never);
       }
-      setBulkOpen(false); setBulkField(""); setBulkValue(""); showNotice(`Updated ${selectedIds.length} selected row${selectedIds.length === 1 ? "" : "s"}.`); await refresh();
-    } catch (requestError) { setError(subcontractManagementErrorMessage(requestError)); }
+      setBulkOpen(false); setBulkField(""); setBulkValue(""); showNotice("Selected rows updated."); await refresh();
+    } catch (e) { setError(subcontractManagementErrorMessage(e)); }
     finally { setSaving(false); }
   }
 
   async function confirmDelete() {
-    if (!deletePrompt) return;
+    if (!deleteIds) return;
     setSaving(true); setError("");
     try {
-      if (deletePrompt.kind === "headers") await deleteSubcontracts(deletePrompt.ids);
-      else await deleteSubcontractLineItems(deletePrompt.ids);
-      setDeletePrompt(null); setSelectedHeaderIds([]); setSelectedLineIds([]); showNotice("Selected rows deleted."); await refresh();
-    } catch (requestError) { setDeletePrompt(null); setError(subcontractManagementErrorMessage(requestError)); }
+      if (showingLines) await deleteSubcontractLineItems(deleteIds);
+      else await deleteSubcontracts(deleteIds);
+      setDeleteIds(null); showNotice("Selected rows deleted."); await refresh();
+    } catch (e) { setDeleteIds(null); setError(subcontractManagementErrorMessage(e)); }
     finally { setSaving(false); }
   }
 
-  const headerExcelColumns = useMemo(() => [
-    "Subcontract ID", "Subcontract Name", "Status",
-    ...headerAttributes.map((a) => `${a.prefix}${String(a.definition.attribute_number).padStart(2, "0")} - ${a.definition.name}`),
-  ], [headerAttributes]);
-  const lineExcelColumns = useMemo(() => [
-    "Subcontract ID", "Cost Code ID", "Item", "Description", "Unit", "Qty", "Rate",
-    ...lineAttributes.map((a) => `${a.prefix}${String(a.definition.attribute_number).padStart(2, "0")} - ${a.definition.name}`),
-  ], [lineAttributes]);
-  const excelColumns = showingLines ? lineExcelColumns : headerExcelColumns;
+  const excelColumns = useMemo(() => showingLines
+    ? ["Subcontract ID", "Cost Code ID", "Item", "Description", "Unit", "Qty", "Rate", ...lineAttributes.map((a) => a.label)]
+    : ["Subcontract ID", "Subcontract Name", "Status", ...headerAttributes.map((a) => a.label)],
+  [headerAttributes, lineAttributes, showingLines]);
 
   function exportRows() {
-    const rows: ExcelRow[] = showingLines
-      ? lineRows.map((row) => ({
-          "Subcontract ID": row.subcontract_ref,
-          "Cost Code ID": row.cost_code_ref,
-          "Item": row.item,
-          "Description": row.description ?? "",
-          "Unit": row.unit ?? "",
-          "Qty": String(row.qty),
-          "Rate": String(row.rate),
-          ...Object.fromEntries(lineAttributes.map((a) => [`${a.prefix}${String(a.definition.attribute_number).padStart(2, "0")} - ${a.definition.name}`, String(row[a.field] ?? "")])),
+    const data: ExcelRow[] = showingLines
+      ? rows.map((row) => ({
+          "Subcontract ID": row.subcontract_ref, "Cost Code ID": row.cost_code_ref, "Item": row.item,
+          "Description": row.description ?? "", "Unit": row.unit ?? "", "Qty": String(row.qty), "Rate": String(row.rate),
+          ...Object.fromEntries(lineAttributes.map((a) => [a.label, String(row[a.field] ?? "")])),
         }))
       : subcontracts.map((row) => ({
-          "Subcontract ID": row.subcontract_id,
-          "Subcontract Name": row.subcontract_name,
-          "Status": row.status,
-          ...Object.fromEntries(headerAttributes.map((a) => [`${a.prefix}${String(a.definition.attribute_number).padStart(2, "0")} - ${a.definition.name}`, String(row[a.field] ?? "")])),
+          "Subcontract ID": row.subcontract_id, "Subcontract Name": row.subcontract_name, "Status": row.status,
+          ...Object.fromEntries(headerAttributes.map((a) => [a.label, String(row[a.field] ?? "")])),
         }));
-    exportExcel(showingLines ? "Subcontract Line Items" : "Subcontracts", showingLines ? "Line Items" : "Subcontracts", rows);
+    exportExcel(showingLines ? "Subcontract Line Items" : "Subcontracts", showingLines ? "Line Items" : "Subcontracts", data);
   }
 
   async function chooseImport(file: File) {
     try {
-      const rows = await readExcel(file);
+      const incoming = await readExcel(file);
       const errors: string[] = [];
-      if (!exactColumns(rows, excelColumns)) errors.push(`Columns must exactly match the exported template: ${excelColumns.join(", ")}`);
-      const ids = new Set<string>();
-      rows.forEach((row, index) => {
+      if (!exactColumns(incoming, excelColumns)) errors.push(`Columns must exactly match: ${excelColumns.join(", ")}`);
+      incoming.forEach((row, index) => {
         const label = `Row ${index + 2}`;
         if (showingLines) {
-          const scRef = String(row["Subcontract ID"] ?? "").trim();
-          const ccRef = String(row["Cost Code ID"] ?? "").trim();
-          if (!subcontractByRef.has(scRef.toLowerCase())) errors.push(`${label}: Subcontract ID is invalid.`);
-          if (!codeByRef.has(ccRef.toLowerCase())) errors.push(`${label}: Cost Code ID is invalid.`);
+          if (!subcontractByRef.has(String(row["Subcontract ID"] ?? "").trim().toLowerCase())) errors.push(`${label}: invalid Subcontract ID.`);
+          if (!costCodeByRef.has(String(row["Cost Code ID"] ?? "").trim().toLowerCase())) errors.push(`${label}: invalid Cost Code ID.`);
           if (!String(row["Item"] ?? "").trim()) errors.push(`${label}: Item is required.`);
-          const qty = parseNumber(row["Qty"]); const rate = parseNumber(row["Rate"]);
-          if (!Number.isFinite(qty) || qty < 0) errors.push(`${label}: Qty must be zero or greater.`);
-          if (!Number.isFinite(rate) || rate < 0) errors.push(`${label}: Rate must be zero or greater.`);
+          const q = parseNumber(row["Qty"]); const r = parseNumber(row["Rate"]);
+          if (!Number.isFinite(q) || q < 0) errors.push(`${label}: Qty must be zero or greater.`);
+          if (!Number.isFinite(r) || r < 0) errors.push(`${label}: Rate must be zero or greater.`);
         } else {
-          const id = String(row["Subcontract ID"] ?? "").trim();
-          const status = String(row["Status"] ?? "");
-          if (!id) errors.push(`${label}: Subcontract ID is required.`);
+          if (!String(row["Subcontract ID"] ?? "").trim()) errors.push(`${label}: Subcontract ID is required.`);
           if (!String(row["Subcontract Name"] ?? "").trim()) errors.push(`${label}: Subcontract Name is required.`);
-          if (!STATUSES.includes(status as SubcontractStatus)) errors.push(`${label}: Status must be Active, On Hold or Cancelled.`);
-          if (id && ids.has(id.toLowerCase())) errors.push(`${label}: duplicate Subcontract ID "${id}".`);
-          ids.add(id.toLowerCase());
+          if (!STATUSES.includes(String(row["Status"] ?? "") as SubcontractStatus)) errors.push(`${label}: invalid Status.`);
         }
       });
-      setImportRows(rows); setImportErrors(errors);
-    } catch (requestError) { setError(subcontractManagementErrorMessage(requestError)); }
+      setImportRows(incoming); setImportErrors(errors);
+    } catch (e) { setError(subcontractManagementErrorMessage(e)); }
   }
 
   async function runImport() {
@@ -511,175 +358,117 @@ export default function SubcontractManagementPage({ projectPublicId, bulkLineIte
     setImporting(true); setProgress(5); setError("");
     try {
       if (replace) {
-        if (showingLines) {
-          if (bulkLineItems) await deleteSubcontractLineItems(lineItems.map((row) => row.id));
-          else if (selectedSubcontract) await deleteSubcontractLineItems(lineItems.filter((row) => row.subcontract_id === selectedSubcontract.id).map((row) => row.id));
-        } else {
-          await deleteSubcontracts(subcontracts.map((row) => row.id));
-        }
+        if (showingLines) await deleteSubcontractLineItems((bulkLineItems ? lineItems : lineItems.filter((x) => x.subcontract_id === selectedSubcontract?.id)).map((x) => x.id));
+        else await deleteSubcontracts(subcontracts.map((x) => x.id));
       }
       if (showingLines) {
-        const inputs: LineForm[] = importRows.map((row, index) => {
+        const inputs = importRows.map((row): SubcontractLineItemInput => {
           const sc = subcontractByRef.get(String(row["Subcontract ID"]).trim().toLowerCase())!;
-          const cc = codeByRef.get(String(row["Cost Code ID"]).trim().toLowerCase())!;
+          const cc = costCodeByRef.get(String(row["Cost Code ID"]).trim().toLowerCase())!;
           return {
             subcontract_id: sc.id, cost_code_id: cc.id, item: String(row["Item"]).trim(),
-            description: String(row["Description"] ?? "").trim() || null,
-            unit: String(row["Unit"] ?? "").trim() || null,
-            qty: parseNumber(row["Qty"]), rate: parseNumber(row["Rate"]), row_order: (index + 1) * 1000,
-            ...Object.fromEntries(lineAttributes.map((a) => [a.field, String(row[`${a.prefix}${String(a.definition.attribute_number).padStart(2, "0")} - ${a.definition.name}`] ?? "").trim() || null])),
+            description: String(row["Description"] ?? "").trim() || null, unit: String(row["Unit"] ?? "").trim() || null,
+            qty: parseNumber(row["Qty"]), rate: parseNumber(row["Rate"]),
+            ...Object.fromEntries(lineAttributes.map((a) => [a.field, String(row[a.label] ?? "").trim() || null])),
           };
         });
-        const batch = 100;
-        for (let i = 0; i < inputs.length; i += batch) {
-          await createSubcontractLineItems(project.id, inputs.slice(i, i + batch));
-          setProgress(Math.min(100, ((i + batch) / Math.max(inputs.length, 1)) * 100));
+        for (let i = 0; i < inputs.length; i += 100) {
+          await createSubcontractLineItems(project.id, inputs.slice(i, i + 100));
+          setProgress(Math.min(100, ((i + 100) / Math.max(inputs.length, 1)) * 100));
         }
       } else {
         for (let i = 0; i < importRows.length; i++) {
           const row = importRows[i];
           await createSubcontract(project.id, {
-            subcontract_id: String(row["Subcontract ID"]).trim(),
-            subcontract_name: String(row["Subcontract Name"]).trim(),
+            subcontract_id: String(row["Subcontract ID"]).trim(), subcontract_name: String(row["Subcontract Name"]).trim(),
             status: String(row["Status"]) as SubcontractStatus,
-            ...Object.fromEntries(headerAttributes.map((a) => [a.field, String(row[`${a.prefix}${String(a.definition.attribute_number).padStart(2, "0")} - ${a.definition.name}`] ?? "").trim() || null])),
+            ...Object.fromEntries(headerAttributes.map((a) => [a.field, String(row[a.label] ?? "").trim() || null])),
           });
           setProgress(((i + 1) / Math.max(importRows.length, 1)) * 100);
         }
       }
       setImportRows(null); showNotice("Import completed."); await refresh();
-    } catch (requestError) { setError(subcontractManagementErrorMessage(requestError)); }
+    } catch (e) { setError(subcontractManagementErrorMessage(e)); }
     finally { setImporting(false); }
   }
 
-  function applyView(value: string) {
-    setSelectedView(value);
-    if (!gridApi) return;
-    if (value === "Default") { gridApi.resetColumnState(); gridApi.setFilterModel(null); return; }
-    const view = views.find((item) => item.id === value);
-    if (!view) return;
-    const state = view.state as { columns?: ColumnState[]; filters?: Record<string, unknown> };
-    if (state.columns) gridApi.applyColumnState({ state: state.columns, applyOrder: true });
-    gridApi.setFilterModel(state.filters ?? null);
-  }
-  async function saveView(name = viewName) {
-    if (!project || !gridApi || !name.trim()) return;
-    try {
-      const saved = await saveProjectGridView(project.id, gridKey, name.trim(), { columns: gridApi.getColumnState(), filters: gridApi.getFilterModel() });
-      const next = await listProjectGridViews(project.id, gridKey); setViews(next); setSelectedView(saved.id); setShowSaveView(false);
-    } catch (requestError) { setError(gridViewErrorMessage(requestError)); }
-  }
-  async function deleteView() {
-    if (selectedView === "Default") return;
-    try { await deleteProjectGridView(selectedView); setViews((current) => current.filter((item) => item.id !== selectedView)); setSelectedView("Default"); gridApi?.resetColumnState(); gridApi?.setFilterModel(null); }
-    catch (requestError) { setError(gridViewErrorMessage(requestError)); }
-  }
+  const selectedTotal = rows.reduce((sum, row) => sum + Number(row.qty) * Number(row.rate), 0);
 
   return <div className="enterprise-admin-page" style={selectedSubcontract && !bulkLineItems ? { position: "fixed", inset: 0, zIndex: 12000, background: "#f5f7fa", display: "flex", flexDirection: "column", padding: 0 } : undefined}>
     {selectedSubcontract && !bulkLineItems
       ? <header style={{ minHeight: 58, background: "#fff", borderBottom: "1px solid #dfe4ea", display: "flex", alignItems: "center", gap: 12, padding: "7px 12px" }}>
-          <button className="button secondary compact" onClick={() => { setSelectedSubcontract(null); setSelectedLineIds([]); void refresh(); }}>← Back</button>
+          <button className="button secondary compact" onClick={() => setSelectedSubcontract(null)}>← Back</button>
           <div><div style={{ fontSize: 16, fontWeight: 700 }}>Subcontract Line Items</div><div style={{ fontSize: 12, color: "#68707d" }}><strong>{selectedSubcontract.subcontract_id}</strong> · {selectedSubcontract.subcontract_name}</div></div>
-          <div style={{ marginLeft: "auto", fontSize: 11, color: saving ? "#2563eb" : "#68707d" }}>{saving ? "Saving…" : "Auto-save enabled"}</div>
+          <span style={{ marginLeft: "auto", fontSize: 11, color: saving ? "#2563eb" : "#68707d" }}>{saving ? "Saving…" : "Auto-save enabled"}</span>
         </header>
-      : <div className="enterprise-page-title"><div><h2>{bulkLineItems ? "Bulk Subcontract Line Items" : "Subcontract Management"}</h2><p>{bulkLineItems ? "Manage line items across all downstream Subcontracts." : "Manage downstream Subcontracts and their linked Cost Code line items."}</p></div>{!showingLines && <button className="button primary" onClick={openNewHeader}>+ Add Subcontract</button>}</div>}
+      : <div className="enterprise-page-title"><div><h2>{bulkLineItems ? "Bulk Subcontract Line Items" : "Subcontract Management"}</h2><p>{bulkLineItems ? "Manage line items across all downstream Subcontracts." : "Manage downstream Subcontracts and their linked Cost Code line items."}</p></div>{!showingLines && <button className="button primary" onClick={newHeader}>+ Add Subcontract</button>}</div>}
 
-    <section className="enterprise-grid-card" style={selectedSubcontract && !bulkLineItems ? { flex: 1, display: "flex", flexDirection: "column", minHeight: 0, borderRadius: 0, border: 0 } : undefined}>
+    <section className="enterprise-grid-card" style={selectedSubcontract && !bulkLineItems ? { flex: 1, display: "flex", flexDirection: "column", minHeight: 0, border: 0, borderRadius: 0 } : undefined}>
       <div className="enterprise-toolbar" style={{ flexWrap: "wrap" }}>
-        <label className="enterprise-search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={showingLines ? "Search line items…" : "Search Subcontracts…"}/></label>
-        {showingLines && <button className="button primary" disabled={!subcontracts.length || !costCodes.length} onClick={openNewLine}>+ Add Line Item</button>}
+        <label className="enterprise-search"><span>⌕</span><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={showingLines ? "Search line items…" : "Search Subcontracts…"}/></label>
+        {showingLines && <button className="button primary" disabled={!subcontracts.length || !costCodes.length} onClick={newLine}>+ Add Line Item</button>}
         <button className="button secondary" disabled={!selectedIds.length || saving} onClick={() => { setBulkField(""); setBulkValue(""); setBulkOpen(true); }}>Bulk Edit ({selectedIds.length})</button>
-        <button className="button secondary" disabled={!selectedIds.length || saving} onClick={() => setDeletePrompt({ kind: showingLines ? "lines" : "headers", ids: selectedIds })}>Bulk Delete ({selectedIds.length})</button>
+        <button className="button secondary" disabled={!selectedIds.length || saving} onClick={() => setDeleteIds(selectedIds)}>Bulk Delete ({selectedIds.length})</button>
         <button className="button secondary" onClick={exportRows}>⇩ Export</button>
-        <button className="button secondary" onClick={() => fileRef.current?.click()}>⇧ Import</button>
-        <input ref={fileRef} type="file" accept=".xlsx,.xls" hidden onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void chooseImport(file); }}/>
-        <select value={selectedView} onChange={(event) => applyView(event.target.value)}><option value="Default">Default View</option>{views.map((view) => <option key={view.id} value={view.id}>{view.name}</option>)}</select>
-        <button className="button secondary compact" onClick={() => { setViewName(""); setShowSaveView(true); }}>Save View</button>
-        <button className="button secondary compact" disabled={selectedView === "Default"} onClick={() => void deleteView()}>Delete View</button>
+        <button className="button secondary" onClick={() => fileInput.current?.click()}>⇧ Import</button>
+        <input hidden ref={fileInput} type="file" accept=".xlsx,.xls" onChange={(e) => { const file = e.target.files?.[0]; e.target.value = ""; if (file) void chooseImport(file); }}/>
         <button className="button secondary" disabled={loading || saving || recalculating} onClick={() => void refresh()}>↻ Refresh</button>
         <button className="button primary" disabled={!project || loading || saving || recalculating} onClick={() => void recalculate()}>{recalculating ? "Recalculating…" : "↻ Recalculate"}</button>
       </div>
-
-      {(!selectedSubcontract || bulkLineItems) && <div className="data-message" style={{ minHeight: 48 }}><span>Use AG Grid grouping, filters, saved views, Bulk Edit, Bulk Delete and Import / Export. Each line item must be linked to a project Cost Code; Cost is calculated in PostgreSQL as Qty × Rate.</span></div>}
+      {(!selectedSubcontract || bulkLineItems) && <div className="data-message"><span>AG Grid supports grouping, filtering, selection, Bulk Edit, Bulk Delete and Import / Export. Line items link to Cost Codes and PostgreSQL calculates Cost as Qty × Rate.</span></div>}
       {error && <div className="data-message error"><strong>Unable to load Subcontract Management</strong><span>{error}</span></div>}
       {!error && loading && <div className="data-message"><span className="spinner"/>Loading Subcontract Management…</div>}
-      {!error && !loading && <AgGridProvider modules={[AllEnterpriseModule]} licenseKey={process.env.NEXT_PUBLIC_AG_GRID_LICENSE_KEY ?? ""}>
-        <div style={{ height: selectedSubcontract && !bulkLineItems ? "auto" : 640, flex: selectedSubcontract && !bulkLineItems ? 1 : undefined, minHeight: selectedSubcontract && !bulkLineItems ? 360 : undefined, width: "100%", padding: selectedSubcontract && !bulkLineItems ? "8px 12px 10px" : undefined, boxSizing: "border-box" }}>
-          {!showingLines ? <AgGridReact<HeaderGridRow>
-            theme={gridTheme} rowData={subcontracts as HeaderGridRow[]} columnDefs={headerColumns}
-            defaultColDef={{ sortable: true, resizable: true, filter: true, minWidth: 90, enableRowGroup: true }}
-            quickFilterText={search} getRowId={(params) => params.data.id} rowSelection={{ mode: "multiRow" }}
-            selectionColumnDef={{ pinned: "left", width: 46, maxWidth: 46, suppressHeaderMenuButton: true }}
-            onSelectionChanged={(event: SelectionChangedEvent<HeaderGridRow>) => setSelectedHeaderIds(event.api.getSelectedRows().map((row) => row.id))}
-            onGridReady={(event) => setGridApi(event.api)}
-            rowGroupPanelShow="always" groupDisplayType="multipleColumns" groupTotalRow="bottom" grandTotalRow="pinnedBottom" groupSuppressBlankHeader animateRows
-          /> : <AgGridReact<LineGridRow>
-            theme={gridTheme} rowData={lineRows} columnDefs={lineColumns}
-            defaultColDef={{ sortable: true, resizable: true, filter: true, minWidth: 90, enableRowGroup: true }}
-            quickFilterText={search} getRowId={(params) => params.data.id} rowSelection={{ mode: "multiRow" }}
-            selectionColumnDef={{ pinned: "left", width: 46, maxWidth: 46, suppressHeaderMenuButton: true }}
-            onSelectionChanged={(event: SelectionChangedEvent<LineGridRow>) => { const rows = event.api.getSelectedRows(); setSelectedLineIds(rows.map((row) => row.id)); if (rows.length) setInsertAfterId(rows.at(-1)!.id); }}
-            onCellFocused={(event) => { const row = event.api.getDisplayedRowAtIndex(event.rowIndex ?? -1)?.data; if (row) setInsertAfterId(row.id); }}
-            onGridReady={(event) => setGridApi(event.api)}
-            onCellValueChanged={(event) => void cellChanged(event)}
-            rowGroupPanelShow="always" groupDisplayType="multipleColumns" groupTotalRow="bottom" grandTotalRow="pinnedBottom" groupSuppressBlankHeader
-            undoRedoCellEditing undoRedoCellEditingLimit={20} animateRows
-          />}
-        </div>
-      </AgGridProvider>}
-      <div className="grid-footer"><span>{showingLines ? `${lineRows.length} Subcontract Line Items` : `${subcontracts.length} Subcontracts`} · {selectedIds.length} selected</span><span>{selectedSubcontract && !bulkLineItems ? `Live line-item total: ${money(lineRows.reduce((sum, row) => sum + Number(row.qty) * Number(row.rate), 0))` : showingLines ? "Each line item is linked to a Cost Code." : "Header totals are backend summaries."}</span></div>
+      {!error && !loading && <AgGridProvider modules={[AllEnterpriseModule]} licenseKey={process.env.NEXT_PUBLIC_AG_GRID_LICENSE_KEY ?? ""}><div style={{ height: selectedSubcontract && !bulkLineItems ? "auto" : 640, flex: selectedSubcontract && !bulkLineItems ? 1 : undefined, minHeight: 360, width: "100%" }}>
+        {!showingLines ? <AgGridReact<Subcontract>
+          theme={theme} rowData={subcontracts} columnDefs={headerColumns} quickFilterText={search}
+          defaultColDef={{ sortable: true, resizable: true, filter: true, minWidth: 90, enableRowGroup: true }}
+          getRowId={(p) => p.data.id} rowSelection={{ mode: "multiRow" }} selectionColumnDef={{ pinned: "left", width: 46, maxWidth: 46 }}
+          onSelectionChanged={(e: SelectionChangedEvent<Subcontract>) => setSelectedIds(e.api.getSelectedRows().map((x) => x.id))}
+          rowGroupPanelShow="always" groupDisplayType="multipleColumns" groupTotalRow="bottom" grandTotalRow="pinnedBottom" animateRows
+        /> : <AgGridReact<LineRow>
+          theme={theme} rowData={rows} columnDefs={lineColumns} quickFilterText={search}
+          defaultColDef={{ sortable: true, resizable: true, filter: true, minWidth: 90, enableRowGroup: true }}
+          getRowId={(p) => p.data.id} rowSelection={{ mode: "multiRow" }} selectionColumnDef={{ pinned: "left", width: 46, maxWidth: 46 }}
+          onSelectionChanged={(e: SelectionChangedEvent<LineRow>) => setSelectedIds(e.api.getSelectedRows().map((x) => x.id))}
+          onCellValueChanged={(e) => void lineChanged(e)} rowGroupPanelShow="always" groupDisplayType="multipleColumns" groupTotalRow="bottom" grandTotalRow="pinnedBottom"
+          undoRedoCellEditing undoRedoCellEditingLimit={20} animateRows
+        />}
+      </div></AgGridProvider>}
+      <div className="grid-footer"><span>{showingLines ? `${rows.length} Subcontract Line Items` : `${subcontracts.length} Subcontracts`} · {selectedIds.length} selected</span><span>{selectedSubcontract && !bulkLineItems ? `Live Line Item Total: ${money(selectedTotal)}` : showingLines ? "Each line item is linked to a Cost Code." : "Total Cost and Line Item count are backend summaries."}</span></div>
     </section>
 
-    {headerForm && <><button className="drawer-scrim" aria-label="Close" onClick={() => !saving && setHeaderForm(null)}/><aside className="admin-drawer">
-      <header><div><span>{editingHeader ? "Edit" : "New"}</span><h2>Subcontract</h2></div><button onClick={() => setHeaderForm(null)}>×</button></header>
-      <div className="drawer-body"><div className="form-grid">
-        {formError && <div className="form-error">{formError}</div>}
-        <label className="form-field"><span>Subcontract ID <b>*</b></span><input maxLength={30} value={headerForm.subcontract_id} onChange={(event) => setHeaderForm({ ...headerForm, subcontract_id: event.target.value })}/></label>
-        <label className="form-field"><span>Subcontract Name <b>*</b></span><input maxLength={255} value={headerForm.subcontract_name} onChange={(event) => setHeaderForm({ ...headerForm, subcontract_name: event.target.value })}/></label>
-        <label className="form-field"><span>Status <b>*</b></span><select value={headerForm.status} onChange={(event) => setHeaderForm({ ...headerForm, status: event.target.value as SubcontractStatus })}>{STATUSES.map((status) => <option key={status}>{status}</option>)}</select></label>
-        <AttributeFields attributes={headerAttributes} form={headerForm} setForm={setHeaderForm}/>
-      </div></div>
-      <footer><button className="button secondary" disabled={saving} onClick={() => setHeaderForm(null)}>Cancel</button><button className="button primary" disabled={saving} onClick={() => void saveHeader()}>{saving ? "Saving…" : "Save"}</button></footer>
-    </aside></>}
+    {headerForm && <><button className="drawer-scrim" aria-label="Close" onClick={() => !saving && setHeaderForm(null)}/><aside className="admin-drawer"><header><div><span>{editingHeader ? "Edit" : "New"}</span><h2>Subcontract</h2></div><button onClick={() => setHeaderForm(null)}>×</button></header><div className="drawer-body"><div className="form-grid">
+      {formError && <div className="form-error">{formError}</div>}
+      <label className="form-field"><span>Subcontract ID <b>*</b></span><input maxLength={30} value={headerForm.subcontract_id} onChange={(e) => setHeaderForm({ ...headerForm, subcontract_id: e.target.value })}/></label>
+      <label className="form-field"><span>Subcontract Name <b>*</b></span><input maxLength={255} value={headerForm.subcontract_name} onChange={(e) => setHeaderForm({ ...headerForm, subcontract_name: e.target.value })}/></label>
+      <label className="form-field"><span>Status <b>*</b></span><select value={headerForm.status} onChange={(e) => setHeaderForm({ ...headerForm, status: e.target.value as SubcontractStatus })}>{STATUSES.map((x) => <option key={x}>{x}</option>)}</select></label>
+      {headerAttributes.map((a) => <label className="form-field" key={a.field}><span>{a.label}</span><select value={String(headerForm[a.field] ?? "")} onChange={(e) => setHeaderForm({ ...headerForm, [a.field]: e.target.value || null })}><option value="">—</option>{a.definition.attribute_values.filter((x) => x.is_active || x.value_id === headerForm[a.field]).map((x) => <option key={x.id} value={x.value_id}>{x.value_id} - {x.value_name}</option>)}</select></label>)}
+    </div></div><footer><button className="button secondary" onClick={() => setHeaderForm(null)}>Cancel</button><button className="button primary" disabled={saving} onClick={() => void saveHeader()}>{saving ? "Saving…" : "Save"}</button></footer></aside></>}
 
-    {lineForm && <><button className="drawer-scrim" aria-label="Close" onClick={() => !saving && setLineForm(null)}/><aside className="admin-drawer">
-      <header><div><span>New</span><h2>Subcontract Line Item</h2></div><button onClick={() => setLineForm(null)}>×</button></header>
-      <div className="drawer-body"><div className="form-grid">
-        {formError && <div className="form-error">{formError}</div>}
-        {bulkLineItems && <label className="form-field"><span>Subcontract <b>*</b></span><select value={lineForm.subcontract_id} onChange={(event) => setLineForm({ ...lineForm, subcontract_id: event.target.value })}>{subcontracts.map((row) => <option key={row.id} value={row.id}>{row.subcontract_id} - {row.subcontract_name}</option>)}</select></label>}
-        <label className="form-field"><span>Cost Code <b>*</b></span><select value={lineForm.cost_code_id} onChange={(event) => setLineForm({ ...lineForm, cost_code_id: event.target.value })}>{costCodes.filter((code) => code.is_active || code.id === lineForm.cost_code_id).map((code) => <option key={code.id} value={code.id}>{code.cost_code_id} - {code.name}</option>)}</select></label>
-        <label className="form-field"><span>Item <b>*</b></span><input maxLength={100} value={lineForm.item} onChange={(event) => setLineForm({ ...lineForm, item: event.target.value })}/></label>
-        <label className="form-field"><span>Description</span><input maxLength={255} value={lineForm.description ?? ""} onChange={(event) => setLineForm({ ...lineForm, description: event.target.value || null })}/></label>
-        <label className="form-field"><span>Unit</span><input maxLength={50} value={lineForm.unit ?? ""} onChange={(event) => setLineForm({ ...lineForm, unit: event.target.value || null })}/></label>
-        <label className="form-field"><span>Qty</span><input type="number" min={0} step="any" value={lineForm.qty} onChange={(event) => setLineForm({ ...lineForm, qty: Number(event.target.value) })}/></label>
-        <label className="form-field"><span>Rate</span><input type="number" min={0} step="any" value={lineForm.rate} onChange={(event) => setLineForm({ ...lineForm, rate: Number(event.target.value) })}/></label>
-      </div></div>
-      <footer><button className="button secondary" disabled={saving} onClick={() => setLineForm(null)}>Cancel</button><button className="button primary" disabled={saving || !lineForm.item.trim()} onClick={() => void saveLine()}>{saving ? "Saving…" : "Save"}</button></footer>
-    </aside></>}
+    {lineForm && <><button className="drawer-scrim" aria-label="Close" onClick={() => !saving && setLineForm(null)}/><aside className="admin-drawer"><header><div><span>New</span><h2>Subcontract Line Item</h2></div><button onClick={() => setLineForm(null)}>×</button></header><div className="drawer-body"><div className="form-grid">
+      {formError && <div className="form-error">{formError}</div>}
+      {bulkLineItems && <label className="form-field"><span>Subcontract <b>*</b></span><select value={lineForm.subcontract_id} onChange={(e) => setLineForm({ ...lineForm, subcontract_id: e.target.value })}>{subcontracts.map((x) => <option key={x.id} value={x.id}>{x.subcontract_id} - {x.subcontract_name}</option>)}</select></label>}
+      <label className="form-field"><span>Cost Code <b>*</b></span><select value={lineForm.cost_code_id} onChange={(e) => setLineForm({ ...lineForm, cost_code_id: e.target.value })}>{costCodes.filter((x) => x.is_active || x.id === lineForm.cost_code_id).map((x) => <option key={x.id} value={x.id}>{x.cost_code_id} - {x.name}</option>)}</select></label>
+      <label className="form-field"><span>Item <b>*</b></span><input value={lineForm.item} onChange={(e) => setLineForm({ ...lineForm, item: e.target.value })}/></label>
+      <label className="form-field"><span>Description</span><input value={lineForm.description ?? ""} onChange={(e) => setLineForm({ ...lineForm, description: e.target.value || null })}/></label>
+      <label className="form-field"><span>Unit</span><input value={lineForm.unit ?? ""} onChange={(e) => setLineForm({ ...lineForm, unit: e.target.value || null })}/></label>
+      <label className="form-field"><span>Qty</span><input type="number" min={0} step="any" value={lineForm.qty} onChange={(e) => setLineForm({ ...lineForm, qty: Number(e.target.value) })}/></label>
+      <label className="form-field"><span>Rate</span><input type="number" min={0} step="any" value={lineForm.rate} onChange={(e) => setLineForm({ ...lineForm, rate: Number(e.target.value) })}/></label>
+    </div></div><footer><button className="button secondary" onClick={() => setLineForm(null)}>Cancel</button><button className="button primary" disabled={saving || !lineForm.item.trim()} onClick={() => void saveLine()}>{saving ? "Saving…" : "Save"}</button></footer></aside></>}
+
+    {bulkOpen && <div className="confirm-layer"><button className="confirm-scrim" onClick={() => setBulkOpen(false)} aria-label="Close"/><div className="confirm-dialog"><h2>Bulk Edit {selectedIds.length} Row{selectedIds.length === 1 ? "" : "s"}</h2><div style={{ display: "grid", gap: 10, textAlign: "left" }}>
+      <label><span>Field</span><select value={bulkField} onChange={(e) => { setBulkField(e.target.value); setBulkValue(""); }}><option value="">Select field…</option>{bulkChoices.map((x) => <option key={x.id} value={x.id}>{x.label}</option>)}</select></label>
+      {bulkField && <label><span>Value</span>{
+        bulkField === "status" ? <select value={bulkValue} onChange={(e) => setBulkValue(e.target.value)}><option value="">Select…</option>{STATUSES.map((x) => <option key={x}>{x}</option>)}</select>
+        : bulkField === "subcontract_id" ? <select value={bulkValue} onChange={(e) => setBulkValue(e.target.value)}><option value="">Select…</option>{subcontracts.map((x) => <option key={x.id} value={x.subcontract_id}>{x.subcontract_id} - {x.subcontract_name}</option>)}</select>
+        : bulkField === "cost_code_id" ? <select value={bulkValue} onChange={(e) => setBulkValue(e.target.value)}><option value="">Select…</option>{costCodes.filter((x) => x.is_active).map((x) => <option key={x.id} value={x.cost_code_id}>{x.cost_code_id} - {x.name}</option>)}</select>
+        : <input value={bulkValue} type={bulkField === "qty" || bulkField === "rate" ? "number" : "text"} min={bulkField === "qty" || bulkField === "rate" ? 0 : undefined} onChange={(e) => setBulkValue(e.target.value)}/>
+      }</label>}
+    </div><div className="confirm-actions"><button className="button secondary" onClick={() => setBulkOpen(false)}>Cancel</button><button className="button primary" disabled={saving || !bulkField || bulkValue === ""} onClick={() => void applyBulk()}>{saving ? "Updating…" : "Apply"}</button></div></div></div>}
+
+    {deleteIds && <div className="confirm-layer"><button className="confirm-scrim" onClick={() => setDeleteIds(null)} aria-label="Close"/><div className="confirm-dialog"><div className="confirm-icon">!</div><h2>Are you sure?</h2><p>Delete {deleteIds.length} selected row{deleteIds.length === 1 ? "" : "s"}? This cannot be undone.</p>{!showingLines && <p>Subcontracts with line items must have their line items removed first.</p>}<div className="confirm-actions"><button className="button secondary" onClick={() => setDeleteIds(null)}>No</button><button className="button danger" disabled={saving} onClick={() => void confirmDelete()}>{saving ? "Deleting…" : "Yes, Delete"}</button></div></div></div>}
 
     {importRows && <ExcelImportDialog title={`Import ${showingLines ? "Subcontract Line Items" : "Subcontracts"}`} rows={importRows} columns={excelColumns} errors={importErrors} replace={replace} setReplace={setReplace} importing={importing} progress={progress} onCancel={() => !importing && setImportRows(null)} onImport={() => void runImport()}/>}
-    {bulkOpen && <div className="confirm-layer"><button className="confirm-scrim" onClick={() => !saving && setBulkOpen(false)} aria-label="Close bulk edit"/><div className="confirm-dialog" role="dialog" aria-modal="true" style={{ width: "min(520px, 92vw)" }}>
-      <h2>Bulk Edit {selectedIds.length} {showingLines ? "Line Item" : "Subcontract"}{selectedIds.length === 1 ? "" : "s"}</h2>
-      <p>Choose one field and apply the same value to all selected rows.</p>
-      <div style={{ display: "grid", gap: 10, textAlign: "left" }}>
-        <label><span>Field</span><select value={bulkField} onChange={(event) => { setBulkField(event.target.value); setBulkValue(""); }}><option value="">Select field…</option>{bulkChoices.map((choice) => <option key={choice.id} value={choice.id}>{choice.label}</option>)}</select></label>
-        {chosenBulk && <label><span>Value</span>{
-          chosenBulk.kind === "status" ? <select value={bulkValue} onChange={(event) => setBulkValue(event.target.value)}><option value="">Select value…</option>{STATUSES.map((value) => <option key={value}>{value}</option>)}</select>
-          : chosenBulk.kind === "subcontract" ? <select value={bulkValue} onChange={(event) => setBulkValue(event.target.value)}><option value="">Select value…</option>{subcontracts.map((row) => <option key={row.id} value={row.subcontract_id}>{row.subcontract_id} - {row.subcontract_name}</option>)}</select>
-          : chosenBulk.kind === "costCode" ? <select value={bulkValue} onChange={(event) => setBulkValue(event.target.value)}><option value="">Select value…</option>{costCodes.filter((row) => row.is_active).map((row) => <option key={row.id} value={row.cost_code_id}>{row.cost_code_id} - {row.name}</option>)}</select>
-          : chosenBulk.kind === "attribute" && chosenBulk.attribute ? <select value={bulkValue} onChange={(event) => setBulkValue(event.target.value)}><option value="">Select value…</option><option value={CLEAR}>Clear value</option>{chosenBulk.attribute.definition.attribute_values.filter((v) => v.is_active).map((v) => <option key={v.id} value={v.value_id}>{v.value_id} - {v.value_name}</option>)}</select>
-          : <input type={chosenBulk.kind === "number" ? "number" : "text"} min={chosenBulk.kind === "number" ? 0 : undefined} value={bulkValue} onChange={(event) => setBulkValue(event.target.value)}/>
-        }</label>}
-      </div>
-      <div className="confirm-actions"><button className="button secondary" disabled={saving} onClick={() => setBulkOpen(false)}>Cancel</button><button className="button primary" disabled={saving || !bulkField || bulkValue === ""} onClick={() => void applyBulkEdit()}>{saving ? "Updating…" : "Apply"}</button></div>
-    </div></div>}
-    {deletePrompt && <div className="confirm-layer"><button className="confirm-scrim" onClick={() => !saving && setDeletePrompt(null)} aria-label="Close delete confirmation"/><div className="confirm-dialog" role="dialog" aria-modal="true"><div className="confirm-icon">!</div><h2>Are you sure?</h2><p>Delete {deletePrompt.ids.length} selected {deletePrompt.kind === "headers" ? "Subcontract" : "Line Item"}{deletePrompt.ids.length === 1 ? "" : "s"}? This cannot be undone.</p>{deletePrompt.kind === "headers" && <p>A Subcontract containing line items cannot be deleted until those line items are removed.</p>}<div className="confirm-actions"><button className="button secondary" disabled={saving} onClick={() => setDeletePrompt(null)}>No</button><button className="button danger" disabled={saving} onClick={() => void confirmDelete()}>{saving ? "Deleting…" : "Yes, Delete"}</button></div></div></div>}
-    {showSaveView && <SaveViewDialog initialName={viewName} onClose={() => setShowSaveView(false)} onSave={(name) => { setViewName(name); void saveView(name); }}/>}
     {notice && <div className="admin-toast">{notice}</div>}
   </div>;
-}
-
-function SaveViewDialog({ initialName, onClose, onSave }: { initialName: string; onClose: () => void; onSave: (name: string) => void }) {
-  const [name, setName] = useState(initialName);
-  return <div className="confirm-layer"><button className="confirm-scrim" onClick={onClose} aria-label="Close"/><div className="confirm-dialog"><h2>Save View</h2><label><span>View Name</span><input autoFocus value={name} onChange={(event) => setName(event.target.value)}/></label><div className="confirm-actions"><button className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={!name.trim()} onClick={() => onSave(name.trim())}>Save</button></div></div></div>;
 }
