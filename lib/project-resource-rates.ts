@@ -46,6 +46,29 @@ export function updateProjectResourceRate(id: string, input: ResourceRateInput) 
   }).then((rows) => rows[0]);
 }
 
+export function updateProjectResourceRateFields(
+  id: string,
+  changes: Partial<Omit<ResourceRateInput, "resource_id">>,
+) {
+  return supabaseRequest<ProjectResourceRate[]>(`project_resource_rates?id=eq.${encodeURIComponent(id)}&select=${selectColumns}`, {
+    method: "PATCH",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify({ ...changes, updated_at: new Date().toISOString() }),
+  }).then((rows) => rows[0]);
+}
+
+export function bulkUpdateProjectResourceRates(
+  ids: string[],
+  changes: Partial<Omit<ResourceRateInput, "resource_id">>,
+) {
+  if (!ids.length || !Object.keys(changes).length) return Promise.resolve([] as ProjectResourceRate[]);
+  return supabaseRequest<ProjectResourceRate[]>(`project_resource_rates?id=in.(${ids.join(",")})&select=${selectColumns}`, {
+    method: "PATCH",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify({ ...changes, updated_at: new Date().toISOString() }),
+  });
+}
+
 export async function deactivateProjectResourceRates(ids: string[]) {
   if (!ids.length) return;
   await supabaseRequest(`project_resource_rates?id=in.(${ids.join(",")})`, {

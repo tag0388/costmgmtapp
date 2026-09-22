@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgGridProvider, AgGridReact } from "ag-grid-react";
-import type { ColDef, ColGroupDef, ColumnState, GridApi } from "ag-grid-community";
+import type { ColDef, ColGroupDef, ColumnState, GridApi, SelectionChangedEvent } from "ag-grid-community";
 import { themeQuartz } from "ag-grid-community";
 import { AllEnterpriseModule } from "ag-grid-enterprise";
 import ExcelImportDialog from "@/components/shared/excel-import-dialog";
@@ -17,9 +17,11 @@ import {
   ACTUAL_USER_NUMBER_FIELDS,
   ACTUAL_USER_TEXT_FIELDS,
   actualCostErrorMessage,
+  deleteActualCostTransactions,
   importActualCostTransactions,
   listActualCostTransactions,
   TransactionType,
+  updateActualCostTransaction,
 } from "@/lib/cost-actuals";
 import { getProjectByPublicId, Project } from "@/lib/projects";
 import { deleteProjectGridView, gridViewErrorMessage, listProjectGridViews, type ProjectGridView, saveProjectGridView } from "@/lib/grid-views";
@@ -104,6 +106,16 @@ export default function ActualCostPage({ projectPublicId }: { projectPublicId: s
   const [selectedView, setSelectedView] = useState("Default");
   const [viewName, setViewName] = useState("");
   const [showSaveView, setShowSaveView] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [working, setWorking] = useState(false);
+  const [bulkCostCode, setBulkCostCode] = useState("__NO_CHANGE__");
+  const [bulkItem, setBulkItem] = useState("");
+  const [bulkDescription, setBulkDescription] = useState("");
+  const [bulkType, setBulkType] = useState("__NO_CHANGE__");
+  const [bulkAmount, setBulkAmount] = useState("");
+  const [bulkPeriod, setBulkPeriod] = useState("__NO_CHANGE__");
 
   const refresh = useCallback(async () => {
     setLoading(true); setError("");
@@ -124,6 +136,7 @@ export default function ActualCostPage({ projectPublicId }: { projectPublicId: s
         listProjectGridViews(currentProject.id, GRID_KEY),
       ]);
       setCostCodes(codes); setPeriods(reportingPeriods); setTransactions(actuals); setEnterpriseAttributes(enterpriseDefs); setProjectAttributes(projectDefs); setViews(savedViews);
+      setSelectedIds((current) => current.filter((id) => actuals.some((row) => row.id === id)));
       setSelectedView((current) => current === "Default" || savedViews.some((view) => view.id === current) ? current : "Default");
     } catch (requestError) { setError(actualCostErrorMessage(requestError)); }
     finally { setLoading(false); }
@@ -247,6 +260,62 @@ export default function ActualCostPage({ projectPublicId }: { projectPublicId: s
     } catch (requestError) { setError(gridViewErrorMessage(requestError)); }
   }
 
+  function openBulkEdit() {
+    setBulkCostCode("__NO_CHANGE__");
+    setBulkItem("");
+    setBulkDescription("");
+    setBulkType("__NO_CHANGE__");
+    setBulkAmount("");
+    setBulkPeriod("__NO_CHANGE__");
+    setBulkOpen(true);
+  }
+
+  async function applyBulkEdit() {
+    if (!selectedIds.length) return;
+    const patch: Record<string, string | number | null> = {};
+    if (bulkCostCode !== "__NO_CHANGE__") patch.cost_code_id = bulkCostCode;
+    if (bulkItem.trim()) patch.transaction_id = bulkItem.trim();
+    if (bulkDescription.trim()) patch.description = bulkDescription.trim();
+    if (bulkType !== "__NO_CHANGE__") patch.transaction_type = bulkType;
+    if (bulkAmount.trim()) {
+      const parsed = Number(bulkAmount.replace(/,/g, ""));
+      if (!Number.isFinite(parsed)) return setError("Bulk Amount must be a valid number.");
+      patch.amount = parsed;
+    }
+    if (bulkPeriod !== "__NO_CHANGE__") {
+      const period = actualAllowedPeriods.find((item) => item.id === bulkPeriod);
+      if (!period) return setError("Choose a valid Current or Closed Cost Reporting Period.");
+      patch.cost_period_id = period.id;
+      patch.transaction_date = period.end_date;
+    }
+    if (!Object.keys(patch).length) return setError("Choose at least one field to update.");
+    setWorking(true); setError("");
+    try {
+      await Promise.all(selectedIds.map((id) => updateActualCostTransaction(id, patch)));
+      setBulkOpen(false);
+      showNotice(`${selectedIds.length} Actual Cost row${selectedIds.length === 1 ? "" : "s"} updated.`);
+      await refresh();
+    } catch (requestError) {
+      setError(actualCostErrorMessage(requestError));
+    } finally { setWorking(false); }
+  }
+
+  async function confirmBulkDelete() {
+    if (!selectedIds.length) return;
+    setWorking(true); setError("");
+    try {
+      const count = selectedIds.length;
+      await deleteActualCostTransactions(selectedIds);
+      setSelectedIds([]);
+      gridApi?.deselectAll();
+      setDeleteOpen(false);
+      showNotice(`${count} Actual Cost row${count === 1 ? "" : "s"} deleted.`);
+      await refresh();
+    } catch (requestError) {
+      setError(actualCostErrorMessage(requestError));
+    } finally { setWorking(false); }
+  }
+
   function exportRows() {
     if (!project) return;
     const data = rows.map((row) => ({
@@ -333,6 +402,8 @@ export default function ActualCostPage({ projectPublicId }: { projectPublicId: s
     <section className="enterprise-grid-card">
       <div className="enterprise-toolbar" style={{ flexWrap: "wrap" }}>
         <label className="enterprise-search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search actual cost…" /></label>
+        <button className="button secondary" disabled={!selectedIds.length || working} onClick={openBulkEdit}>Bulk Edit{selectedIds.length ? ` (${selectedIds.length})` : ""}</button>
+        <button className="button danger" disabled={!selectedIds.length || working} onClick={() => setDeleteOpen(true)}>Bulk Delete{selectedIds.length ? ` (${selectedIds.length})` : ""}</button>
         <button className="button secondary" onClick={exportRows}>⇩ Export</button>
         <button className="button secondary" onClick={() => fileRef.current?.click()}>⇧ Import</button>
         <input ref={fileRef} hidden type="file" accept=".xlsx,.xls" onChange={(event) => void chooseImport(event.target.files?.[0])}/>
@@ -348,11 +419,36 @@ export default function ActualCostPage({ projectPublicId }: { projectPublicId: s
         <div style={{ height: 640, width: "100%" }}><AgGridReact<GridRow>
           theme={gridTheme} rowData={rows} columnDefs={columnDefs}
           defaultColDef={{ sortable: true, resizable: true, filter: true, minWidth: 110 }} quickFilterText={search}
-          getRowId={(params) => params.data.id} onGridReady={(event) => setGridApi(event.api)} grandTotalRow="pinnedBottom" animateRows
+          getRowId={(params) => params.data.id}
+          rowSelection={{ mode: "multiRow" }}
+          selectionColumnDef={{ pinned: "left", width: 38, minWidth: 38, maxWidth: 38, suppressHeaderMenuButton: true, resizable: false }}
+          onGridReady={(event) => setGridApi(event.api)}
+          onSelectionChanged={(event: SelectionChangedEvent<GridRow>) => setSelectedIds(event.api.getSelectedRows().map((row) => row.id))}
+          grandTotalRow="pinnedBottom" animateRows
         /></div>
       </AgGridProvider>}
-      <div className="grid-footer"><span>{transactions.length} Actual Cost rows · {costCodes.length} Cost Codes</span><span>Actual Cost total: {money(totalActual)}</span></div>
+      <div className="grid-footer"><span>{transactions.length} Actual Cost rows · {selectedIds.length} selected · {costCodes.length} Cost Codes</span><span>Actual Cost total: {money(totalActual)}</span></div>
     </section>
+    {bulkOpen && <div className="confirm-layer">
+      <button className="confirm-scrim" onClick={() => !working && setBulkOpen(false)} aria-label="Close bulk edit"/>
+      <div className="confirm-dialog project-bulk-dialog" role="dialog" aria-modal="true">
+        <h2>Bulk Edit {selectedIds.length} Actual Cost Row{selectedIds.length === 1 ? "" : "s"}</h2>
+        <p>Only fields entered or selected below will be changed.</p>
+        <div className="bulk-project-fields">
+          <label className="form-field"><span><strong>Cost Code</strong></span><select value={bulkCostCode} onChange={(e) => setBulkCostCode(e.target.value)}><option value="__NO_CHANGE__">No change</option>{costCodes.map((code) => <option key={code.id} value={code.id}>{code.cost_code_id} - {code.name}</option>)}</select></label>
+          <label className="form-field"><span><strong>Item</strong></span><input value={bulkItem} maxLength={100} placeholder="No change" onChange={(e) => setBulkItem(e.target.value)}/></label>
+          <label className="form-field"><span><strong>Description</strong></span><input value={bulkDescription} maxLength={255} placeholder="No change" onChange={(e) => setBulkDescription(e.target.value)}/></label>
+          <label className="form-field"><span><strong>Transaction Type</strong></span><select value={bulkType} onChange={(e) => setBulkType(e.target.value)}><option value="__NO_CHANGE__">No change</option>{TYPES.map((type) => <option key={type}>{type}</option>)}</select></label>
+          <label className="form-field"><span><strong>Amount</strong></span><input value={bulkAmount} inputMode="decimal" placeholder="No change" onChange={(e) => setBulkAmount(e.target.value)}/></label>
+          <label className="form-field"><span><strong>Cost Reporting Period</strong></span><select value={bulkPeriod} onChange={(e) => setBulkPeriod(e.target.value)}><option value="__NO_CHANGE__">No change</option>{actualAllowedPeriods.map((period) => <option key={period.id} value={period.id}>{periodGridValue(period)}</option>)}</select></label>
+        </div>
+        <div className="confirm-actions"><button className="button secondary" disabled={working} onClick={() => setBulkOpen(false)}>Cancel</button><button className="button primary" disabled={working} onClick={() => void applyBulkEdit()}>{working ? "Updating…" : "Apply"}</button></div>
+      </div>
+    </div>}
+    {deleteOpen && <div className="confirm-layer">
+      <button className="confirm-scrim" onClick={() => !working && setDeleteOpen(false)} aria-label="Close delete confirmation"/>
+      <div className="confirm-dialog" role="alertdialog" aria-modal="true"><div className="confirm-icon">!</div><h2>Delete {selectedIds.length} Actual Cost Row{selectedIds.length === 1 ? "" : "s"}?</h2><p>This will permanently delete the selected Actual Cost transactions. This action cannot be undone.</p><div className="confirm-actions"><button className="button secondary" disabled={working} onClick={() => setDeleteOpen(false)}>Cancel</button><button className="button danger" disabled={working} onClick={() => void confirmBulkDelete()}>{working ? "Deleting…" : "Yes, Delete"}</button></div></div>
+    </div>}
     {showSaveView && <div className="admin-modal-backdrop"><div className="admin-modal"><h3>Save View</h3><label className="form-field"><span>View Name</span><input autoFocus value={viewName} maxLength={80} onChange={(event) => setViewName(event.target.value)}/></label><div className="admin-modal-actions"><button className="button secondary" onClick={() => setShowSaveView(false)}>Cancel</button><button className="button primary" disabled={!viewName.trim()} onClick={() => void saveView()}>Save</button></div></div></div>}
     {importRows && <ExcelImportDialog title="Import Actual Cost" rows={importRows} columns={excelColumns} errors={importErrors} replace={replace} setReplace={setReplace} importing={importing} progress={progress} onCancel={() => !importing && setImportRows(null)} onImport={() => void runImport()}/>} 
     {notice && <div className="admin-toast">{notice}</div>}

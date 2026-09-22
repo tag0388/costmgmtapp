@@ -51,7 +51,7 @@ export type CostToCompleteImportRow = Omit<CostToCompleteDetail, "id" | "project
 };
 
 export type CostToCompleteEditablePatch = Partial<Pick<CostToCompleteDetail,
-  "item" | "description" | "unit" | "rate" | "category" | "resource_source"
+  "cost_code_id" | "item" | "description" | "unit" | "rate" | "category" | "resource_source"
 >> & CtcAttributeValues & CtcUserValues;
 
 const detailSelect = [
