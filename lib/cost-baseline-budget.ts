@@ -37,6 +37,31 @@ export function listBaselineDetails(projectId: string, costCodeId?: string) {
   );
 }
 
+export type BaselineDetailPatch = Partial<Omit<BaselineDetailInput, "project_id">>;
+
+export async function updateBaselineDetails(ids: string[], patch: BaselineDetailPatch) {
+  if (!ids.length || !Object.keys(patch).length) return [] as BaselineDetail[];
+  const clean = {
+    ...patch,
+    ...(patch.item_no !== undefined ? { item_no: patch.item_no?.trim() || null } : {}),
+    ...(patch.item_description !== undefined ? { item_description: patch.item_description?.trim() || null } : {}),
+    ...(patch.unit !== undefined ? { unit: patch.unit?.trim() || null } : {}),
+  };
+  return supabaseRequest<BaselineDetail[]>(`baseline_details?id=in.(${ids.map(encodeURIComponent).join(",")})&select=${encodeURIComponent(select)}`, {
+    method: "PATCH",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify(clean),
+  });
+}
+
+export async function deleteBaselineDetails(ids: string[]) {
+  if (!ids.length) return;
+  await supabaseRequest(`baseline_details?id=in.(${ids.map(encodeURIComponent).join(",")})`, {
+    method: "DELETE",
+    headers: { Prefer: "return=minimal" },
+  });
+}
+
 export async function importBaselineDetails(projectId: string, rows: Omit<BaselineDetailInput, "project_id">[], replace: boolean, onProgress?: (progress: number) => void) {
   if (replace) {
     await supabaseRequest(`baseline_details?project_id=eq.${encodeURIComponent(projectId)}`, {
