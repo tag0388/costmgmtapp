@@ -64,7 +64,8 @@ export async function readExcel(file: File): Promise<ExcelRow[]> {
   const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "", raw: true });
   return rows.map((row) => Object.fromEntries(Object.entries(row).map(([key, value]) => {
     const normalizedKey = key.trim();
-    const normalizedValue = normalizedKey.toLowerCase() === "date" ? normalizeExcelDate(value) : String(value ?? "").trim();
+    const isDateColumn = /(^|\s)date$/i.test(normalizedKey);
+    const normalizedValue = isDateColumn ? normalizeExcelDate(value) : String(value ?? "").trim();
     return [normalizedKey, normalizedValue ?? String(value ?? "").trim()];
   })));
 }
