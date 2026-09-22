@@ -21,7 +21,7 @@ export type ActualCostTransaction = {
   id: string;
   project_id: string;
   cost_period_id: string;
-  cost_code_id: string;
+  cost_code_id: string | null;
   transaction_date: string;
   transaction_id: string | null;
   description: string;
