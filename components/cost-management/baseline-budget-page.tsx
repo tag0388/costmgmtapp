@@ -615,21 +615,21 @@ export default function BaselineBudgetPage({ projectPublicId }: { projectPublicI
     <section className="enterprise-grid-card">
       <div className="enterprise-toolbar" style={{ flexWrap: "wrap" }}>
         <label className="enterprise-search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search baseline details…" /></label>
-        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+        <div className="toolbar-add-group" style={{ display: "flex", alignItems: "center", gap: 4 }}>
           <button className="button primary" disabled={!project || working} onClick={() => void addRows()}>+ Add Row(s)</button>
           <input aria-label="Number of rows to add" type="number" min={1} max={MAX_ADD_ROWS} step={1} value={addCount} onChange={(event) => setAddCount(Math.max(1, Math.min(MAX_ADD_ROWS, Number(event.target.value) || 1)))} style={{ width: 58, height: 32, border: "1px solid #d8dee8", borderRadius: 6, padding: "0 6px" }}/>
         </div>
         <button className="button secondary" disabled={!selectedIds.length || working} onClick={openBulkEdit}>Bulk Edit{selectedIds.length ? ` (${selectedIds.length})` : ""}</button>
         <button className="button danger" disabled={!selectedIds.length || working} onClick={() => setDeleteIds(selectedIds)}>Bulk Delete{selectedIds.length ? ` (${selectedIds.length})` : ""}</button>
-        <button className="button secondary" disabled={!gridApi} onClick={() => setAllGroups(true)}>Expand All</button>
-        <button className="button secondary" disabled={!gridApi} onClick={() => setAllGroups(false)}>Collapse All</button>
+        <button className="button secondary" disabled={!gridApi} onClick={() => setAllGroups(true)}><span className="toolbar-icon-symbol" title="Expand All" aria-hidden="true">⊞</span><span className="sr-only">Expand All</span></button>
+        <button className="button secondary" disabled={!gridApi} onClick={() => setAllGroups(false)}><span className="toolbar-icon-symbol" title="Collapse All" aria-hidden="true">⊟</span><span className="sr-only">Collapse All</span></button>
         <button className="button secondary" onClick={exportRows}>⇩ Export</button>
         <button className="button secondary" onClick={() => fileRef.current?.click()}>⇧ Import</button>
         <input ref={fileRef} hidden type="file" accept=".xlsx,.xls" onChange={(event) => void chooseImport(event.target.files?.[0])}/>
         <label className="status-filter"><span>View</span><select value={selectedView} onChange={(event) => applyView(event.target.value)}><option value="Default">Default</option>{views.map((view) => <option key={view.id} value={view.id}>{view.view_name}</option>)}</select></label>
         <button className="button secondary" disabled={!gridApi} onClick={() => { setViewName(selectedView === "Default" ? "" : views.find((view) => view.id === selectedView)?.view_name ?? ""); setShowSaveView(true); }}>Save View</button>
         <button className="button secondary" disabled={selectedView === "Default"} onClick={() => void deleteView()}>Delete View</button>
-        <button className="button secondary" disabled={loading || importing || working} onClick={() => void refresh()}>↻ Refresh</button>
+        <button className="button secondary" disabled={loading || importing || working} onClick={() => void refresh()}><span className="toolbar-icon-symbol" title="Refresh" aria-hidden="true">↻</span><span className="sr-only">Refresh</span></button>
       </div>
 
       {error && <div className="data-message error"><strong>Unable to load Baseline Budget</strong><span>{error}</span></div>}
