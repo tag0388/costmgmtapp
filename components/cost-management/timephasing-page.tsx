@@ -136,7 +136,6 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
   useEffect(() => { void refresh(); }, [refresh]);
 
   const storedByKey = useMemo(() => new Map(stored.map((row) => [`${row.cost_code_id}|${row.cost_period_id}`, row])), [stored]);
-  const checksByCode = useMemo(() => new Map(checks.map((row) => [row.cost_code_id, row])), [checks]);
   const rows = useMemo<GridRow[]>(() => {
     const output: GridRow[] = [];
     costCodes.forEach((code) => {
