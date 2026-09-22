@@ -88,6 +88,15 @@ function parseNumber(value: string) {
   const parsed = Number(value.replace(/,/g, ""));
   return Number.isFinite(parsed) ? parsed : Number.NaN;
 }
+function isValidIsoDate(value: string) {
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+}
 function money(value: number | null | undefined) {
   return value == null ? "—" : new Intl.NumberFormat(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(value);
 }
@@ -437,7 +446,10 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
         if (!BUDGET_TIMEPHASING_METHODS.includes(current as TimephasingMethod)) errors.push(`Row ${line}: Current Budget Timephasing must be Manual or Dates.`);
         if (!CTC_TIMEPHASING_METHODS.includes(ctc as TimephasingMethod)) errors.push(`Row ${line}: CTC Timephasing is invalid.`);
         if (Number.isNaN(manual)) errors.push(`Row ${line}: Manual EAC must be a valid number.`);
-        dateFields.forEach((field) => { const value = (row[field] ?? "").trim(); if (value && !/^\d{4}-\d{2}-\d{2}$/.test(value)) errors.push(`Row ${line}: ${field} must use YYYY-MM-DD or be blank.`); });
+        dateFields.forEach((field) => {
+          const value = (row[field] ?? "").trim();
+          if (value && !isValidIsoDate(value)) errors.push(`Row ${line}: ${field} is not recognised as a valid date. Use a normal Excel date or a recognised date format.`);
+        });
         if (parseStatus(row.Status ?? "") === null) errors.push(`Row ${line}: Status must be Active or Inactive.`);
         activeEnterprise.forEach((definition) => {
           const valueId = (row[enterpriseColumn(definition)] ?? "").trim();
