@@ -11,7 +11,7 @@ export type BaselineAttributeValues = Partial<Record<BaselineAttributeField, str
 export type BaselineDetail = {
   id: string;
   project_id: string;
-  cost_code_id: string;
+  cost_code_id: string | null;
   item_no: string | null;
   item_description: string | null;
   unit: string | null;
