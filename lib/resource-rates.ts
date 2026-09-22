@@ -111,12 +111,14 @@ export async function importResourceRates(
   const existingByResourceId = new Map(existing.map((row) => [row.resource_id.toLowerCase(), row]));
 
   if (replace && existing.length) {
-    await deleteResourceRates(existing.map((row) => row.id));
+    const importedIds = new Set(rows.map((row) => row.resource_id.trim().toLowerCase()));
+    const removed = existing.filter((row) => !importedIds.has(row.resource_id.toLowerCase()));
+    if (removed.length) await deleteResourceRates(removed.map((row) => row.id));
   }
 
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index];
-    const match = replace ? null : existingByResourceId.get(row.resource_id.toLowerCase()) ?? null;
+    const match = existingByResourceId.get(row.resource_id.toLowerCase()) ?? null;
     const input: ResourceRateInput = { ...row, is_active: row.is_active ?? true };
     if (match) await updateResourceRate(match.id, input);
     else await createResourceRate(enterpriseId, input);
