@@ -2,6 +2,7 @@ import { SupabaseRequestError, supabaseRequest } from "@/lib/supabase/browser";
 
 export type EnterpriseGridViewState = {
   columnState: unknown[];
+  columnGroupState?: Array<{ groupId: string; open: boolean }>;
   filterModel: Record<string, unknown>;
 };
 
