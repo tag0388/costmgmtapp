@@ -125,6 +125,52 @@ export function updateProjectEnterpriseAttributes(projectIds: string[], changes:
   });
 }
 
+export type ProjectPurgeResult = {
+  baseline_details: number;
+  actual_cost_transactions: number;
+  cost_to_complete_details: number;
+  change_records: number;
+  cost_code_timephasing: number;
+  subcontract_details: number;
+  total: number;
+};
+
+export async function getProjectPurgePreview(projectId: string): Promise<ProjectPurgeResult> {
+  const tables = [
+    "baseline_details",
+    "actual_cost_transactions",
+    "cost_to_complete_details",
+    "change_records",
+    "cost_code_timephasing",
+    "subcontract_details",
+  ] as const;
+  const counts = Object.fromEntries(await Promise.all(tables.map(async (table) => {
+    const rows = await supabaseRequest<Array<{ id: string }>>(
+      `${table}?project_id=eq.${encodeURIComponent(projectId)}&cost_code_id=is.null&select=id`,
+    );
+    return [table, rows.length];
+  }))) as Omit<ProjectPurgeResult, "total">;
+  return { ...counts, total: Object.values(counts).reduce((sum, value) => sum + value, 0) };
+}
+
+export async function purgeProjectOrphanedData(projectId: string): Promise<ProjectPurgeResult> {
+  const before = await getProjectPurgePreview(projectId);
+  for (const table of [
+    "cost_code_timephasing",
+    "actual_cost_transactions",
+    "cost_to_complete_details",
+    "baseline_details",
+    "change_records",
+    "subcontract_details",
+  ]) {
+    await supabaseRequest(`${table}?project_id=eq.${encodeURIComponent(projectId)}&cost_code_id=is.null`, {
+      method: "DELETE",
+      headers: { Prefer: "return=minimal" },
+    });
+  }
+  return before;
+}
+
 export async function deleteProjects(projectIds: string[]) {
   if (!projectIds.length) return;
   await supabaseRequest(`projects?id=in.(${projectIds.join(",")})`, { method: "DELETE" });
