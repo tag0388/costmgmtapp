@@ -10,19 +10,19 @@ import { ExcelRow, exportExcel, readExcel } from "@/lib/excel";
 import { getProjectByPublicId, Project } from "@/lib/projects";
 import { deleteProjectGridView, ProjectGridView, gridViewErrorMessage, listProjectGridViews, saveProjectGridView } from "@/lib/grid-views";
 import {
-  bulkUpdateProjectProjectResourceRates,
-  createProjectProjectResourceRate,
-  deactivateProjectProjectResourceRates,
-  importProjectProjectResourceRates,
-  listProjectProjectResourceRates,
-  ProjectProjectResourceRate,
+  bulkUpdateProjectResourceRates,
+  createProjectResourceRate,
+  deactivateProjectResourceRates,
+  importProjectResourceRates,
+  listProjectResourceRates,
+  ProjectResourceRate,
   projectResourceRateErrorMessage,
   RESOURCE_CATEGORIES,
   ResourceCategory,
-  ProjectResourceRateImportRow,
-  ProjectResourceRateInput,
-  updateProjectProjectResourceRate,
-  updateProjectProjectResourceRateFields,
+  ResourceRateImportRow,
+  ResourceRateInput,
+  updateProjectResourceRate,
+  updateProjectResourceRateFields,
 } from "@/lib/project-resource-rates";
 
 type StatusFilter = "all" | "active" | "inactive";
@@ -36,10 +36,10 @@ function formatRate(value: number) {
   return new Intl.NumberFormat(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 4 }).format(Number(value));
 }
 
-export default function ProjectProjectResourceRatesPage({ projectPublicId }: { projectPublicId: string }) {
+export default function ProjectResourceRatesPage({ projectPublicId }: { projectPublicId: string }) {
   const fileInput = useRef<HTMLInputElement>(null);
   const [project, setProject] = useState<Project | null>(null);
-  const [resourceRates, setProjectResourceRates] = useState<ProjectResourceRate[]>([]);
+  const [resourceRates, setResourceRates] = useState<ProjectResourceRate[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -107,7 +107,7 @@ export default function ProjectProjectResourceRatesPage({ projectPublicId }: { p
   }
 
   function replaceResource(updated: ProjectResourceRate) {
-    setProjectResourceRates((current) => current.map((row) => row.id === updated.id ? updated : row));
+    setResourceRates((current) => current.map((row) => row.id === updated.id ? updated : row));
   }
 
   async function onCellChanged(event: CellValueChangedEvent<ProjectResourceRate>) {
@@ -355,7 +355,7 @@ export default function ProjectProjectResourceRatesPage({ projectPublicId }: { p
     try {
       const updated = await bulkUpdateProjectResourceRates(selectedIds, patch as Parameters<typeof bulkUpdateProjectResourceRates>[1]);
       const updatedById = new Map(updated.map((row) => [row.id, row]));
-      setProjectResourceRates((current) => current.map((row) => updatedById.get(row.id) ?? row));
+      setResourceRates((current) => current.map((row) => updatedById.get(row.id) ?? row));
       setBulkOpen(false);
       showNotice(`${selectedIds.length} resource${selectedIds.length === 1 ? "" : "s"} updated.`);
     } catch (requestError) {
@@ -444,7 +444,7 @@ export default function ProjectProjectResourceRatesPage({ projectPublicId }: { p
     if (replaceExisting && !window.confirm("Are you sure you want to replace? This will delete all data and can't be undone.")) return;
     setImporting(true); setProgress(0);
     try {
-      const incoming: ProjectResourceRateImportRow[] = importRows.map((row) => ({
+      const incoming: ResourceRateImportRow[] = importRows.map((row) => ({
         resource_id: row["Resource ID"].trim(), resource_name: row["Resource Name"].trim(), category: row.Category.trim() as ResourceCategory,
         rate: Number(row.Rate), unit: row.Unit.trim(), free_text_01: row["Extra 1"]?.trim() || null, free_text_02: row["Extra 2"]?.trim() || null,
         free_text_03: row["Extra 3"]?.trim() || null, free_text_04: row["Extra 4"]?.trim() || null, free_text_05: row["Extra 5"]?.trim() || null,
@@ -550,7 +550,7 @@ export default function ProjectProjectResourceRatesPage({ projectPublicId }: { p
 }
 
 function ResourceDrawer({ projectId, resource, onClose, onSaved }: { projectId: string; resource: ProjectResourceRate | null; onClose: () => void; onSaved: (message: string) => void | Promise<void> }) {
-  const [form, setForm] = useState<ProjectResourceRateInput>(() => resource ? {
+  const [form, setForm] = useState<ResourceRateInput>(() => resource ? {
     resource_id: resource.resource_id, resource_name: resource.resource_name, category: resource.category, rate: Number(resource.rate), unit: resource.unit,
     free_text_01: resource.free_text_01, free_text_02: resource.free_text_02, free_text_03: resource.free_text_03, free_text_04: resource.free_text_04, free_text_05: resource.free_text_05, is_active: resource.is_active,
   } : { resource_id: "", resource_name: "", category: "Labour", rate: 0, unit: "", free_text_01: null, free_text_02: null, free_text_03: null, free_text_04: null, free_text_05: null, is_active: true });
@@ -571,7 +571,7 @@ function ResourceDrawer({ projectId, resource, onClose, onSaved }: { projectId: 
     if ([form.free_text_01, form.free_text_02, form.free_text_03, form.free_text_04, form.free_text_05].some((value) => (value ?? "").length > 255)) return setFormError("Extra text fields must be 255 characters or fewer.");
     setSaving(true); setFormError("");
     try {
-      const input: ProjectResourceRateInput = { ...form, resource_id: resourceId, resource_name: resourceName, unit };
+      const input: ResourceRateInput = { ...form, resource_id: resourceId, resource_name: resourceName, unit };
       if (resource) await updateProjectResourceRate(resource.id, input); else await createProjectResourceRate(projectId, input);
       await onSaved(resource ? "Resource updated." : "Resource added.");
     } catch (requestError) { setFormError(projectResourceRateErrorMessage(requestError)); }
