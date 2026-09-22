@@ -159,11 +159,12 @@ export default function BaselineBudgetPage({ projectPublicId }: { projectPublicI
   useEffect(() => { void refresh(); }, [refresh]);
 
   const activeAttributes = useMemo(() => buildActiveAttributes(enterpriseAttributes, projectAttributes), [enterpriseAttributes, projectAttributes]);
+  const activeCostCodes = useMemo(() => costCodes.filter((code) => code.is_active), [costCodes]);
   const codeById = useMemo(() => new Map(costCodes.map((code) => [code.id, code])), [costCodes]);
-  const codeByRef = useMemo(() => new Map(costCodes.map((code) => [code.cost_code_id.toLowerCase(), code])), [costCodes]);
+  const codeByRef = useMemo(() => new Map(activeCostCodes.map((code) => [code.cost_code_id.toLowerCase(), code])), [activeCostCodes]);
 
   const rows = useMemo<GridRow[]>(() => details.map((detail) => {
-    const code = codeById.get(detail.cost_code_id);
+    const code = detail.cost_code_id ? codeById.get(detail.cost_code_id) : undefined;
     return { ...detail, cost_code_ref: code?.cost_code_id ?? "" };
   }), [details, codeById]);
 
@@ -183,9 +184,13 @@ export default function BaselineBudgetPage({ projectPublicId }: { projectPublicI
     const patch: Record<string, unknown> = {};
 
     if (colId === "cost_code_ref") {
-      const selected = costCodes.find((code) => code.cost_code_id === row.cost_code_ref);
-      if (!selected) return void refresh();
-      patch.cost_code_id = selected.id;
+      if (!row.cost_code_ref) {
+        patch.cost_code_id = null;
+      } else {
+        const selected = activeCostCodes.find((code) => code.cost_code_id === row.cost_code_ref);
+        if (!selected) return void refresh();
+        patch.cost_code_id = selected.id;
+      }
     } else if (colId === "item_no") {
       patch.item_no = row.item_no?.trim() || null;
     } else if (colId === "item_description") {
@@ -228,8 +233,21 @@ export default function BaselineBudgetPage({ projectPublicId }: { projectPublicI
         filter: true,
         enableRowGroup: true,
         editable: true,
-        cellEditor: "agSelectCellEditor",
-        cellEditorParams: { values: costCodes.map((code) => code.cost_code_id) },
+        cellEditor: "agRichSelectCellEditor",
+        cellEditorParams: {
+          values: ["", ...activeCostCodes.map((code) => `${code.cost_code_id} - ${code.name}`)],
+          allowTyping: true,
+          filterList: true,
+          searchType: "matchAny",
+          highlightMatch: true,
+          valueListMaxHeight: 280,
+        },
+        valueSetter: (params) => {
+          if (!params.data) return false;
+          const raw = String(params.newValue ?? "").split(" - ")[0]?.trim() || "";
+          params.data.cost_code_ref = raw;
+          return true;
+        },
         valueFormatter: (params) => {
           const code = costCodes.find((item) => item.cost_code_id === params.value);
           return code ? `${code.cost_code_id} - ${code.name}` : String(params.value ?? "");
@@ -338,7 +356,7 @@ export default function BaselineBudgetPage({ projectPublicId }: { projectPublicI
         ) : null,
       },
     ];
-  }, [activeAttributes, costCodes]);
+  }, [activeAttributes, activeCostCodes, costCodes]);
 
   const totalBaseline = useMemo(() => details.reduce((sum, row) => sum + Number(row.total ?? 0), 0), [details]);
 
@@ -459,7 +477,7 @@ export default function BaselineBudgetPage({ projectPublicId }: { projectPublicI
   }
 
   async function addRows() {
-    if (!project || !costCodes.length || !gridApi) return;
+    if (!project || !gridApi) return;
     const count = Math.max(1, Math.min(MAX_ADD_ROWS, Math.floor(addCount || 1)));
     const focused = gridApi.getFocusedCell();
     const focusedRow = focused ? gridApi.getDisplayedRowAtIndex(focused.rowIndex)?.data ?? null : null;
@@ -470,7 +488,7 @@ export default function BaselineBudgetPage({ projectPublicId }: { projectPublicI
     const anchorOrder = anchor?.row_order != null ? Number(anchor.row_order) : ordered.length ? Number(ordered[ordered.length - 1].row_order ?? ordered.length) : 0;
     const nextOrder = ordered.find((row) => Number(row.row_order ?? Number.POSITIVE_INFINITY) > anchorOrder)?.row_order;
     const gap = nextOrder == null ? 1 : (Number(nextOrder) - anchorOrder) / (count + 1);
-    const costCodeId = anchor?.cost_code_id ?? costCodes[0].id;
+    const costCodeId = anchor?.cost_code_id ?? null;
 
     setWorking(true); setError("");
     try {
@@ -598,7 +616,7 @@ export default function BaselineBudgetPage({ projectPublicId }: { projectPublicI
       <div className="enterprise-toolbar" style={{ flexWrap: "wrap" }}>
         <label className="enterprise-search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search baseline details…" /></label>
         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          <button className="button primary" disabled={!project || !costCodes.length || working} onClick={() => void addRows()}>+ Add Row(s)</button>
+          <button className="button primary" disabled={!project || working} onClick={() => void addRows()}>+ Add Row(s)</button>
           <input aria-label="Number of rows to add" type="number" min={1} max={MAX_ADD_ROWS} step={1} value={addCount} onChange={(event) => setAddCount(Math.max(1, Math.min(MAX_ADD_ROWS, Number(event.target.value) || 1)))} style={{ width: 58, height: 32, border: "1px solid #d8dee8", borderRadius: 6, padding: "0 6px" }}/>
         </div>
         <button className="button secondary" disabled={!selectedIds.length || working} onClick={openBulkEdit}>Bulk Edit{selectedIds.length ? ` (${selectedIds.length})` : ""}</button>
@@ -652,7 +670,7 @@ export default function BaselineBudgetPage({ projectPublicId }: { projectPublicI
         <h2>Bulk Edit {selectedIds.length} Baseline Budget Row{selectedIds.length === 1 ? "" : "s"}</h2>
         <p>Only fields entered or selected below will be changed.</p>
         <div className="bulk-project-fields">
-          <label className="form-field"><span><strong>Cost Code</strong></span><select value={bulkCostCode} onChange={(e) => setBulkCostCode(e.target.value)}><option value="__NO_CHANGE__">No change</option>{costCodes.map((code) => <option key={code.id} value={code.id}>{code.cost_code_id} - {code.name}</option>)}</select></label>
+          <label className="form-field"><span><strong>Cost Code</strong></span><select value={bulkCostCode} onChange={(e) => setBulkCostCode(e.target.value)}><option value="__NO_CHANGE__">No change</option>{activeCostCodes.map((code) => <option key={code.id} value={code.id}>{code.cost_code_id} - {code.name}</option>)}</select></label>
           <label className="form-field"><span><strong>Item No</strong></span><input value={bulkItemNo} maxLength={50} placeholder="No change" onChange={(e) => setBulkItemNo(e.target.value)}/></label>
           <label className="form-field"><span><strong>Item Description</strong></span><input value={bulkDescription} maxLength={255} placeholder="No change" onChange={(e) => setBulkDescription(e.target.value)}/></label>
           <label className="form-field"><span><strong>Qty</strong></span><input value={bulkQty} inputMode="decimal" placeholder="No change" onChange={(e) => setBulkQty(e.target.value)}/></label>
