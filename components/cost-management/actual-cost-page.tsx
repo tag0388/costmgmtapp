@@ -410,7 +410,7 @@ export default function ActualCostPage({ projectPublicId }: { projectPublicId: s
         <label className="status-filter"><span>View</span><select value={selectedView} onChange={(event) => applyView(event.target.value)}><option value="Default">Default</option>{views.map((view) => <option key={view.id} value={view.id}>{view.view_name}</option>)}</select></label>
         <button className="button secondary" disabled={!gridApi} onClick={() => { setViewName(selectedView === "Default" ? "" : views.find((view) => view.id === selectedView)?.view_name ?? ""); setShowSaveView(true); }}>Save View</button>
         <button className="button secondary" disabled={selectedView === "Default"} onClick={() => void deleteView()}>Delete View</button>
-        <button className="button secondary" disabled={loading || importing} onClick={() => void refresh()}>↻ Refresh</button>
+        <button className="button secondary" disabled={loading || importing} onClick={() => void refresh()}><span className="toolbar-icon-symbol" title="Refresh" aria-hidden="true">↻</span><span className="sr-only">Refresh</span></button>
       </div>
             {error && <div className="data-message error"><strong>Unable to load Actual Cost</strong><span>{error}</span></div>}
       {!error && loading && <div className="data-message"><span className="spinner"/>Loading Actual Cost…</div>}
