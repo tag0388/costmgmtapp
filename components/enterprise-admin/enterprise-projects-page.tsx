@@ -173,7 +173,7 @@ export default function EnterpriseProjectsPage({ enterprisePublicId }: { enterpr
   }
 
   const columnDefs = useMemo<Array<ColDef<Project> | ColGroupDef<Project>>>(() => {
-    const enterpriseColumns: ColDef<Project>[] = activeAttributes.map((definition) => {
+    const enterpriseColumns: ColDef<Project>[] = activeAttributes.map((definition, index) => {
       const field = projectAttributeColumn(definition.attribute_number);
       return {
         colId: field,
@@ -206,6 +206,7 @@ export default function EnterpriseProjectsPage({ enterprisePublicId }: { enterpr
         cellEditorParams: {
           values: ["", ...definition.attribute_values.filter((value) => value.is_active).map((value) => `${value.value_id} - ${value.value_name}`)],
         },
+        columnGroupShow: index === 0 ? undefined : "open",
       };
     });
 
@@ -217,7 +218,7 @@ export default function EnterpriseProjectsPage({ enterprisePublicId }: { enterpr
         openByDefault: true,
         children: [
           { field: "project_code", headerName: "Project Code", pinned: "left", minWidth: 135, filter: true, enableRowGroup: true },
-          { field: "name", headerName: "Project Name", pinned: "left", minWidth: 220, filter: true, enableRowGroup: true, editable: true },
+          { field: "name", headerName: "Project Name", pinned: "left", minWidth: 220, filter: true, enableRowGroup: true, editable: true, columnGroupShow: "open" },
           {
             field: "status",
             headerName: "Status",
@@ -227,6 +228,7 @@ export default function EnterpriseProjectsPage({ enterprisePublicId }: { enterpr
             editable: true,
             cellEditor: "agSelectCellEditor",
             cellEditorParams: { values: ["Active", "Inactive"] },
+            columnGroupShow: "open",
           },
         ],
       },
@@ -244,10 +246,10 @@ export default function EnterpriseProjectsPage({ enterprisePublicId }: { enterpr
         openByDefault: false,
         children: [
           { field: "public_id", headerName: "Public ID", minWidth: 175, filter: true },
-          { field: "created_by", headerName: "Created By", minWidth: 150, filter: true },
-          { field: "created_at", headerName: "Created Date", minWidth: 125, filter: "agDateColumnFilter", valueFormatter: (params) => formatDate(params.value) },
-          { field: "modified_by", headerName: "Modified By", minWidth: 150, filter: true },
-          { field: "updated_at", headerName: "Modified Date", minWidth: 125, filter: "agDateColumnFilter", valueFormatter: (params) => formatDate(params.value) },
+          { field: "created_by", headerName: "Created By", minWidth: 150, filter: true, columnGroupShow: "open" },
+          { field: "created_at", headerName: "Created Date", minWidth: 125, filter: "agDateColumnFilter", valueFormatter: (params) => formatDate(params.value), columnGroupShow: "open" },
+          { field: "modified_by", headerName: "Modified By", minWidth: 150, filter: true, columnGroupShow: "open" },
+          { field: "updated_at", headerName: "Modified Date", minWidth: 125, filter: "agDateColumnFilter", valueFormatter: (params) => formatDate(params.value), columnGroupShow: "open" },
         ],
       },
       {
@@ -294,17 +296,33 @@ export default function EnterpriseProjectsPage({ enterprisePublicId }: { enterpr
     setGridApi(event.api);
   }
 
+  function setAllGroups(open: boolean) {
+    if (!gridApi) return;
+    const groupState = [
+      { groupId: "project-general", open },
+      ...(activeAttributes.length ? [{ groupId: "project-enterprise-attributes", open }] : []),
+      { groupId: "project-system", open },
+    ];
+    gridApi.setColumnGroupState(groupState);
+    if (gridApi.getRowGroupColumns().length) {
+      if (open) gridApi.expandAll();
+      else gridApi.collapseAll();
+    }
+  }
+
   function applyView(viewId: string) {
     setSelectedView(viewId);
     if (!gridApi) return;
     if (viewId === "Default") {
       gridApi.resetColumnState();
+      gridApi.resetColumnGroupState();
       gridApi.setFilterModel(null);
       return;
     }
     const view = views.find((entry) => entry.id === viewId);
     if (!view) return;
     gridApi.applyColumnState({ state: view.grid_state.columnState as ColumnState[], applyOrder: true });
+    if (view.grid_state.columnGroupState) gridApi.setColumnGroupState(view.grid_state.columnGroupState);
     gridApi.setFilterModel(view.grid_state.filterModel ?? null);
   }
 
@@ -313,6 +331,7 @@ export default function EnterpriseProjectsPage({ enterprisePublicId }: { enterpr
     const view = views.find((entry) => entry.id === selectedView);
     if (!view) return;
     gridApi.applyColumnState({ state: view.grid_state.columnState as ColumnState[], applyOrder: true });
+    if (view.grid_state.columnGroupState) gridApi.setColumnGroupState(view.grid_state.columnGroupState);
     gridApi.setFilterModel(view.grid_state.filterModel ?? null);
   }, [gridApi, selectedView, views, columnDefs]);
 
@@ -321,6 +340,7 @@ export default function EnterpriseProjectsPage({ enterprisePublicId }: { enterpr
     try {
       await saveEnterpriseGridView(enterprise.id, GRID_KEY, viewName, {
         columnState: gridApi.getColumnState(),
+        columnGroupState: gridApi.getColumnGroupState(),
         filterModel: gridApi.getFilterModel(),
       });
       const savedViews = await listEnterpriseGridViews(enterprise.id, GRID_KEY);
@@ -343,6 +363,7 @@ export default function EnterpriseProjectsPage({ enterprisePublicId }: { enterpr
       setViews(savedViews);
       setSelectedView("Default");
       gridApi?.resetColumnState();
+      gridApi?.resetColumnGroupState();
       gridApi?.setFilterModel(null);
       showNotice("View deleted.");
     } catch (requestError) {
@@ -522,6 +543,8 @@ export default function EnterpriseProjectsPage({ enterprisePublicId }: { enterpr
           <button className="button danger" disabled={!selectedIds.length || deleting} onClick={() => setDeleteIds(selectedIds)}>
             Delete{selectedIds.length ? ` (${selectedIds.length})` : ""}
           </button>
+          <button className="button secondary" disabled={!gridApi} onClick={() => setAllGroups(true)}>Expand All</button>
+          <button className="button secondary" disabled={!gridApi} onClick={() => setAllGroups(false)}>Collapse All</button>
           <button className="button secondary" onClick={exportProjects}>⇩ Export</button>
           <button className="button secondary" onClick={() => fileInput.current?.click()}>⇧ Import</button>
           <input ref={fileInput} type="file" accept=".xlsx,.xls" hidden onChange={(event) => void chooseImportFile(event.target.files?.[0])} />
