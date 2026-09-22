@@ -141,11 +141,18 @@ export async function regenerateCostReportingPeriods(projectId: string, input: C
 
 export async function extendCostReportingPeriods(projectId: string, input: CostReportingSettingsInput, onProgress?: (progress: number) => void) {
   const existing = await listCostReportingPeriods(projectId);
-  if (!existing.some((period) => period.status === "Closed")) throw new Error("Use Regenerate Periods before any period is closed.");
   if (input.number_of_periods <= existing.length) throw new Error(`Number of Periods must be greater than the existing ${existing.length} periods.`);
   const desired = buildReportingPeriods(projectId, input);
   const additional = desired.slice(existing.length);
   await insertPeriods(additional, onProgress);
+}
+
+export async function closeCostReportingPeriod(projectId: string, periodId: string) {
+  await supabaseRequest("rpc/close_cost_period", {
+    method: "POST",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify({ p_project_id: projectId, p_period_id: periodId, p_closed_by: null }),
+  });
 }
 
 export function costReportingErrorMessage(error: unknown) {
