@@ -76,7 +76,7 @@ export default function ExcelImportDialog({
       <p><strong>This action cannot be undone.</strong></p>
       <div className="confirm-actions">
         <button className="button secondary" onClick={() => setConfirmReplace(false)} disabled={importing}>Cancel</button>
-        <button className="button danger" onClick={onImport} disabled={importing}>{importing ? "Importing…" : "Yes, Delete and Replace"}</button>
+        <button className="button danger" onClick={() => { setConfirmReplace(false); onImport(); }} disabled={importing}>{importing ? "Importing…" : "Yes, Delete and Replace"}</button>
       </div>
     </div>
   </div>;
