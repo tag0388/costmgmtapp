@@ -86,16 +86,16 @@ export async function listEnterpriseAttributes(enterpriseId: string, category: E
 
 async function upsertValues(definitionId: string, existingValues: EnterpriseAttributeValue[], values: EnterpriseAttributeValueInput[], replace: boolean, onProgress?: (progress: number) => void) {
   const cleanValues = values.map((value) => ({ value_id: value.value_id.trim(), value_name: value.value_name.trim() }));
-  if (replace && existingValues.some((value) => value.is_active)) {
-    await supabaseRequest(`attribute_values?attribute_definition_id=eq.${encodeURIComponent(definitionId)}&is_active=eq.true`, {
-      method: "PATCH",
-      body: JSON.stringify({ is_active: false, updated_at: new Date().toISOString() }),
+  if (replace && existingValues.length) {
+    await supabaseRequest(`attribute_values?attribute_definition_id=eq.${encodeURIComponent(definitionId)}`, {
+      method: "DELETE",
+      headers: { Prefer: "return=minimal" },
     });
   }
 
   for (let index = 0; index < cleanValues.length; index += 1) {
     const value = cleanValues[index];
-    const match = existingValues.find((entry) => entry.value_id.toLowerCase() === value.value_id.toLowerCase());
+    const match = replace ? null : existingValues.find((entry) => entry.value_id.toLowerCase() === value.value_id.toLowerCase());
     if (match) {
       await supabaseRequest(`attribute_values?id=eq.${encodeURIComponent(match.id)}`, {
         method: "PATCH",
