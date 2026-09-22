@@ -543,15 +543,15 @@ export default function EnterpriseProjectsPage({ enterprisePublicId }: { enterpr
           <button className="button danger" disabled={!selectedIds.length || deleting} onClick={() => setDeleteIds(selectedIds)}>
             Delete{selectedIds.length ? ` (${selectedIds.length})` : ""}
           </button>
-          <button className="button secondary" disabled={!gridApi} onClick={() => setAllGroups(true)}>Expand All</button>
-          <button className="button secondary" disabled={!gridApi} onClick={() => setAllGroups(false)}>Collapse All</button>
+          <button className="button secondary" disabled={!gridApi} onClick={() => setAllGroups(true)}><span className="toolbar-icon-symbol" title="Expand All" aria-hidden="true">⊞</span><span className="sr-only">Expand All</span></button>
+          <button className="button secondary" disabled={!gridApi} onClick={() => setAllGroups(false)}><span className="toolbar-icon-symbol" title="Collapse All" aria-hidden="true">⊟</span><span className="sr-only">Collapse All</span></button>
           <button className="button secondary" onClick={exportProjects}>⇩ Export</button>
           <button className="button secondary" onClick={() => fileInput.current?.click()}>⇧ Import</button>
           <input ref={fileInput} type="file" accept=".xlsx,.xls" hidden onChange={(event) => void chooseImportFile(event.target.files?.[0])} />
           <label className="status-filter"><span>View</span><select value={selectedView} onChange={(event) => applyView(event.target.value)}><option value="Default">Default</option>{views.map((view) => <option key={view.id} value={view.id}>{view.view_name}</option>)}</select></label>
           <button className="button secondary" disabled={!gridApi} onClick={() => { setViewName(selectedView === "Default" ? "" : views.find((view) => view.id === selectedView)?.view_name ?? ""); setShowSaveView(true); }}>Save View</button>
           <button className="button secondary" disabled={selectedView === "Default"} onClick={() => void deleteView()}>Delete View</button>
-          <button className="button secondary" onClick={() => void refresh()} disabled={loading || saving}>↻ Refresh</button>
+          <button className="button secondary" onClick={() => void refresh()} disabled={loading || saving}><span className="toolbar-icon-symbol" title="Refresh" aria-hidden="true">↻</span><span className="sr-only">Refresh</span></button>
           <button className="button primary toolbar-add" disabled={!enterprise} onClick={() => setEditingProject("new")}>+ Add</button>
         </div>
 
