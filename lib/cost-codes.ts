@@ -155,28 +155,32 @@ export async function importCostCodes(projectId: string, rows: Omit<CostCodeInpu
   const byCode = new Map(existing.map((row) => [row.cost_code_id.toLowerCase(), row]));
 
   if (replace && existing.length) {
-    const ids = existing.map((row) => row.id);
-    const idFilter = ids.map(encodeURIComponent).join(",");
-    for (const table of [
-      "baseline_details",
-      "actual_cost_transactions",
-      "change_records",
-      "cost_to_complete_details",
-      "cost_code_timephasing",
-      "subcontract_details",
-    ]) {
-      await supabaseRequest(`${table}?project_id=eq.${encodeURIComponent(projectId)}&cost_code_id=in.(${idFilter})`, {
-        method: "PATCH",
-        headers: { Prefer: "return=minimal" },
-        body: JSON.stringify({ cost_code_id: null }),
-      });
+    const importedIds = new Set(rows.map((row) => row.cost_code_id.trim().toLowerCase()));
+    const removed = existing.filter((row) => !importedIds.has(row.cost_code_id.toLowerCase()));
+    if (removed.length) {
+      const ids = removed.map((row) => row.id);
+      const idFilter = ids.map(encodeURIComponent).join(",");
+      for (const table of [
+        "baseline_details",
+        "actual_cost_transactions",
+        "change_records",
+        "cost_to_complete_details",
+        "cost_code_timephasing",
+        "subcontract_details",
+      ]) {
+        await supabaseRequest(`${table}?project_id=eq.${encodeURIComponent(projectId)}&cost_code_id=in.(${idFilter})`, {
+          method: "PATCH",
+          headers: { Prefer: "return=minimal" },
+          body: JSON.stringify({ cost_code_id: null }),
+        });
+      }
+      await deleteCostCodes(ids);
     }
-    await deleteCostCodes(ids);
   }
 
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index];
-    const match = replace ? null : byCode.get(row.cost_code_id.toLowerCase());
+    const match = byCode.get(row.cost_code_id.toLowerCase());
     if (match) await updateCostCode(match.id, row);
     else await createCostCode({ project_id: projectId, ...row });
     onProgress?.(((index + 1) / Math.max(rows.length, 1)) * 100);
