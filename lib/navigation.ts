@@ -1,5 +1,5 @@
 export const routeMap = {
-  "project-admin": ["general-info", "line-item-attributes"],
+  "project-admin": ["general-info", "line-item-attributes", "purge"],
   "cost-management": ["cost-codes", "timephasing", "reporting-periods", "cost-code-attributes", "resource-rates", "bulk-baseline-budget", "bulk-actual-cost", "bulk-cost-to-complete"],
   "change-management": ["change-management", "change-attributes", "bulk-change-records"],
   "subcontract-management": ["subcontract-management", "subcontract-attributes", "bulk-line-items"],
