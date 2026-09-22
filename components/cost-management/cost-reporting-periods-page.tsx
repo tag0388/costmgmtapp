@@ -14,6 +14,7 @@ import {
   generateCostReportingPeriods,
   getCostReportingSettings,
   listCostReportingPeriods,
+  trimCostReportingPeriods,
   updateCostReportingSettings,
 } from "@/lib/cost-reporting";
 
@@ -31,6 +32,7 @@ export default function CostReportingPeriodsPage({ projectPublicId }: { projectP
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [confirmClose, setConfirmClose] = useState(false);
+  const [confirmReduce, setConfirmReduce] = useState(false);
 
   const hasClosedPeriod = periods.some((period) => period.status === "Closed");
   const currentPeriod = useMemo(() => periods.find((period) => period.status === "Current") ?? null, [periods]);
@@ -62,20 +64,29 @@ export default function CostReportingPeriodsPage({ projectPublicId }: { projectP
 
   useEffect(() => { void load(); }, [load]);
 
-  function validateAddPeriods() {
+  function validatePeriodCount() {
     if (!form.start_date) return "Start Date is required.";
     if (!Number.isInteger(form.number_of_periods) || form.number_of_periods <= 0) return "Number of Periods must be a whole number greater than zero.";
-    if (periods.length > 0 && form.number_of_periods <= periods.length) return `Increase Number of Periods above the existing ${periods.length} periods.`;
+    const minimum = currentPeriod ? currentPeriod.period_number + 1 : 1;
+    if (periods.length > 0 && form.number_of_periods < minimum) {
+      return `Number of Periods cannot be less than ${minimum} while P${currentPeriod?.period_number ?? 0} is Current.`;
+    }
     if (hasClosedPeriod && settings && (form.frequency !== settings.frequency || form.start_date !== settings.start_date)) {
       return "Frequency and Start Date are locked after the first reporting period is closed.";
     }
     return "";
   }
 
-  async function addPeriods() {
+  async function applyPeriodCount() {
     if (!project) return;
-    const validation = validateAddPeriods();
+    const validation = validatePeriodCount();
     if (validation) return setError(validation);
+    if (periods.length > 0 && form.number_of_periods === periods.length) return setError("Number of Periods has not changed.");
+    if (periods.length > 0 && form.number_of_periods < periods.length) {
+      setError("");
+      setConfirmReduce(true);
+      return;
+    }
 
     setWorking(true); setProgress(0); setError(""); setNotice("");
     try {
@@ -93,6 +104,26 @@ export default function CostReportingPeriodsPage({ projectPublicId }: { projectP
         setNotice(`${added} reporting period${added === 1 ? "" : "s"} added.`);
       }
       setPeriods(await listCostReportingPeriods(project.id));
+    } catch (requestError) {
+      setError(costReportingErrorMessage(requestError));
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function reducePeriods() {
+    if (!project || !settings) return;
+    const validation = validatePeriodCount();
+    if (validation) return setError(validation);
+    setWorking(true); setProgress(0); setError(""); setNotice("");
+    try {
+      const removed = periods.length - form.number_of_periods;
+      await trimCostReportingPeriods(project.id, form.number_of_periods);
+      const saved = await updateCostReportingSettings(settings.id, form);
+      setSettings(saved);
+      setConfirmReduce(false);
+      setPeriods(await listCostReportingPeriods(project.id));
+      setNotice(`${removed} future reporting period${removed === 1 ? "" : "s"} removed.`);
     } catch (requestError) {
       setError(costReportingErrorMessage(requestError));
     } finally {
@@ -133,13 +164,13 @@ export default function CostReportingPeriodsPage({ projectPublicId }: { projectP
         <div className="form-grid">
           <label className="form-field"><span>Frequency <b>*</b></span><select disabled={hasClosedPeriod || working} value={form.frequency} onChange={(event) => setForm({ ...form, frequency: event.target.value as CostPeriodFrequency })}><option>Weekly</option><option>Monthly</option></select></label>
           <label className="form-field"><span>Start Date <b>*</b></span><input disabled={hasClosedPeriod || working} type="date" value={form.start_date} onChange={(event) => setForm({ ...form, start_date: event.target.value })}/></label>
-          <label className="form-field"><span>Number of Periods <b>*</b></span><input type="number" min={periods.length ? periods.length + 1 : 1} step={1} inputMode="numeric" disabled={working} value={form.number_of_periods} onChange={(event) => setForm({ ...form, number_of_periods: event.target.value === "" ? 0 : Number(event.target.value) })}/></label>
+          <label className="form-field"><span>Number of Periods <b>*</b></span><input type="number" min={currentPeriod ? currentPeriod.period_number + 1 : 1} step={1} inputMode="numeric" disabled={working} value={form.number_of_periods} onChange={(event) => setForm({ ...form, number_of_periods: event.target.value === "" ? 0 : Number(event.target.value) })}/></label>
         </div>
 
         <div className="data-message" style={{ minHeight: 64, marginTop: 14 }}>
           <span>{hasClosedPeriod
-            ? "A period has been closed, so Frequency and Start Date are now locked. You can continue increasing Number of Periods whenever more future periods are required."
-            : "Frequency and Start Date remain editable until the first period is closed. Number of Periods can always be increased."}</span>
+            ? `A period has been closed, so Frequency and Start Date are now locked. Number of Periods can be increased or reduced, but never below P${currentPeriod ? currentPeriod.period_number + 1 : 1}.`
+            : `Frequency and Start Date remain editable until the first period is closed. Number of Periods can be increased or reduced, but never below P${currentPeriod ? currentPeriod.period_number + 1 : 1}.`}</span>
         </div>
       </div>
 
@@ -147,7 +178,7 @@ export default function CostReportingPeriodsPage({ projectPublicId }: { projectP
         <span>{currentPeriod ? `Current: P${currentPeriod.period_number} · ${currentPeriod.start_date} to ${currentPeriod.end_date}` : periods.length ? "No Current period" : "No periods created yet"}</span>
         <div style={{ display: "flex", gap: 8 }}>
           <button className="button danger" disabled={working || !currentPeriod} onClick={() => setConfirmClose(true)}>Close Period</button>
-          <button className="button primary" disabled={working || !project} onClick={() => void addPeriods()}>{working && progress > 0 ? `Add Periods… ${Math.round(progress)}%` : periods.length ? "Add Periods" : "Add Periods"}</button>
+          <button className="button primary" disabled={working || !project} onClick={() => void applyPeriodCount()}>{working && progress > 0 ? `Updating… ${Math.round(progress)}%` : periods.length && form.number_of_periods < periods.length ? "Remove Periods" : "Add Periods"}</button>
         </div>
       </div>
     </section>
@@ -159,6 +190,17 @@ export default function CostReportingPeriodsPage({ projectPublicId }: { projectP
         : <div className="enterprise-table-wrap"><table className="enterprise-table" style={{ minWidth: 820 }}><thead><tr><th>Period</th><th>Start Date</th><th>End Date</th><th>Status</th><th>Closed At</th></tr></thead><tbody>{periods.map((period) => <tr key={period.id}><td className="enterprise-code">P{period.period_number}</td><td>{period.start_date}</td><td>{period.end_date}</td><td><span className={`enterprise-status ${period.status === "Closed" ? "inactive" : "active"}`}><i/>{period.status}</span></td><td>{period.closed_at ? new Date(period.closed_at).toLocaleString() : "—"}</td></tr>)}</tbody></table></div>}
       <div className="grid-footer"><span>{periods.length} reporting periods</span><span>{project?.project_code ?? ""}</span></div>
     </section>
+
+    {confirmReduce && currentPeriod && <div className="confirm-layer">
+      <button className="confirm-scrim" onClick={() => !working && setConfirmReduce(false)} aria-label="Close reduction confirmation"/>
+      <div className="confirm-dialog" role="alertdialog" aria-modal="true">
+        <div className="confirm-icon">!</div>
+        <h2>Remove Future Periods?</h2>
+        <p>This will reduce the reporting calendar from <strong>{periods.length}</strong> periods to <strong>{form.number_of_periods}</strong>.</p>
+        <p>Only Future periods after P{form.number_of_periods} will be removed. Any timephasing or future phasing allocations in those removed periods will also be deleted.</p>
+        <div className="confirm-actions"><button className="button secondary" disabled={working} onClick={() => setConfirmReduce(false)}>Cancel</button><button className="button danger" disabled={working} onClick={() => void reducePeriods()}>{working ? "Removing…" : "Yes, Remove Periods"}</button></div>
+      </div>
+    </div>}
 
     {confirmClose && currentPeriod && <div className="confirm-layer">
       <button className="confirm-scrim" onClick={() => !working && setConfirmClose(false)} aria-label="Close confirmation"/>
