@@ -384,7 +384,7 @@ export default function ProjectResourceRatesPage({ projectPublicId }: { projectP
   }
 
   function exportResources() {
-    if (!enterprise) return;
+    if (!project) return;
     const excelRows: ExcelRow[] = resourceRates.map((row) => ({
       "Resource ID": row.resource_id, "Resource Name": row.resource_name, Category: row.category, Rate: String(row.rate), Unit: row.unit,
       "Extra 1": row.free_text_01 ?? "", "Extra 2": row.free_text_02 ?? "", "Extra 3": row.free_text_03 ?? "", "Extra 4": row.free_text_04 ?? "", "Extra 5": row.free_text_05 ?? "",
@@ -440,7 +440,7 @@ export default function ProjectResourceRatesPage({ projectPublicId }: { projectP
   }
 
   async function runImport() {
-    if (!enterprise || !importRows || importErrors.length) return;
+    if (!project || !importRows || importErrors.length) return;
     if (replaceExisting && !window.confirm("Are you sure you want to replace? This will delete all data and can't be undone.")) return;
     setImporting(true); setProgress(0);
     try {
@@ -478,7 +478,7 @@ export default function ProjectResourceRatesPage({ projectPublicId }: { projectP
         <button className="button secondary" disabled={!gridApi} onClick={() => { setViewName(selectedView === "Default" ? "" : views.find((view) => view.id === selectedView)?.view_name ?? ""); setShowSaveView(true); }}>Save View</button>
         <button className="button secondary" disabled={selectedView === "Default"} onClick={() => void deleteView()}>Delete View</button>
         <button className="button secondary" onClick={() => void refresh()} disabled={loading || saving}>↻ Refresh</button>
-        <button className="button primary toolbar-add" disabled={!enterprise} onClick={() => setEditing("new")}>+ Add</button>
+        <button className="button primary toolbar-add" disabled={!project} onClick={() => setEditing("new")}>+ Add</button>
       </div>
 
       {error && <div className="data-message error"><strong>Unable to load resource rates</strong><span>{error}</span></div>}
