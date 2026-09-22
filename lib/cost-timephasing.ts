@@ -4,7 +4,7 @@ import { SupabaseRequestError, supabaseRequest } from "@/lib/supabase/browser";
 export type CostCodeTimephasing = {
   id: string;
   project_id: string;
-  cost_code_id: string;
+  cost_code_id: string | null;
   cost_period_id: string;
   baseline_budget: number;
   current_budget: number;

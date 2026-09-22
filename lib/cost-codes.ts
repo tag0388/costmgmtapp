@@ -153,7 +153,31 @@ export function bulkUpdateCostCodeAttributes(ids: string[], patch: CostCodeAttri
 export async function importCostCodes(projectId: string, rows: Omit<CostCodeInput, "project_id">[], replace: boolean, onProgress?: (progress: number) => void) {
   const existing = await listCostCodes(projectId);
   const byCode = new Map(existing.map((row) => [row.cost_code_id.toLowerCase(), row]));
-  if (replace && existing.length) await setCostCodesActive(existing.map((row) => row.id), false);
+
+  if (replace && existing.length) {
+    const importedIds = new Set(rows.map((row) => row.cost_code_id.trim().toLowerCase()));
+    const removed = existing.filter((row) => !importedIds.has(row.cost_code_id.toLowerCase()));
+    if (removed.length) {
+      const ids = removed.map((row) => row.id);
+      const idFilter = ids.map(encodeURIComponent).join(",");
+      for (const table of [
+        "baseline_details",
+        "actual_cost_transactions",
+        "change_records",
+        "cost_to_complete_details",
+        "cost_code_timephasing",
+        "subcontract_details",
+      ]) {
+        await supabaseRequest(`${table}?project_id=eq.${encodeURIComponent(projectId)}&cost_code_id=in.(${idFilter})`, {
+          method: "PATCH",
+          headers: { Prefer: "return=minimal" },
+          body: JSON.stringify({ cost_code_id: null }),
+        });
+      }
+      await deleteCostCodes(ids);
+    }
+  }
+
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index];
     const match = byCode.get(row.cost_code_id.toLowerCase());

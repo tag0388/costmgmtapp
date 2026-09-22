@@ -69,6 +69,14 @@ export function bulkUpdateProjectResourceRates(
   });
 }
 
+export async function deleteProjectResourceRates(ids: string[]) {
+  if (!ids.length) return;
+  await supabaseRequest(`project_resource_rates?id=in.(${ids.join(",")})`, {
+    method: "DELETE",
+    headers: { Prefer: "return=minimal" },
+  });
+}
+
 export async function deactivateProjectResourceRates(ids: string[]) {
   if (!ids.length) return;
   await supabaseRequest(`project_resource_rates?id=in.(${ids.join(",")})`, {
@@ -87,9 +95,10 @@ export async function importProjectResourceRates(
   const existing = await listProjectResourceRates(projectId);
   const existingByResourceId = new Map(existing.map((row) => [row.resource_id.toLowerCase(), row]));
 
-  if (replace) {
-    const activeIds = existing.filter((row) => row.is_active).map((row) => row.id);
-    await deactivateProjectResourceRates(activeIds);
+  if (replace && existing.length) {
+    const importedIds = new Set(rows.map((row) => row.resource_id.trim().toLowerCase()));
+    const removed = existing.filter((row) => !importedIds.has(row.resource_id.toLowerCase()));
+    if (removed.length) await deleteProjectResourceRates(removed.map((row) => row.id));
   }
 
   for (let index = 0; index < rows.length; index += 1) {

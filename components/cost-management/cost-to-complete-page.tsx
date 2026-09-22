@@ -170,7 +170,7 @@ export default function CostToCompletePage({ projectPublicId }: { projectPublicI
   const codeByRef = useMemo(() => new Map(costCodes.map((code) => [code.cost_code_id.toLowerCase(), code])), [costCodes]);
   const enterpriseResourceIds = useMemo(() => new Set(enterpriseResources.filter((row) => row.is_active).map((row) => row.resource_id.toLowerCase())), [enterpriseResources]);
   const projectResourceIds = useMemo(() => new Set(projectResources.filter((row) => row.is_active).map((row) => row.resource_id.toLowerCase())), [projectResources]);
-  const rows = useMemo<GridRow[]>(() => details.map((row) => ({ ...row, cost_code_ref: codeById.get(row.cost_code_id)?.cost_code_id ?? "" })), [details, codeById]);
+  const rows = useMemo<GridRow[]>(() => details.map((row) => ({ ...row, cost_code_ref: codeById.get(row.cost_code_id ?? "")?.cost_code_id ?? "" })), [details, codeById]);
 
   const excelColumns = useMemo(() => [
     "Cost Code ID", "Resource Source", "Item", "Description", "Unit", "Rate", "Category",

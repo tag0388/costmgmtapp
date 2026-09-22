@@ -4,6 +4,7 @@ import "@/app/enterprise-project-attributes.css";
 import "@/app/change-management.css";
 import ProjectGeneralInfoPage from "@/components/project-admin/project-general-info-page";
 import ProjectLineItemAttributesPage from "@/components/project-admin/project-line-item-attributes-page";
+import ProjectPurgePage from "@/components/project-admin/project-purge-page";
 import CostCodesAgGridPage from "@/components/cost-management/cost-codes-ag-grid-page";
 import CostTimephasingPage from "@/components/cost-management/timephasing-page";
 import CostReportingPeriodsPage from "@/components/cost-management/cost-reporting-periods-page";
@@ -24,6 +25,7 @@ export default async function ProjectContextPage({ params }: { params: Promise<{
   if (!isModuleSlug(module) || !isSubmoduleSlug(module, submodule) || !projectModules.has(module)) notFound();
   if (module === "project-admin" && submodule === "general-info") return <ProjectGeneralInfoPage projectPublicId={projectPublicId}/>;
   if (module === "project-admin" && submodule === "line-item-attributes") return <ProjectLineItemAttributesPage projectPublicId={projectPublicId}/>;
+  if (module === "project-admin" && submodule === "purge") return <ProjectPurgePage projectPublicId={projectPublicId}/>;
   if (module === "cost-management" && submodule === "cost-codes") return <CostCodesAgGridPage projectPublicId={projectPublicId}/>;
   if (module === "cost-management" && submodule === "timephasing") return <CostTimephasingPage projectPublicId={projectPublicId}/>;
   if (module === "cost-management" && submodule === "reporting-periods") return <CostReportingPeriodsPage projectPublicId={projectPublicId}/>;

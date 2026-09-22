@@ -152,7 +152,7 @@ export default function ActualCostPage({ projectPublicId }: { projectPublicId: s
 
   const rows = useMemo<GridRow[]>(() => transactions.map((transaction) => ({
     ...transaction,
-    cost_code_ref: codeById.get(transaction.cost_code_id)?.cost_code_id ?? "",
+    cost_code_ref: codeById.get(transaction.cost_code_id ?? "")?.cost_code_id ?? "",
     period_label: periodById.get(transaction.cost_period_id) ? periodGridValue(periodById.get(transaction.cost_period_id)!) : "",
   })), [transactions, codeById, periodById]);
 

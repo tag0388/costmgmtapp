@@ -45,8 +45,10 @@ export async function listProjectAttributes(projectId: string, category: Project
 
 async function upsertValues(definitionId: string, existingValues: ProjectAttributeValue[], values: ProjectAttributeValueInput[], replace: boolean, onProgress?: (progress: number) => void) {
   const cleanValues = values.map((value) => ({ value_id: value.value_id.trim(), value_name: value.value_name.trim() }));
-  if (replace && existingValues.some((value) => value.is_active)) {
-    await supabaseRequest(`attribute_values?attribute_definition_id=eq.${encodeURIComponent(definitionId)}&is_active=eq.true`, { method: "PATCH", body: JSON.stringify({ is_active: false, updated_at: new Date().toISOString() }) });
+  if (replace && existingValues.length) {
+    const importedIds = new Set(cleanValues.map((value) => value.value_id.toLowerCase()));
+    const removed = existingValues.filter((entry) => !importedIds.has(entry.value_id.toLowerCase()));
+    if (removed.length) await supabaseRequest(`attribute_values?id=in.(${removed.map((entry) => entry.id).join(",")})`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
   }
   for (let index = 0; index < cleanValues.length; index += 1) {
     const value = cleanValues[index];
