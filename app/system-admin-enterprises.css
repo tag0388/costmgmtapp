@@ -64,3 +64,5 @@
   .enterprise-toolbar>.toolbar-add,
   .enterprise-toolbar>.toolbar-add-group{margin-left:auto}
 }
+
+/* Toolbar layout standardization: desktop single-row, mobile wrap. */
