@@ -644,6 +644,7 @@ export default function BaselineBudgetPage({ projectPublicId }: { projectPublicI
             quickFilterText={search}
             getRowId={(params) => params.data.id}
             rowSelection={{ mode: "multiRow" }}
+            cellSelection={{ handle: { mode: "fill", direction: "y", suppressClearOnFillReduction: true } }}
             selectionColumnDef={{ pinned: "left", width: 38, minWidth: 38, maxWidth: 38, suppressHeaderMenuButton: true, resizable: false }}
             onGridReady={onGridReady}
             onSelectionChanged={(event: SelectionChangedEvent<GridRow>) => setSelectedIds(event.api.getSelectedRows().map((row) => row.id))}
