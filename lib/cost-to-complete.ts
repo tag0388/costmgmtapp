@@ -20,7 +20,7 @@ export const CTC_USER_FIELDS = [...CTC_USER_NUMBER_FIELDS, ...CTC_USER_TEXT_FIEL
 export type CostToCompleteDetail = {
   id: string;
   project_id: string;
-  cost_code_id: string;
+  cost_code_id: string | null;
   item: string | null;
   description: string | null;
   unit: string | null;
@@ -46,7 +46,8 @@ export type CostToCompleteLedgerRow = CostToCompleteDetail & {
   summary_recalculated_at: string | null;
 };
 
-export type CostToCompleteImportRow = Omit<CostToCompleteDetail, "id" | "project_id" | "row_order" | "created_at" | "updated_at"> & {
+export type CostToCompleteImportRow = Omit<CostToCompleteDetail, "id" | "project_id" | "cost_code_id" | "row_order" | "created_at" | "updated_at"> & {
+  cost_code_id: string;
   period_qty: Record<string, number>;
 };
 
