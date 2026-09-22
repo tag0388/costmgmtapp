@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgGridProvider, AgGridReact } from "ag-grid-react";
-import type { ColDef, ColumnState, GridApi } from "ag-grid-community";
+import type { ColDef, ColumnState, GridApi, SelectionChangedEvent } from "ag-grid-community";
 import { themeQuartz } from "ag-grid-community";
 import { AllEnterpriseModule } from "ag-grid-enterprise";
 import ExcelImportDialog from "@/components/shared/excel-import-dialog";
@@ -14,8 +14,10 @@ import {
   BaselineAttributeField,
   BaselineDetail,
   baselineBudgetErrorMessage,
+  deleteBaselineDetails,
   importBaselineDetails,
   listBaselineDetails,
+  updateBaselineDetails,
 } from "@/lib/cost-baseline-budget";
 import { getProjectByPublicId, Project } from "@/lib/projects";
 import { deleteProjectGridView, gridViewErrorMessage, listProjectGridViews, type ProjectGridView, saveProjectGridView } from "@/lib/grid-views";
@@ -92,6 +94,16 @@ export default function BaselineBudgetPage({ projectPublicId }: { projectPublicI
   const [selectedView, setSelectedView] = useState("Default");
   const [viewName, setViewName] = useState("");
   const [showSaveView, setShowSaveView] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [working, setWorking] = useState(false);
+  const [bulkCostCode, setBulkCostCode] = useState("__NO_CHANGE__");
+  const [bulkItemNo, setBulkItemNo] = useState("");
+  const [bulkDescription, setBulkDescription] = useState("");
+  const [bulkQty, setBulkQty] = useState("");
+  const [bulkUnit, setBulkUnit] = useState("");
+  const [bulkRate, setBulkRate] = useState("");
 
   const refresh = useCallback(async () => {
     setLoading(true); setError("");
@@ -115,6 +127,7 @@ export default function BaselineBudgetPage({ projectPublicId }: { projectPublicI
       setEnterpriseAttributes(enterpriseDefs);
       setProjectAttributes(projectDefs);
       setViews(savedViews);
+      setSelectedIds((current) => current.filter((id) => baselineRows.some((row) => row.id === id)));
       setSelectedView((current) => current === "Default" || savedViews.some((view) => view.id === current) ? current : "Default");
     } catch (requestError) {
       setError(baselineBudgetErrorMessage(requestError));
@@ -203,6 +216,61 @@ export default function BaselineBudgetPage({ projectPublicId }: { projectPublicI
     } catch (requestError) { setError(gridViewErrorMessage(requestError)); }
   }
 
+  function openBulkEdit() {
+    setBulkCostCode("__NO_CHANGE__");
+    setBulkItemNo("");
+    setBulkDescription("");
+    setBulkQty("");
+    setBulkUnit("");
+    setBulkRate("");
+    setBulkOpen(true);
+  }
+
+  async function applyBulkEdit() {
+    if (!selectedIds.length) return;
+    const patch: Record<string, string | number | null> = {};
+    if (bulkCostCode !== "__NO_CHANGE__") patch.cost_code_id = bulkCostCode;
+    if (bulkItemNo.trim()) patch.item_no = bulkItemNo.trim();
+    if (bulkDescription.trim()) patch.item_description = bulkDescription.trim();
+    if (bulkQty.trim()) {
+      const parsed = Number(bulkQty.replace(/,/g, ""));
+      if (!Number.isFinite(parsed) || parsed < 0) return setError("Bulk Qty must be zero or greater.");
+      patch.qty = parsed;
+    }
+    if (bulkUnit.trim()) patch.unit = bulkUnit.trim();
+    if (bulkRate.trim()) {
+      const parsed = Number(bulkRate.replace(/,/g, ""));
+      if (!Number.isFinite(parsed) || parsed < 0) return setError("Bulk Rate must be zero or greater.");
+      patch.rate = parsed;
+    }
+    if (!Object.keys(patch).length) return setError("Choose at least one field to update.");
+    setWorking(true); setError("");
+    try {
+      await updateBaselineDetails(selectedIds, patch);
+      setBulkOpen(false);
+      showNotice(`${selectedIds.length} Baseline Budget row${selectedIds.length === 1 ? "" : "s"} updated.`);
+      await refresh();
+    } catch (requestError) {
+      setError(baselineBudgetErrorMessage(requestError));
+    } finally { setWorking(false); }
+  }
+
+  async function confirmBulkDelete() {
+    if (!selectedIds.length) return;
+    setWorking(true); setError("");
+    try {
+      const count = selectedIds.length;
+      await deleteBaselineDetails(selectedIds);
+      setSelectedIds([]);
+      gridApi?.deselectAll();
+      setDeleteOpen(false);
+      showNotice(`${count} Baseline Budget row${count === 1 ? "" : "s"} deleted.`);
+      await refresh();
+    } catch (requestError) {
+      setError(baselineBudgetErrorMessage(requestError));
+    } finally { setWorking(false); }
+  }
+
   function exportRows() {
     if (!project) return;
     const data = rows.map((row) => ({
@@ -286,6 +354,8 @@ export default function BaselineBudgetPage({ projectPublicId }: { projectPublicI
     <section className="enterprise-grid-card">
       <div className="enterprise-toolbar" style={{ flexWrap: "wrap" }}>
         <label className="enterprise-search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search baseline details…" /></label>
+        <button className="button secondary" disabled={!selectedIds.length || working} onClick={openBulkEdit}>Bulk Edit{selectedIds.length ? ` (${selectedIds.length})` : ""}</button>
+        <button className="button danger" disabled={!selectedIds.length || working} onClick={() => setDeleteOpen(true)}>Bulk Delete{selectedIds.length ? ` (${selectedIds.length})` : ""}</button>
         <button className="button secondary" onClick={exportRows}>⇩ Export</button>
         <button className="button secondary" onClick={() => fileRef.current?.click()}>⇧ Import</button>
         <input ref={fileRef} hidden type="file" accept=".xlsx,.xls" onChange={(event) => void chooseImport(event.target.files?.[0])}/>
@@ -306,15 +376,38 @@ export default function BaselineBudgetPage({ projectPublicId }: { projectPublicI
             defaultColDef={{ sortable: true, resizable: true, filter: true, minWidth: 110 }}
             quickFilterText={search}
             getRowId={(params) => params.data.id}
+            rowSelection={{ mode: "multiRow" }}
+            selectionColumnDef={{ pinned: "left", width: 38, minWidth: 38, maxWidth: 38, suppressHeaderMenuButton: true, resizable: false }}
             onGridReady={(event) => setGridApi(event.api)}
+            onSelectionChanged={(event: SelectionChangedEvent<GridRow>) => setSelectedIds(event.api.getSelectedRows().map((row) => row.id))}
             grandTotalRow="pinnedBottom"
             animateRows
           />
         </div>
       </AgGridProvider>}
-      <div className="grid-footer"><span>{details.length} baseline detail rows · {costCodes.length} Cost Codes</span><span>Baseline Budget total: {money(totalBaseline)}</span></div>
+      <div className="grid-footer"><span>{details.length} baseline detail rows · {selectedIds.length} selected · {costCodes.length} Cost Codes</span><span>Baseline Budget total: {money(totalBaseline)}</span></div>
     </section>
 
+    {bulkOpen && <div className="confirm-layer">
+      <button className="confirm-scrim" onClick={() => !working && setBulkOpen(false)} aria-label="Close bulk edit"/>
+      <div className="confirm-dialog project-bulk-dialog" role="dialog" aria-modal="true">
+        <h2>Bulk Edit {selectedIds.length} Baseline Budget Row{selectedIds.length === 1 ? "" : "s"}</h2>
+        <p>Only fields entered or selected below will be changed.</p>
+        <div className="bulk-project-fields">
+          <label className="form-field"><span><strong>Cost Code</strong></span><select value={bulkCostCode} onChange={(e) => setBulkCostCode(e.target.value)}><option value="__NO_CHANGE__">No change</option>{costCodes.map((code) => <option key={code.id} value={code.id}>{code.cost_code_id} - {code.name}</option>)}</select></label>
+          <label className="form-field"><span><strong>Item No</strong></span><input value={bulkItemNo} maxLength={50} placeholder="No change" onChange={(e) => setBulkItemNo(e.target.value)}/></label>
+          <label className="form-field"><span><strong>Item Description</strong></span><input value={bulkDescription} maxLength={255} placeholder="No change" onChange={(e) => setBulkDescription(e.target.value)}/></label>
+          <label className="form-field"><span><strong>Qty</strong></span><input value={bulkQty} inputMode="decimal" placeholder="No change" onChange={(e) => setBulkQty(e.target.value)}/></label>
+          <label className="form-field"><span><strong>Unit</strong></span><input value={bulkUnit} maxLength={30} placeholder="No change" onChange={(e) => setBulkUnit(e.target.value)}/></label>
+          <label className="form-field"><span><strong>Rate</strong></span><input value={bulkRate} inputMode="decimal" placeholder="No change" onChange={(e) => setBulkRate(e.target.value)}/></label>
+        </div>
+        <div className="confirm-actions"><button className="button secondary" disabled={working} onClick={() => setBulkOpen(false)}>Cancel</button><button className="button primary" disabled={working} onClick={() => void applyBulkEdit()}>{working ? "Updating…" : "Apply"}</button></div>
+      </div>
+    </div>}
+    {deleteOpen && <div className="confirm-layer">
+      <button className="confirm-scrim" onClick={() => !working && setDeleteOpen(false)} aria-label="Close delete confirmation"/>
+      <div className="confirm-dialog" role="alertdialog" aria-modal="true"><div className="confirm-icon">!</div><h2>Delete {selectedIds.length} Baseline Budget Row{selectedIds.length === 1 ? "" : "s"}?</h2><p>This will permanently delete the selected Baseline Budget details. This action cannot be undone.</p><div className="confirm-actions"><button className="button secondary" disabled={working} onClick={() => setDeleteOpen(false)}>Cancel</button><button className="button danger" disabled={working} onClick={() => void confirmBulkDelete()}>{working ? "Deleting…" : "Yes, Delete"}</button></div></div>
+    </div>}
     {showSaveView && <div className="admin-modal-backdrop"><div className="admin-modal"><h3>Save View</h3><label className="form-field"><span>View Name</span><input autoFocus value={viewName} maxLength={80} onChange={(event) => setViewName(event.target.value)}/></label><div className="admin-modal-actions"><button className="button secondary" onClick={() => setShowSaveView(false)}>Cancel</button><button className="button primary" disabled={!viewName.trim()} onClick={() => void saveView()}>Save</button></div></div></div>}
     {importRows && <ExcelImportDialog title="Import Baseline Budget" rows={importRows} columns={excelColumns} errors={importErrors} replace={replace} setReplace={setReplace} importing={importing} progress={progress} onCancel={() => !importing && setImportRows(null)} onImport={() => void runImport()}/>} 
     {notice && <div className="admin-toast">{notice}</div>}
