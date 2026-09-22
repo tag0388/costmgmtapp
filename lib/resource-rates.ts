@@ -84,6 +84,14 @@ export function bulkUpdateResourceRates(
   });
 }
 
+export async function deleteResourceRates(ids: string[]) {
+  if (!ids.length) return;
+  await supabaseRequest(`enterprise_resource_rates?id=in.(${ids.join(",")})`, {
+    method: "DELETE",
+    headers: { Prefer: "return=minimal" },
+  });
+}
+
 export async function deactivateResourceRates(ids: string[]) {
   if (!ids.length) return;
   await supabaseRequest(`enterprise_resource_rates?id=in.(${ids.join(",")})`, {
@@ -102,14 +110,13 @@ export async function importResourceRates(
   const existing = await listResourceRates(enterpriseId);
   const existingByResourceId = new Map(existing.map((row) => [row.resource_id.toLowerCase(), row]));
 
-  if (replace) {
-    const activeIds = existing.filter((row) => row.is_active).map((row) => row.id);
-    await deactivateResourceRates(activeIds);
+  if (replace && existing.length) {
+    await deleteResourceRates(existing.map((row) => row.id));
   }
 
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index];
-    const match = existingByResourceId.get(row.resource_id.toLowerCase()) ?? null;
+    const match = replace ? null : existingByResourceId.get(row.resource_id.toLowerCase()) ?? null;
     const input: ResourceRateInput = { ...row, is_active: row.is_active ?? true };
     if (match) await updateResourceRate(match.id, input);
     else await createResourceRate(enterpriseId, input);
