@@ -147,6 +147,41 @@ export async function extendCostReportingPeriods(projectId: string, input: CostR
   await insertPeriods(additional, onProgress);
 }
 
+export async function trimCostReportingPeriods(projectId: string, targetCount: number) {
+  const existing = await listCostReportingPeriods(projectId);
+  if (!existing.length) throw new Error("There are no reporting periods to reduce.");
+  if (!Number.isInteger(targetCount) || targetCount <= 0) throw new Error("Number of Periods must be a whole number greater than zero.");
+  if (targetCount >= existing.length) throw new Error(`Number of Periods must be less than the existing ${existing.length} periods to remove future periods.`);
+
+  const current = existing.find((period) => period.status === "Current") ?? null;
+  const minimum = current ? current.period_number + 1 : 1;
+  if (targetCount < minimum) {
+    throw new Error(current
+      ? `Number of Periods cannot be less than P${minimum} while P${current.period_number} is Current.`
+      : "Number of Periods cannot remove existing closed periods.");
+  }
+
+  const removable = existing.filter((period) => period.period_number > targetCount);
+  if (removable.some((period) => period.status !== "Future")) {
+    throw new Error("Only Future reporting periods can be removed.");
+  }
+
+  const ids = removable.map((period) => encodeURIComponent(period.id)).join(",");
+  if (!ids) return;
+
+  // Future timephasing belongs to the periods being removed and should be cleared
+  // before deleting the period rows. Other period children use ON DELETE CASCADE.
+  await supabaseRequest(`cost_code_timephasing?project_id=eq.${encodeURIComponent(projectId)}&cost_period_id=in.(${ids})`, {
+    method: "DELETE",
+    headers: { Prefer: "return=minimal" },
+  });
+
+  await supabaseRequest(`cost_reporting_periods?project_id=eq.${encodeURIComponent(projectId)}&id=in.(${ids})`, {
+    method: "DELETE",
+    headers: { Prefer: "return=minimal" },
+  });
+}
+
 export async function closeCostReportingPeriod(projectId: string, periodId: string) {
   await supabaseRequest("rpc/close_cost_period", {
     method: "POST",
