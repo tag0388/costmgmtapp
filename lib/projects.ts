@@ -178,11 +178,15 @@ export async function deleteProjects(projectIds: string[]) {
 
 export async function importProjects(enterpriseId: string, rows: ProjectImportRow[], replace: boolean, onProgress?: (progress: number) => void) {
   const existing = await listProjectsByEnterprise(enterpriseId);
-  if (replace && existing.length) await deleteProjects(existing.map((project) => project.id));
   const existingByCode = new Map(existing.map((project) => [project.project_code.toLowerCase(), project]));
+  if (replace && existing.length) {
+    const importedCodes = new Set(rows.map((row) => row.project_code.trim().toLowerCase()));
+    const removed = existing.filter((project) => !importedCodes.has(project.project_code.toLowerCase()));
+    if (removed.length) await deleteProjects(removed.map((project) => project.id));
+  }
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index];
-    const match = replace ? null : existingByCode.get(row.project_code.toLowerCase()) ?? null;
+    const match = existingByCode.get(row.project_code.toLowerCase()) ?? null;
     if (match) await updateProject(match.id, row);
     else await createProject({ enterprise_id: enterpriseId, ...row });
     onProgress?.(((index + 1) / Math.max(rows.length, 1)) * 100);
