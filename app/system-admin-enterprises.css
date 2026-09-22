@@ -9,3 +9,58 @@
 .enterprise-admin-page:has(> .enterprise-grid-card){gap:0}.enterprise-admin-page:has(> .enterprise-grid-card)>.enterprise-page-title{display:none}
 
 .project-row-actions{display:flex;height:100%;align-items:center;justify-content:center;gap:4px}.project-edit-icon,.project-delete-icon{display:grid;width:28px;height:28px;place-items:center;border-radius:6px;background:#fff;cursor:pointer}.project-edit-icon{border:1px solid #d8dee8;color:#586579}.project-edit-icon:hover{border-color:#b8c4e7;background:#f4f6ff;color:#3157c8}.project-delete-icon{border:1px solid #f0c8c5;background:#fff8f7;color:#c43d35}.project-delete-icon:hover{border-color:#d98781;background:#fff0ee;color:#a92e27}.project-bulk-dialog{width:min(560px,calc(100vw - 28px));max-height:min(720px,86vh);overflow:auto;text-align:left}.project-bulk-dialog>p{text-align:left}.bulk-project-fields{display:grid;gap:11px;margin-top:15px}.project-bulk-dialog .confirm-actions{justify-content:flex-end}
+
+
+/* Standard compact single-line grid toolbar. */
+.enterprise-toolbar{
+  flex-wrap:nowrap !important;
+  overflow-x:auto;
+  overflow-y:hidden;
+  scrollbar-width:thin;
+}
+.enterprise-toolbar .enterprise-search{
+  width:190px;
+  min-width:160px;
+  max-width:190px;
+  flex:0 0 190px;
+}
+.enterprise-toolbar>button,
+.enterprise-toolbar>.status-filter,
+.enterprise-toolbar>.toolbar-add-group{
+  flex:0 0 auto;
+  white-space:nowrap;
+}
+.enterprise-toolbar button:has(.toolbar-icon-symbol){
+  width:32px;
+  min-width:32px;
+  padding-inline:0;
+  display:inline-grid;
+  place-items:center;
+}
+.toolbar-icon-symbol{
+  display:inline-block;
+  font-size:15px;
+  line-height:1;
+}
+.enterprise-toolbar>.toolbar-add,
+.enterprise-toolbar>.toolbar-add-group{
+  order:100;
+  margin-left:auto;
+}
+.sr-only{
+  position:absolute!important;
+  width:1px!important;
+  height:1px!important;
+  padding:0!important;
+  margin:-1px!important;
+  overflow:hidden!important;
+  clip:rect(0,0,0,0)!important;
+  white-space:nowrap!important;
+  border:0!important;
+}
+@media(max-width:760px){
+  .enterprise-toolbar{flex-wrap:wrap!important;overflow-x:visible}
+  .enterprise-toolbar .enterprise-search{width:100%;max-width:none;flex:1 1 100%}
+  .enterprise-toolbar>.toolbar-add,
+  .enterprise-toolbar>.toolbar-add-group{margin-left:auto}
+}
