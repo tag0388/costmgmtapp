@@ -136,7 +136,6 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
   useEffect(() => { void refresh(); }, [refresh]);
 
   const storedByKey = useMemo(() => new Map(stored.map((row) => [`${row.cost_code_id}|${row.cost_period_id}`, row])), [stored]);
-  const checksByCode = useMemo(() => new Map(checks.map((row) => [row.cost_code_id, row])), [checks]);
   const rows = useMemo<GridRow[]>(() => {
     const output: GridRow[] = [];
     costCodes.forEach((code) => {
@@ -282,6 +281,11 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
       if (!editable) { event.node.setDataValue(event.column, event.oldValue); return; }
       const parsed = Number(event.newValue ?? 0);
       if (!Number.isFinite(parsed)) { event.node.setDataValue(event.column, event.oldValue); return; }
+      const nextPhasedTotal = roundMoney(Object.values(row.periodValues).reduce((sum, currentValue) => sum + Number(currentValue ?? 0), 0));
+      row.phasedTotal = nextPhasedTotal;
+      row.check = roundMoney(row.amountTotal - nextPhasedTotal);
+      event.api.refreshCells({ rowNodes: [event.node], columns: ["phasedTotal", "check"], force: true });
+
       const saved = await setCostCodeTimephasingValue(project.id, row.costCode.id, periodId, timephasingField(row.type), parsed);
       setStored((current) => [...current.filter((item) => !(item.cost_code_id === saved.cost_code_id && item.cost_period_id === saved.cost_period_id)), saved]);
     } catch (requestError) {
@@ -555,19 +559,16 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
     {showSaveView && <div className="admin-modal-backdrop"><div className="admin-modal"><h3>Save View</h3><label className="form-field"><span>View Name</span><input autoFocus value={viewName} maxLength={80} onChange={(event) => setViewName(event.target.value)}/></label><div className="admin-modal-actions"><button className="button secondary" onClick={() => setShowSaveView(false)}>Cancel</button><button className="button primary" disabled={!viewName.trim()} onClick={() => void saveView()}>Save</button></div></div></div>}
     {bulkOpen && <>
       <button className="drawer-scrim" onClick={() => !saving && setBulkOpen(false)} aria-label="Close bulk edit"/>
-      <aside className="enterprise-drawer" role="dialog" aria-modal="true" aria-label="Bulk Edit Timephasing">
+      <aside className="admin-drawer" role="dialog" aria-modal="true" aria-label="Bulk Edit Timephasing">
         <header>
-          <div>
-            <h2>Bulk Edit Timephasing</h2>
-            <p>Update the same Timephasing settings across the selected Cost Codes.</p>
-          </div>
-          <button className="button secondary compact" onClick={() => !saving && setBulkOpen(false)} aria-label="Close">✕</button>
+          <div><span>Cost Management</span><h2>Bulk Edit Timephasing</h2></div>
+          <button onClick={() => !saving && setBulkOpen(false)} disabled={saving} aria-label="Close">×</button>
         </header>
         <div className="drawer-body">
           <div className="form-grid">
             <label className="form-field" style={{ gridColumn: "1 / -1" }}>
-              <span>Selected Rows</span>
-              <input value={`${selectedRowIds.length} selected row${selectedRowIds.length === 1 ? "" : "s"}`} disabled readOnly/>
+              <span>Selection</span>
+              <input value={`${new Set(rows.filter((row) => selectedRowIds.includes(row.id)).map((row) => row.costCode.id)).size} Cost Code${new Set(rows.filter((row) => selectedRowIds.includes(row.id)).map((row) => row.costCode.id)).size === 1 ? "" : "s"} selected`} disabled readOnly/>
             </label>
             <label className="form-field" style={{ gridColumn: "1 / -1" }}>
               <span>Timephasing Type</span>
