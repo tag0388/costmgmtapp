@@ -463,8 +463,8 @@ export default function CostToCompletePage({ projectPublicId }: { projectPublicI
         <label className="enterprise-search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search Cost to Complete…" /></label>
         <button className="button secondary" disabled={!selectedIds.length || working} onClick={openBulkEdit}>Bulk Edit{selectedIds.length ? ` (${selectedIds.length})` : ""}</button>
         <button className="button danger" disabled={!selectedIds.length || working} onClick={() => setDeleteOpen(true)}>Bulk Delete{selectedIds.length ? ` (${selectedIds.length})` : ""}</button>
-        <button className="button secondary" disabled={!hasGroups} onClick={() => gridApi?.expandAll()}>Expand All</button>
-        <button className="button secondary" disabled={!hasGroups} onClick={() => gridApi?.collapseAll()}>Collapse All</button>
+        <button className="button secondary" disabled={!hasGroups} onClick={() => gridApi?.expandAll()}><span className="toolbar-icon-symbol" title="Expand All" aria-hidden="true">⊞</span><span className="sr-only">Expand All</span></button>
+        <button className="button secondary" disabled={!hasGroups} onClick={() => gridApi?.collapseAll()}><span className="toolbar-icon-symbol" title="Collapse All" aria-hidden="true">⊟</span><span className="sr-only">Collapse All</span></button>
         <button className="button secondary" onClick={() => setShowChart((current) => !current)}>{showChart ? "▴ Hide Cost Chart" : "▾ Show Cost Chart"}</button>
         <button className="button secondary" onClick={exportRows}>⇩ Export</button>
         <button className="button secondary" onClick={() => fileRef.current?.click()}>⇧ Import</button>
@@ -472,7 +472,7 @@ export default function CostToCompletePage({ projectPublicId }: { projectPublicI
         <label className="status-filter"><span>View</span><select value={selectedView} onChange={(event) => applyView(event.target.value)}><option value="Default">Default</option>{views.map((view) => <option key={view.id} value={view.id}>{view.view_name}</option>)}</select></label>
         <button className="button secondary" onClick={() => setShowSaveView(true)} disabled={!gridApi}>Save View</button>
         <button className="button secondary" onClick={() => void deleteView()} disabled={selectedView === "Default"}>Delete View</button>
-        <button className="button secondary" disabled={loading || importing} onClick={() => void refresh()}>↻ Refresh</button>
+        <button className="button secondary" disabled={loading || importing} onClick={() => void refresh()}><span className="toolbar-icon-symbol" title="Refresh" aria-hidden="true">↻</span><span className="sr-only">Refresh</span></button>
       </div>
 
       {showChart && <div style={{ borderTop: "1px solid var(--border-color, #e5e7eb)", borderBottom: "1px solid var(--border-color, #e5e7eb)", padding: "14px 16px 10px" }}>

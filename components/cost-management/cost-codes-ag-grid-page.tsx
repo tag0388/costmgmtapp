@@ -571,8 +571,8 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
         <label className="status-filter"><span>Status</span><select value={status} onChange={(event) => setStatus(event.target.value as StatusFilter)}><option value="all">All</option><option value="active">Active</option><option value="inactive">Inactive</option></select></label>
         <button className="button secondary" disabled={!selected.length} onClick={() => setBulkOpen(true)}>Bulk Edit{selected.length ? ` (${selected.length})` : ""}</button>
         <button className="button danger" disabled={!selected.length} onClick={() => setBulkDeleteOpen(true)}>Delete{selected.length ? ` (${selected.length})` : ""}</button>
-        <button className="button secondary" onClick={() => setAllGroupsOpen(true)}>Expand All</button>
-        <button className="button secondary" onClick={() => setAllGroupsOpen(false)}>Collapse All</button>
+        <button className="button secondary" onClick={() => setAllGroupsOpen(true)}><span className="toolbar-icon-symbol" title="Expand All" aria-hidden="true">⊞</span><span className="sr-only">Expand All</span></button>
+        <button className="button secondary" onClick={() => setAllGroupsOpen(false)}><span className="toolbar-icon-symbol" title="Collapse All" aria-hidden="true">⊟</span><span className="sr-only">Collapse All</span></button>
         <button className="button secondary" onClick={exportRows}>⇩ Export</button>
         <button className="button secondary" onClick={() => fileRef.current?.click()}>⇧ Import</button>
         <input ref={fileRef} hidden type="file" accept=".xlsx,.xls" onChange={(event) => void chooseImport(event.target.files?.[0])}/>
@@ -580,7 +580,7 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
         <button className="button secondary" onClick={() => { setViewName(selectedViewName); setShowSaveView(true); }}>Save View</button>
         <button className="button secondary" disabled={selectedView === "Default"} onClick={() => void deleteView()}>Delete View</button>
         <button className="button primary" onClick={() => void recalculate()} disabled={!project || loading || recalculating}>{recalculating ? "Recalculating…" : "↻ Recalculate"}</button>
-        <button className="button secondary" onClick={() => void refresh()} disabled={loading || recalculating}>↻ Refresh</button>
+        <button className="button secondary" onClick={() => void refresh()} disabled={loading || recalculating}><span className="toolbar-icon-symbol" title="Refresh" aria-hidden="true">↻</span><span className="sr-only">Refresh</span></button>
         <button className="button primary toolbar-add" disabled={!project} onClick={() => setEditing("new")}>+ Add</button>
       </div>
             {error && <div className="data-message error"><strong>Unable to load cost codes</strong><span>{error}</span></div>}

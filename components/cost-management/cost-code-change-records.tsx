@@ -449,17 +449,17 @@ export default function CostCodeChangeRecordsWorkspace({
     <div className="enterprise-toolbar" style={{ flexWrap: "wrap", padding: "8px 12px", background: "#fff", borderBottom: "1px solid #e5e7eb" }}>
       <label className="enterprise-search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search change records…"/></label>
       <label className="status-filter"><span>Change Order</span><select value={newOrderId} onChange={(event) => setNewOrderId(event.target.value)}><option value="">Select…</option>{orders.map((order) => <option key={order.id} value={order.id}>{order.change_order_id} - {order.description}</option>)}</select></label>
-      <span style={{ display: "inline-flex", alignItems: "stretch" }}>
+      <span className="toolbar-add-group" style={{ display: "inline-flex", alignItems: "stretch" }}>
         <button className="button primary" style={{ borderTopRightRadius: 0, borderBottomRightRadius: 0 }} disabled={saving || !newOrderId} onClick={() => void addRows()}>+ Add Row{addCount === 1 ? "" : "s"}</button>
         <input aria-label="Number of rows to add" title="Rows to add (1–100)" type="number" min={1} max={100} value={addCount} onChange={(event) => setAddCount(Math.max(1, Math.min(100, Number(event.target.value) || 1)))} style={{ width: 54, border: "1px solid #cbd5e1", borderLeft: 0, borderRadius: "0 6px 6px 0", padding: "0 6px", fontSize: 12, textAlign: "center" }}/>
       </span>
       <button className="button danger" disabled={!selectedCount || saving} onClick={() => void deleteSelected()}>Delete{selectedCount ? ` (${selectedCount})` : ""}</button>
-      <button className="button secondary" onClick={() => setAllGroupsOpen(true)}>Expand All</button>
-      <button className="button secondary" onClick={() => setAllGroupsOpen(false)}>Collapse All</button>
+      <button className="button secondary" onClick={() => setAllGroupsOpen(true)}><span className="toolbar-icon-symbol" title="Expand All" aria-hidden="true">⊞</span><span className="sr-only">Expand All</span></button>
+      <button className="button secondary" onClick={() => setAllGroupsOpen(false)}><span className="toolbar-icon-symbol" title="Collapse All" aria-hidden="true">⊟</span><span className="sr-only">Collapse All</span></button>
       <button className="button secondary" onClick={exportRows}>⇩ Export</button>
       <button className="button secondary" onClick={() => fileRef.current?.click()}>⇧ Import</button>
       <input ref={fileRef} hidden type="file" accept=".xlsx,.xls" onChange={(event) => void chooseImport(event.target.files?.[0])}/>
-      <button className="button secondary" disabled={loading || saving} onClick={() => void refresh()}>↻ Refresh</button>
+      <button className="button secondary" disabled={loading || saving} onClick={() => void refresh()}><span className="toolbar-icon-symbol" title="Refresh" aria-hidden="true">↻</span><span className="sr-only">Refresh</span></button>
     </div>
 
     {error && <div className="data-message error" style={{ margin: "8px 12px 0" }}><strong>Unable to update Change Records</strong><span>{error}</span></div>}
