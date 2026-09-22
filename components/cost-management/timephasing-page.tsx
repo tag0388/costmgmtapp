@@ -95,8 +95,10 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
   const [notice, setNotice] = useState("");
   const [selectedRowIds, setSelectedRowIds] = useState<string[]>([]);
   const [bulkOpen, setBulkOpen] = useState(false);
-  const [bulkField, setBulkField] = useState<"phasingMethod" | "startDate" | "finishDate">("phasingMethod");
-  const [bulkValue, setBulkValue] = useState("");
+  const [bulkRowType, setBulkRowType] = useState<"all" | RowType>("all");
+  const [bulkMethod, setBulkMethod] = useState<"" | TimephasingMethod>("");
+  const [bulkStartDate, setBulkStartDate] = useState("");
+  const [bulkFinishDate, setBulkFinishDate] = useState("");
   const [importRows, setImportRows] = useState<ExcelRow[] | null>(null);
   const [importErrors, setImportErrors] = useState<string[]>([]);
   const [importing, setImporting] = useState(false);
@@ -153,17 +155,8 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
           else values[period.id] = Number(period.status === "Future" ? storedValue?.cost_to_complete ?? 0 : storedValue?.actual_cost ?? 0);
         });
 
-        const summary = checksByCode.get(code.id);
-        const phasedTotal = definition.type === "Baseline Budget"
-          ? Number(summary?.baseline_phased_total ?? 0)
-          : definition.type === "Current Budget"
-            ? Number(summary?.current_budget_phased_total ?? 0)
-            : Number(summary?.eac_phased_total ?? 0);
-        const check = definition.type === "Baseline Budget"
-          ? Number(summary?.baseline_phasing_check ?? definition.total)
-          : definition.type === "Current Budget"
-            ? Number(summary?.current_budget_phasing_check ?? definition.total)
-            : Number(summary?.eac_phasing_check ?? definition.total);
+        const phasedTotal = roundMoney(Object.values(values).reduce((sum, value) => sum + Number(value ?? 0), 0));
+        const check = roundMoney(definition.total - phasedTotal);
         output.push({
           id: `${code.id}:${definition.type}`,
           costCode: code,
@@ -179,7 +172,7 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
       });
     });
     return output;
-  }, [checksByCode, costCodes, periods, storedByKey]);
+  }, [costCodes, periods, storedByKey]);
 
   const lastCalculated = useMemo(() => {
     const latest = checks.reduce<string | null>((value, row) => !value || row.recalculated_at > value ? row.recalculated_at : value, null);
@@ -405,21 +398,34 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
   }
 
   async function applyBulkEdit() {
-    const selectedRows = rows.filter((row) => selectedRowIds.includes(row.id));
-    if (!project || !selectedRows.length) return;
+    let selectedRows = rows.filter((row) => selectedRowIds.includes(row.id));
+    if (bulkRowType !== "all") selectedRows = selectedRows.filter((row) => row.type === bulkRowType);
+    if (!project || !selectedRows.length) {
+      setError("No selected Timephasing rows match the chosen Row Type.");
+      return;
+    }
+    if (!bulkMethod && !bulkStartDate && !bulkFinishDate) {
+      setError("Choose at least one Timephasing setting to update.");
+      return;
+    }
+    if (bulkMethod === "Cost Details" && selectedRows.some((row) => row.type !== "Estimate At Completion")) {
+      setError("Cost Details can only be applied to Estimate At Completion rows.");
+      return;
+    }
+    if (bulkMethod === "Dates" && bulkStartDate && bulkFinishDate && bulkStartDate > bulkFinishDate) {
+      setError("Finish Date cannot be before Start Date.");
+      return;
+    }
+
     setSaving(true);
     setError("");
     try {
-      if (bulkField === "phasingMethod" && bulkValue === "Cost Details" && selectedRows.some((row) => row.type !== "Estimate At Completion")) {
-        throw new Error("Cost Details can only be applied to Estimate At Completion rows.");
-      }
-
       const settings: TimephasingSettingUpdate[] = selectedRows.map((row) => ({
         cost_code_id: row.costCode.id,
         row_type: row.type,
-        phasing_method: bulkField === "phasingMethod" ? bulkValue as TimephasingMethod : row.phasingMethod,
-        start_date: bulkField === "startDate" ? bulkValue || null : row.startDate,
-        finish_date: bulkField === "finishDate" ? bulkValue || null : row.finishDate,
+        phasing_method: bulkMethod || row.phasingMethod,
+        start_date: bulkStartDate || row.startDate,
+        finish_date: bulkFinishDate || row.finishDate,
       }));
 
       const result = await applyCostTimephasingUpdates(project.id, settings, []);
@@ -437,6 +443,9 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
         return next;
       }));
       setBulkOpen(false);
+      setBulkMethod("");
+      setBulkStartDate("");
+      setBulkFinishDate("");
       showNotice(`Updated ${result.settings_updated} Timephasing rows. Recalculate to refresh derived phasing.`);
     } catch (requestError) {
       setError(timephasingErrorMessage(requestError));
@@ -514,7 +523,7 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
     <section className="enterprise-grid-card">
       <div className="enterprise-toolbar" style={{ flexWrap: "wrap" }}>
         <label className="enterprise-search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search Cost Codes or types…"/></label>
-        <button className="button secondary" disabled={!selectedRowIds.length || loading || saving || recalculating} onClick={() => { setBulkField("phasingMethod"); setBulkValue(""); setBulkOpen(true); }}>Bulk Edit{selectedRowIds.length ? ` (${selectedRowIds.length})` : ""}</button>
+        <button className="button secondary" disabled={!selectedRowIds.length || loading || saving || recalculating} onClick={() => { setBulkRowType("all"); setBulkMethod(""); setBulkStartDate(""); setBulkFinishDate(""); setBulkOpen(true); }}>Bulk Edit{selectedRowIds.length ? ` (${selectedRowIds.length})` : ""}</button>
         <button className="button secondary" disabled={loading || saving || recalculating} onClick={exportTimephasing}>⇩ Export</button>
         <button className="button secondary" disabled={loading || saving || recalculating} onClick={() => fileRef.current?.click()}>⇧ Import</button>
         <input ref={fileRef} type="file" accept=".xlsx,.xls" hidden onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void chooseImport(file); }}/>
@@ -557,20 +566,62 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
       </div>
     </section>
     {showSaveView && <div className="admin-modal-backdrop"><div className="admin-modal"><h3>Save View</h3><label className="form-field"><span>View Name</span><input autoFocus value={viewName} maxLength={80} onChange={(event) => setViewName(event.target.value)}/></label><div className="admin-modal-actions"><button className="button secondary" onClick={() => setShowSaveView(false)}>Cancel</button><button className="button primary" disabled={!viewName.trim()} onClick={() => void saveView()}>Save</button></div></div></div>}
-    {bulkOpen && <div className="confirm-layer">
-      <button className="confirm-scrim" onClick={() => !saving && setBulkOpen(false)} aria-label="Close bulk edit"/>
-      <div className="confirm-dialog" role="dialog" aria-modal="true" style={{ width: "min(520px, 92vw)" }}>
-        <h2>Bulk Edit {selectedRowIds.length} Timephasing Row{selectedRowIds.length === 1 ? "" : "s"}</h2>
-        <p>Apply the same Timephasing setting to all selected rows.</p>
-        <div style={{ display: "grid", gap: 10, textAlign: "left" }}>
-          <label><span>Field</span><select value={bulkField} onChange={(event) => { setBulkField(event.target.value as typeof bulkField); setBulkValue(""); }}><option value="phasingMethod">Phasing Method</option><option value="startDate">Start Date</option><option value="finishDate">Finish Date</option></select></label>
-          <label><span>Value</span>{bulkField === "phasingMethod"
-            ? <select value={bulkValue} onChange={(event) => setBulkValue(event.target.value)}><option value="">Select value…</option>{(rows.filter((row) => selectedRowIds.includes(row.id)).every((row) => row.type === "Estimate At Completion") ? METHODS : ["Manual", "Dates"]).map((method) => <option key={method}>{method}</option>)}</select>
-            : <input type="date" value={bulkValue} onChange={(event) => setBulkValue(event.target.value)}/>}</label>
+    {bulkOpen && <>
+      <button className="drawer-scrim" aria-label="Close Timephasing bulk editor" onClick={() => !saving && setBulkOpen(false)} />
+      <aside className="admin-drawer" role="dialog" aria-modal="true">
+        <header>
+          <div><span>Cost Management</span><h2>Bulk Edit Timephasing</h2></div>
+          <button onClick={() => setBulkOpen(false)} disabled={saving}>×</button>
+        </header>
+        <div className="drawer-body">
+          <p style={{ margin: "0 0 16px", color: "#667085", fontSize: 12 }}>
+            {selectedRowIds.length} selected row{selectedRowIds.length === 1 ? "" : "s"}. Choose which row type to update, then change only the settings required.
+          </p>
+          {error && <div className="form-error">{error}</div>}
+          <div className="form-grid">
+            <label className="form-field" style={{ gridColumn: "1 / -1" }}>
+              <span><strong>Apply to Row Type</strong></span>
+              <select value={bulkRowType} onChange={(event) => {
+                const next = event.target.value as "all" | RowType;
+                setBulkRowType(next);
+                if (next !== "Estimate At Completion" && bulkMethod === "Cost Details") setBulkMethod("");
+              }}>
+                <option value="all">All Selected Row Types</option>
+                <option value="Baseline Budget">Baseline Budget</option>
+                <option value="Current Budget">Current Budget</option>
+                <option value="Estimate At Completion">Estimate At Completion</option>
+              </select>
+            </label>
+            <label className="form-field" style={{ gridColumn: "1 / -1" }}>
+              <span><strong>Phasing Method</strong><small>Leave as No Change to keep the current method.</small></span>
+              <select value={bulkMethod} onChange={(event) => setBulkMethod(event.target.value as "" | TimephasingMethod)}>
+                <option value="">No Change</option>
+                <option value="Manual">Manual</option>
+                <option value="Dates">Dates</option>
+                {(bulkRowType === "Estimate At Completion") && <option value="Cost Details">Cost Details</option>}
+              </select>
+            </label>
+            <label className="form-field">
+              <span><strong>Start Date</strong><small>Blank = No Change</small></span>
+              <input type="date" value={bulkStartDate} onChange={(event) => setBulkStartDate(event.target.value)}/>
+            </label>
+            <label className="form-field">
+              <span><strong>Finish Date</strong><small>Blank = No Change</small></span>
+              <input type="date" value={bulkFinishDate} onChange={(event) => setBulkFinishDate(event.target.value)}/>
+            </label>
+          </div>
+          {bulkRowType !== "all" && <div style={{ marginTop: 16, padding: "10px 12px", borderRadius: 7, background: "#f8fafc", color: "#475467", fontSize: 12 }}>
+            This will update {rows.filter((row) => selectedRowIds.includes(row.id) && row.type === bulkRowType).length} selected {bulkRowType} row{rows.filter((row) => selectedRowIds.includes(row.id) && row.type === bulkRowType).length === 1 ? "" : "s"}.
+          </div>}
         </div>
-        <div className="confirm-actions"><button className="button secondary" disabled={saving} onClick={() => setBulkOpen(false)}>Cancel</button><button className="button primary" disabled={saving || !bulkValue} onClick={() => void applyBulkEdit()}>{saving ? "Updating…" : "Apply"}</button></div>
-      </div>
-    </div>}
+        <footer>
+          <button className="button secondary" disabled={saving} onClick={() => setBulkOpen(false)}>Cancel</button>
+          <button className="button primary" disabled={saving || (!bulkMethod && !bulkStartDate && !bulkFinishDate)} onClick={() => void applyBulkEdit()}>
+            {saving ? "Updating…" : "Apply Changes"}
+          </button>
+        </footer>
+      </aside>
+    </>}
     {importRows && <TimephasingImportDialog rows={importRows} columns={excelColumns} errors={importErrors} importing={importing} progress={progress} onCancel={() => !importing && setImportRows(null)} onImport={() => void runImport()}/>}
     {notice && <div className="admin-toast">{notice}</div>}
   </div>;
