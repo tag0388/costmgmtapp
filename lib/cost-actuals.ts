@@ -45,7 +45,7 @@ export type ActualCostImportRow = {
 } & ActualAttributeValues & ActualUserValues;
 
 export type ActualCostEditablePatch = Partial<Pick<ActualCostImportRow,
-  "cost_period_id" | "transaction_date" | "transaction_id" | "description" | "amount" | "transaction_type"
+  "cost_period_id" | "cost_code_id" | "transaction_date" | "transaction_id" | "description" | "amount" | "transaction_type"
 >> & ActualAttributeValues & ActualUserValues;
 
 const ATTRIBUTE_FIELDS = [...ACTUAL_ENTERPRISE_ATTRIBUTE_FIELDS, ...ACTUAL_PROJECT_ATTRIBUTE_FIELDS];
