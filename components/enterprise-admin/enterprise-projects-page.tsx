@@ -62,6 +62,7 @@ export default function EnterpriseProjectsPage({ enterprisePublicId }: { enterpr
   const [status, setStatus] = useState<StatusFilter>("all");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [gridApi, setGridApi] = useState<GridApi<Project> | null>(null);
+  const [hasGroups, setHasGroups] = useState(false);
   const [editingProject, setEditingProject] = useState<Project | "new" | null>(null);
   const [views, setViews] = useState<EnterpriseGridView[]>([]);
   const [selectedView, setSelectedView] = useState("Default");
@@ -173,7 +174,7 @@ export default function EnterpriseProjectsPage({ enterprisePublicId }: { enterpr
   }
 
   const columnDefs = useMemo<Array<ColDef<Project> | ColGroupDef<Project>>>(() => {
-    const enterpriseColumns: ColDef<Project>[] = activeAttributes.map((definition) => {
+    const enterpriseColumns: ColDef<Project>[] = activeAttributes.map((definition, index) => {
       const field = projectAttributeColumn(definition.attribute_number);
       return {
         colId: field,
@@ -206,6 +207,7 @@ export default function EnterpriseProjectsPage({ enterprisePublicId }: { enterpr
         cellEditorParams: {
           values: ["", ...definition.attribute_values.filter((value) => value.is_active).map((value) => `${value.value_id} - ${value.value_name}`)],
         },
+        columnGroupShow: index === 0 ? undefined : "open",
       };
     });
 
@@ -217,7 +219,7 @@ export default function EnterpriseProjectsPage({ enterprisePublicId }: { enterpr
         openByDefault: true,
         children: [
           { field: "project_code", headerName: "Project Code", pinned: "left", minWidth: 135, filter: true, enableRowGroup: true },
-          { field: "name", headerName: "Project Name", pinned: "left", minWidth: 220, filter: true, enableRowGroup: true, editable: true },
+          { field: "name", headerName: "Project Name", pinned: "left", minWidth: 220, filter: true, enableRowGroup: true, editable: true, columnGroupShow: "open" },
           {
             field: "status",
             headerName: "Status",
@@ -227,6 +229,7 @@ export default function EnterpriseProjectsPage({ enterprisePublicId }: { enterpr
             editable: true,
             cellEditor: "agSelectCellEditor",
             cellEditorParams: { values: ["Active", "Inactive"] },
+            columnGroupShow: "open",
           },
         ],
       },
@@ -244,10 +247,10 @@ export default function EnterpriseProjectsPage({ enterprisePublicId }: { enterpr
         openByDefault: false,
         children: [
           { field: "public_id", headerName: "Public ID", minWidth: 175, filter: true },
-          { field: "created_by", headerName: "Created By", minWidth: 150, filter: true },
-          { field: "created_at", headerName: "Created Date", minWidth: 125, filter: "agDateColumnFilter", valueFormatter: (params) => formatDate(params.value) },
-          { field: "modified_by", headerName: "Modified By", minWidth: 150, filter: true },
-          { field: "updated_at", headerName: "Modified Date", minWidth: 125, filter: "agDateColumnFilter", valueFormatter: (params) => formatDate(params.value) },
+          { field: "created_by", headerName: "Created By", minWidth: 150, filter: true, columnGroupShow: "open" },
+          { field: "created_at", headerName: "Created Date", minWidth: 125, filter: "agDateColumnFilter", valueFormatter: (params) => formatDate(params.value), columnGroupShow: "open" },
+          { field: "modified_by", headerName: "Modified By", minWidth: 150, filter: true, columnGroupShow: "open" },
+          { field: "updated_at", headerName: "Modified Date", minWidth: 125, filter: "agDateColumnFilter", valueFormatter: (params) => formatDate(params.value), columnGroupShow: "open" },
         ],
       },
       {
@@ -292,6 +295,7 @@ export default function EnterpriseProjectsPage({ enterprisePublicId }: { enterpr
 
   function onGridReady(event: GridReadyEvent<Project>) {
     setGridApi(event.api);
+    setHasGroups(event.api.getRowGroupColumns().length > 0);
   }
 
   function applyView(viewId: string) {
@@ -300,12 +304,14 @@ export default function EnterpriseProjectsPage({ enterprisePublicId }: { enterpr
     if (viewId === "Default") {
       gridApi.resetColumnState();
       gridApi.setFilterModel(null);
+      setHasGroups(false);
       return;
     }
     const view = views.find((entry) => entry.id === viewId);
     if (!view) return;
     gridApi.applyColumnState({ state: view.grid_state.columnState as ColumnState[], applyOrder: true });
     gridApi.setFilterModel(view.grid_state.filterModel ?? null);
+    setHasGroups(gridApi.getRowGroupColumns().length > 0);
   }
 
   useEffect(() => {
@@ -314,6 +320,7 @@ export default function EnterpriseProjectsPage({ enterprisePublicId }: { enterpr
     if (!view) return;
     gridApi.applyColumnState({ state: view.grid_state.columnState as ColumnState[], applyOrder: true });
     gridApi.setFilterModel(view.grid_state.filterModel ?? null);
+    setHasGroups(gridApi.getRowGroupColumns().length > 0);
   }, [gridApi, selectedView, views, columnDefs]);
 
   async function saveView() {
@@ -344,6 +351,7 @@ export default function EnterpriseProjectsPage({ enterprisePublicId }: { enterpr
       setSelectedView("Default");
       gridApi?.resetColumnState();
       gridApi?.setFilterModel(null);
+      setHasGroups(false);
       showNotice("View deleted.");
     } catch (requestError) {
       setError(enterpriseGridViewErrorMessage(requestError));
@@ -522,6 +530,8 @@ export default function EnterpriseProjectsPage({ enterprisePublicId }: { enterpr
           <button className="button danger" disabled={!selectedIds.length || deleting} onClick={() => setDeleteIds(selectedIds)}>
             Delete{selectedIds.length ? ` (${selectedIds.length})` : ""}
           </button>
+          <button className="button secondary" disabled={!hasGroups} onClick={() => gridApi?.expandAll()}>Expand All</button>
+          <button className="button secondary" disabled={!hasGroups} onClick={() => gridApi?.collapseAll()}>Collapse All</button>
           <button className="button secondary" onClick={exportProjects}>⇩ Export</button>
           <button className="button secondary" onClick={() => fileInput.current?.click()}>⇧ Import</button>
           <input ref={fileInput} type="file" accept=".xlsx,.xls" hidden onChange={(event) => void chooseImportFile(event.target.files?.[0])} />
@@ -549,6 +559,7 @@ export default function EnterpriseProjectsPage({ enterprisePublicId }: { enterpr
                 onGridReady={onGridReady}
                 onSelectionChanged={(event: SelectionChangedEvent<Project>) => setSelectedIds(event.api.getSelectedRows().map((row) => row.id))}
                 onCellValueChanged={(event) => void onCellChanged(event)}
+                onColumnRowGroupChanged={(event) => setHasGroups(event.api.getRowGroupColumns().length > 0)}
                 singleClickEdit
                 stopEditingWhenCellsLoseFocus
                 undoRedoCellEditing
