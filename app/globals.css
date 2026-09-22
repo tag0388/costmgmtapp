@@ -15,3 +15,16 @@ button, a, select { -webkit-tap-highlight-color:transparent; }
 @media(max-width:760px){.app-shell{min-height:0}.global-sidebar,.global-sidebar.collapsed{position:fixed;inset:0 auto 0 0;width:224px;transform:translateX(-100%)}.global-sidebar.mobile-open{transform:translateX(0)}.global-sidebar .brand-copy,.global-sidebar .nav-copy,.global-sidebar .nav-label,.global-sidebar .permission-dot,.global-sidebar .user-copy,.global-sidebar .more-button{display:flex}.global-sidebar .global-collapse{display:none}.mobile-scrim{position:fixed;z-index:25;inset:0;display:block;border:0;background:#11182780}.mobile-menu{display:grid}.top-header{padding:0 10px}.context-selectors{gap:6px}.context-selectors label:first-child,.selector-divider{display:none}.context-selectors select,.context-selectors label+span+label select{min-width:0;max-width:180px}.focus-button span{display:none}.context-sidebar{width:52px;flex-basis:52px}.context-sidebar .context-title>div:nth-child(2),.context-sidebar .context-link span,.context-sidebar .context-label,.context-sidebar .context-hint{display:none}.context-sidebar .context-title{justify-content:center;padding:10px}.context-sidebar .context-collapse{display:none}.context-sidebar .context-link{justify-content:center;padding:0}.workspace{padding:15px}.workspace-heading{align-items:flex-start}.workspace-heading p,.heading-actions .secondary{display:none}.workspace-heading h1{font-size:19px}.metric-grid{grid-template-columns:1fr 1fr}.dashboard-grid{grid-template-columns:1fr}.chart-placeholder{height:230px}.chart-bars{height:165px}}
 @media(max-width:460px){.context-sidebar{display:none}.metric-grid{grid-template-columns:1fr}.heading-actions{display:none}.workspace{padding:12px}.context-selectors select{max-width:155px}}
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
+
+/* Make the spreadsheet fill handle easier to grab, including dropdown cells. */
+.ag-fill-handle {
+  width: 10px !important;
+  height: 10px !important;
+  right: -5px !important;
+  bottom: -5px !important;
+  z-index: 8 !important;
+  border: 2px solid #fff !important;
+  border-radius: 2px !important;
+  box-shadow: 0 0 0 1px #3157c8, 0 1px 3px rgba(23,32,51,.28) !important;
+  cursor: crosshair !important;
+}
