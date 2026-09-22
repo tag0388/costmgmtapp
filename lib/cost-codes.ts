@@ -153,7 +153,33 @@ export function bulkUpdateCostCodeAttributes(ids: string[], patch: CostCodeAttri
 export async function importCostCodes(projectId: string, rows: Omit<CostCodeInput, "project_id">[], replace: boolean, onProgress?: (progress: number) => void) {
   const existing = await listCostCodes(projectId);
   const byCode = new Map(existing.map((row) => [row.cost_code_id.toLowerCase(), row]));
-  if (replace && existing.length) await deleteCostCodes(existing.map((row) => row.id));
+
+  if (replace && existing.length) {
+    const ids = existing.map((row) => row.id);
+    const idFilter = ids.map(encodeURIComponent).join(",");
+    const dependencyPaths = [
+      "baseline_details",
+      "actual_cost_transactions",
+      "change_records",
+      "cost_to_complete_details",
+      "subcontract_details",
+    ];
+    for (const table of dependencyPaths) {
+      const found = await supabaseRequest<Array<{ id: string }>>(
+        `${table}?project_id=eq.${encodeURIComponent(projectId)}&cost_code_id=in.(${idFilter})&select=id&limit=1`,
+      );
+      if (found.length) {
+        throw new Error("Delete Existing Data cannot replace the Cost Codes because one or more existing Cost Codes are still referenced by Budget, Actual Cost, Change, Cost to Complete or Subcontract data. Remove or reassign that data first.");
+      }
+    }
+
+    await supabaseRequest(`cost_code_timephasing?project_id=eq.${encodeURIComponent(projectId)}&cost_code_id=in.(${idFilter})`, {
+      method: "DELETE",
+      headers: { Prefer: "return=minimal" },
+    });
+    await deleteCostCodes(ids);
+  }
+
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index];
     const match = replace ? null : byCode.get(row.cost_code_id.toLowerCase());
