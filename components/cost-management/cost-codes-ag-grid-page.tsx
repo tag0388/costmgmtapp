@@ -639,8 +639,7 @@ export default function CostCodesAgGridPage({ projectPublicId }: { projectPublic
         </div>
       </div>
     </div>}
-    {editing === "new" && <CreateCostCodeDrawer projectId={project!.id} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); showNotice("Cost code saved."); void refresh(); }}/>}
-    {editing && editing !== "new" && <CostCodeForm projectId={project!.id} value={editing} enterpriseAttributes={activeEnterprise} projectAttributes={activeProject} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); showNotice("Cost code saved."); void refresh(); }}/>} 
+    {editing && <CostCodeForm projectId={project!.id} value={editing === "new" ? null : editing} enterpriseAttributes={activeEnterprise} projectAttributes={activeProject} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); showNotice("Cost code saved."); void refresh(); }}/>} 
     {bulkOpen && project && <BulkAttributeDialog selected={selected} enterpriseAttributes={activeEnterprise} projectAttributes={activeProject} onClose={() => setBulkOpen(false)} onSaved={() => { setBulkOpen(false); showNotice("Selected cost codes updated."); void refresh(); }}/>} 
     {importRows && <ExcelImportDialog title="Import Cost Codes" rows={importRows} columns={excelColumns} errors={importErrors} replace={replace} setReplace={setReplace} importing={importing} progress={progress} onCancel={() => !importing && setImportRows(null)} onImport={() => void runImport()}/>} 
     {showSaveView && <SaveViewDialog initialName={viewName} onClose={() => setShowSaveView(false)} onSave={(name) => { setViewName(name); window.setTimeout(() => void saveView(), 0); }}/>} 
@@ -723,13 +722,13 @@ function CostCodeForm({ projectId, value, enterpriseAttributes, projectAttribute
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
-  async function save(event: React.FormEvent) {
-    event.preventDefault();
+  async function save() {
+    if (!form.cost_code_id.trim() || !form.name.trim()) return setError("Cost Code ID and Cost Code Name are required.");
     setSaving(true);
     setError("");
     try {
-      if (value) await updateCostCode(value.id, form);
-      else await createCostCode({ project_id: projectId, ...form });
+      if (value) await updateCostCode(value.id, { ...form, cost_code_id: value.cost_code_id });
+      else await createCostCode({ project_id: projectId, ...form, cost_code_id: form.cost_code_id.trim(), name: form.name.trim() });
       onSaved();
     } catch (requestError) {
       setError(costCodeErrorMessage(requestError));
@@ -738,60 +737,32 @@ function CostCodeForm({ projectId, value, enterpriseAttributes, projectAttribute
     }
   }
 
-  const sectionStyle = { background: "#fff", border: "1px solid #dfe4ea", borderRadius: 8, padding: 16 } as const;
-  const headingStyle = { margin: "0 0 12px", fontSize: 13, fontWeight: 700, color: "#334155" } as const;
-
-  return <div style={{ position: "fixed", inset: 0, zIndex: 12000, background: "#f5f7fa", display: "flex", flexDirection: "column" }}>
-    <header style={{ minHeight: 58, background: "#fff", borderBottom: "1px solid #dfe4ea", display: "flex", alignItems: "center", gap: 12, padding: "7px 14px" }}>
-      <button type="button" className="button secondary compact" onClick={onClose}>← Back</button>
-      <div>
-        <div style={{ fontSize: 16, fontWeight: 700 }}>{value ? `Edit Cost Code · ${value.cost_code_id}` : "Add Cost Code"}</div>
-        <div style={{ fontSize: 11, color: "#64748b" }}>Maintain Cost Code setup and attributes. Timephasing setup is managed separately.</div>
-      </div>
-      <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-        <button type="button" className="button secondary" onClick={onClose}>Cancel</button>
-        <button type="submit" form="cost-code-form" className="button primary" disabled={saving}>{saving ? "Saving…" : "Save"}</button>
-      </div>
-    </header>
-    <form id="cost-code-form" onSubmit={save} style={{ flex: 1, overflow: "auto", padding: 16 }}>
-      {error && <div className="data-message error" style={{ marginBottom: 12 }}><span>{error}</span></div>}
-      <div style={{ maxWidth: 1120, margin: "0 auto", display: "grid", gap: 14 }}>
-        <section style={sectionStyle}>
-          <h3 style={headingStyle}>General</h3>
-          <div className="form-grid">
-            <label><span>Cost Code ID</span><input value={form.cost_code_id} maxLength={30} required onChange={(e) => setForm({ ...form, cost_code_id: e.target.value })}/></label>
-            <label><span>Cost Code Name</span><input value={form.name} maxLength={100} required onChange={(e) => setForm({ ...form, name: e.target.value })}/></label>
-            <label className="form-span-2"><span>Description</span><input value={form.description ?? ""} maxLength={255} onChange={(e) => setForm({ ...form, description: e.target.value || null })}/></label>
-            <label><span>Status</span><select value={form.is_active ? "Active" : "Inactive"} onChange={(e) => setForm({ ...form, is_active: e.target.value === "Active" })}><option>Active</option><option>Inactive</option></select></label>
-          </div>
-        </section>
-
-        <section style={sectionStyle}>
-          <h3 style={headingStyle}>EAC Settings</h3>
-          <div className="form-grid">
-            <label><span>EAC Method</span><select value={form.eac_method} onChange={(e) => setForm({ ...form, eac_method: e.target.value as EacMethod })}>{EAC_METHODS.map((item) => <option key={item}>{item}</option>)}</select></label>
-            {form.eac_method === "Manual" && <label><span>Manual Estimate at Completion</span><input type="number" step="any" value={form.manual_eac ?? ""} onChange={(e) => setForm({ ...form, manual_eac: e.target.value === "" ? null : Number(e.target.value) })}/></label>}
-          </div>
-        </section>
-
-        {enterpriseAttributes.length > 0 && <section style={sectionStyle}>
-          <h3 style={headingStyle}>Enterprise Attributes</h3>
-          <div className="form-grid">{enterpriseAttributes.map((definition) => {
+  return <>
+    <button className="drawer-scrim" aria-label="Close cost code editor" onClick={() => !saving && onClose()} />
+    <aside className="admin-drawer" role="dialog" aria-modal="true">
+      <header><div><span>Cost Management</span><h2>{value ? "Edit Cost Code" : "Add Cost Code"}</h2></div><button onClick={onClose} disabled={saving}>×</button></header>
+      <div className="drawer-body">
+        {error && <div className="form-error">{error}</div>}
+        <div className="form-grid">
+          <label className="form-field"><span><strong>Cost Code ID *</strong></span><input autoFocus={!value} value={form.cost_code_id} maxLength={30} readOnly={Boolean(value)} disabled={Boolean(value)} onChange={(e) => setForm({ ...form, cost_code_id: e.target.value })}/></label>
+          <label className="form-field"><span><strong>Cost Code Name *</strong></span><input autoFocus={Boolean(value)} value={form.name} maxLength={100} onChange={(e) => setForm({ ...form, name: e.target.value })}/></label>
+          <label className="form-field"><span><strong>Description</strong></span><input value={form.description ?? ""} maxLength={255} onChange={(e) => setForm({ ...form, description: e.target.value || null })}/></label>
+          <label className="form-field"><span><strong>Status</strong></span><select value={form.is_active ? "Active" : "Inactive"} onChange={(e) => setForm({ ...form, is_active: e.target.value === "Active" })}><option>Active</option><option>Inactive</option></select></label>
+          <label className="form-field"><span><strong>EAC Method</strong></span><select value={form.eac_method} onChange={(e) => setForm({ ...form, eac_method: e.target.value as EacMethod })}>{EAC_METHODS.map((item) => <option key={item}>{item}</option>)}</select></label>
+          {form.eac_method === "Manual" && <label className="form-field"><span><strong>Manual Estimate at Completion</strong></span><input type="number" step="any" value={form.manual_eac ?? ""} onChange={(e) => setForm({ ...form, manual_eac: e.target.value === "" ? null : Number(e.target.value) })}/></label>}
+          {enterpriseAttributes.map((definition) => {
             const field = enterpriseField(definition.attribute_number);
-            return <label key={field}><span>{definition.name}</span><select value={String(form[field] ?? "")} onChange={(e) => setForm({ ...form, [field]: e.target.value || null })}><option value="">—</option>{definition.attribute_values.filter((attributeValue) => attributeValue.is_active || attributeValue.value_id === form[field]).map((attributeValue) => <option key={attributeValue.value_id} value={attributeValue.value_id}>{attributeValue.value_id} - {attributeValue.value_name}</option>)}</select></label>;
-          })}</div>
-        </section>}
-
-        {projectAttributes.length > 0 && <section style={sectionStyle}>
-          <h3 style={headingStyle}>Project Attributes</h3>
-          <div className="form-grid">{projectAttributes.map((definition) => {
+            return <label className="form-field" key={field}><span><strong>{definition.name}</strong></span><select value={String(form[field] ?? "")} onChange={(e) => setForm({ ...form, [field]: e.target.value || null })}><option value="">None</option>{definition.attribute_values.filter((attributeValue) => attributeValue.is_active || attributeValue.value_id === form[field]).map((attributeValue) => <option key={attributeValue.value_id} value={attributeValue.value_id}>{attributeValue.value_id} - {attributeValue.value_name}</option>)}</select></label>;
+          })}
+          {projectAttributes.map((definition) => {
             const field = projectField(definition.attribute_number);
-            return <label key={field}><span>{definition.name}</span><select value={String(form[field] ?? "")} onChange={(e) => setForm({ ...form, [field]: e.target.value || null })}><option value="">—</option>{definition.attribute_values.filter((attributeValue) => attributeValue.is_active || attributeValue.value_id === form[field]).map((attributeValue) => <option key={attributeValue.value_id} value={attributeValue.value_id}>{attributeValue.value_id} - {attributeValue.value_name}</option>)}</select></label>;
-          })}</div>
-        </section>}
+            return <label className="form-field" key={field}><span><strong>{definition.name}</strong></span><select value={String(form[field] ?? "")} onChange={(e) => setForm({ ...form, [field]: e.target.value || null })}><option value="">None</option>{definition.attribute_values.filter((attributeValue) => attributeValue.is_active || attributeValue.value_id === form[field]).map((attributeValue) => <option key={attributeValue.value_id} value={attributeValue.value_id}>{attributeValue.value_id} - {attributeValue.value_name}</option>)}</select></label>;
+          })}
+        </div>
       </div>
-    </form>
-  </div>;
+      <footer><button className="button secondary" disabled={saving} onClick={onClose}>Cancel</button><button className="button primary" disabled={saving || !form.cost_code_id.trim() || !form.name.trim()} onClick={() => void save()}>{saving ? "Saving…" : value ? "Save Changes" : "Add Cost Code"}</button></footer>
+    </aside>
+  </>;
 }
 
 function BulkAttributeDialog({ selected, enterpriseAttributes, projectAttributes, onClose, onSaved }: { selected: string[]; enterpriseAttributes: EnterpriseAttributeDefinition[]; projectAttributes: ProjectAttributeDefinition[]; onClose: () => void; onSaved: () => void }) {
