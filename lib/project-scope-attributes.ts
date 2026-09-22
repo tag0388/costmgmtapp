@@ -46,11 +46,13 @@ export async function listProjectAttributes(projectId: string, category: Project
 async function upsertValues(definitionId: string, existingValues: ProjectAttributeValue[], values: ProjectAttributeValueInput[], replace: boolean, onProgress?: (progress: number) => void) {
   const cleanValues = values.map((value) => ({ value_id: value.value_id.trim(), value_name: value.value_name.trim() }));
   if (replace && existingValues.length) {
-    await supabaseRequest(`attribute_values?attribute_definition_id=eq.${encodeURIComponent(definitionId)}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
+    const importedIds = new Set(cleanValues.map((value) => value.value_id.toLowerCase()));
+    const removed = existingValues.filter((entry) => !importedIds.has(entry.value_id.toLowerCase()));
+    if (removed.length) await supabaseRequest(`attribute_values?id=in.(${removed.map((entry) => entry.id).join(",")})`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
   }
   for (let index = 0; index < cleanValues.length; index += 1) {
     const value = cleanValues[index];
-    const match = replace ? null : existingValues.find((entry) => entry.value_id.toLowerCase() === value.value_id.toLowerCase());
+    const match = existingValues.find((entry) => entry.value_id.toLowerCase() === value.value_id.toLowerCase());
     if (match) await supabaseRequest(`attribute_values?id=eq.${encodeURIComponent(match.id)}`, { method: "PATCH", body: JSON.stringify({ value_name: value.value_name, sort_order: index + 1, is_active: true, updated_at: new Date().toISOString() }) });
     else await supabaseRequest("attribute_values", { method: "POST", body: JSON.stringify({ attribute_definition_id: definitionId, value_id: value.value_id, value_name: value.value_name, sort_order: index + 1, is_active: true }) });
     onProgress?.(((index + 1) / Math.max(cleanValues.length, 1)) * 100);
