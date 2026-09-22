@@ -157,26 +157,20 @@ export async function importCostCodes(projectId: string, rows: Omit<CostCodeInpu
   if (replace && existing.length) {
     const ids = existing.map((row) => row.id);
     const idFilter = ids.map(encodeURIComponent).join(",");
-    const dependencyPaths = [
+    for (const table of [
       "baseline_details",
       "actual_cost_transactions",
       "change_records",
       "cost_to_complete_details",
+      "cost_code_timephasing",
       "subcontract_details",
-    ];
-    for (const table of dependencyPaths) {
-      const found = await supabaseRequest<Array<{ id: string }>>(
-        `${table}?project_id=eq.${encodeURIComponent(projectId)}&cost_code_id=in.(${idFilter})&select=id&limit=1`,
-      );
-      if (found.length) {
-        throw new Error("Delete Existing Data cannot replace the Cost Codes because one or more existing Cost Codes are still referenced by Budget, Actual Cost, Change, Cost to Complete or Subcontract data. Remove or reassign that data first.");
-      }
+    ]) {
+      await supabaseRequest(`${table}?project_id=eq.${encodeURIComponent(projectId)}&cost_code_id=in.(${idFilter})`, {
+        method: "PATCH",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify({ cost_code_id: null }),
+      });
     }
-
-    await supabaseRequest(`cost_code_timephasing?project_id=eq.${encodeURIComponent(projectId)}&cost_code_id=in.(${idFilter})`, {
-      method: "DELETE",
-      headers: { Prefer: "return=minimal" },
-    });
     await deleteCostCodes(ids);
   }
 
