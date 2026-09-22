@@ -153,10 +153,10 @@ export function bulkUpdateCostCodeAttributes(ids: string[], patch: CostCodeAttri
 export async function importCostCodes(projectId: string, rows: Omit<CostCodeInput, "project_id">[], replace: boolean, onProgress?: (progress: number) => void) {
   const existing = await listCostCodes(projectId);
   const byCode = new Map(existing.map((row) => [row.cost_code_id.toLowerCase(), row]));
-  if (replace && existing.length) await setCostCodesActive(existing.map((row) => row.id), false);
+  if (replace && existing.length) await deleteCostCodes(existing.map((row) => row.id));
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index];
-    const match = byCode.get(row.cost_code_id.toLowerCase());
+    const match = replace ? null : byCode.get(row.cost_code_id.toLowerCase());
     if (match) await updateCostCode(match.id, row);
     else await createCostCode({ project_id: projectId, ...row });
     onProgress?.(((index + 1) / Math.max(rows.length, 1)) * 100);
