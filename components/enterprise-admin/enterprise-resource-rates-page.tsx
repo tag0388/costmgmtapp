@@ -26,7 +26,6 @@ import {
 } from "@/lib/resource-rates";
 
 type StatusFilter = "all" | "active" | "inactive";
-type CategoryFilter = "all" | ResourceCategory;
 type BulkChoice = "__NO_CHANGE__" | "__CLEAR__" | string;
 
 const GRID_KEY = "enterprise-resource-rates";
@@ -48,11 +47,9 @@ export default function EnterpriseResourceRatesPage({ enterprisePublicId }: { en
   const [notice, setNotice] = useState("");
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<StatusFilter>("active");
-  const [category, setCategory] = useState<CategoryFilter>("all");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [editing, setEditing] = useState<ResourceRate | "new" | null>(null);
   const [gridApi, setGridApi] = useState<GridApi<ResourceRate> | null>(null);
-  const [hasGroups, setHasGroups] = useState(false);
   const [views, setViews] = useState<EnterpriseGridView[]>([]);
   const [selectedView, setSelectedView] = useState("Default");
   const [showSaveView, setShowSaveView] = useState(false);
@@ -101,11 +98,9 @@ export default function EnterpriseResourceRatesPage({ enterprisePublicId }: { en
 
   useEffect(() => { void refresh(); }, [refresh]);
 
-  const rows = useMemo(() => resourceRates.filter((row) => {
-    const matchesStatus = status === "all" || (status === "active" ? row.is_active : !row.is_active);
-    const matchesCategory = category === "all" || row.category === category;
-    return matchesStatus && matchesCategory;
-  }), [category, resourceRates, status]);
+  const rows = useMemo(() => resourceRates.filter((row) =>
+    status === "all" || (status === "active" ? row.is_active : !row.is_active)
+  ), [resourceRates, status]);
 
   function showNotice(message: string) {
     setNotice(message);
@@ -250,7 +245,20 @@ export default function EnterpriseResourceRatesPage({ enterprisePublicId }: { en
 
   function onGridReady(event: GridReadyEvent<ResourceRate>) {
     setGridApi(event.api);
-    setHasGroups(event.api.getRowGroupColumns().length > 0);
+  }
+
+  function setAllGroups(open: boolean) {
+    if (!gridApi) return;
+    gridApi.setColumnGroupState([
+      { groupId: "resource-general", open },
+      { groupId: "resource-rate", open },
+      { groupId: "resource-additional", open },
+      { groupId: "resource-status", open },
+    ]);
+    if (gridApi.getRowGroupColumns().length) {
+      if (open) gridApi.expandAll();
+      else gridApi.collapseAll();
+    }
   }
 
   function applyView(viewId: string) {
@@ -258,15 +266,15 @@ export default function EnterpriseResourceRatesPage({ enterprisePublicId }: { en
     if (!gridApi) return;
     if (viewId === "Default") {
       gridApi.resetColumnState();
+      gridApi.resetColumnGroupState();
       gridApi.setFilterModel(null);
-      setHasGroups(false);
       return;
     }
     const view = views.find((entry) => entry.id === viewId);
     if (!view) return;
     gridApi.applyColumnState({ state: view.grid_state.columnState as ColumnState[], applyOrder: true });
+    if (view.grid_state.columnGroupState) gridApi.setColumnGroupState(view.grid_state.columnGroupState);
     gridApi.setFilterModel(view.grid_state.filterModel ?? null);
-    setHasGroups(gridApi.getRowGroupColumns().length > 0);
   }
 
   useEffect(() => {
@@ -274,8 +282,8 @@ export default function EnterpriseResourceRatesPage({ enterprisePublicId }: { en
     const view = views.find((entry) => entry.id === selectedView);
     if (!view) return;
     gridApi.applyColumnState({ state: view.grid_state.columnState as ColumnState[], applyOrder: true });
+    if (view.grid_state.columnGroupState) gridApi.setColumnGroupState(view.grid_state.columnGroupState);
     gridApi.setFilterModel(view.grid_state.filterModel ?? null);
-    setHasGroups(gridApi.getRowGroupColumns().length > 0);
   }, [gridApi, selectedView, views, columnDefs]);
 
   async function saveView() {
@@ -283,6 +291,7 @@ export default function EnterpriseResourceRatesPage({ enterprisePublicId }: { en
     try {
       await saveEnterpriseGridView(enterprise.id, GRID_KEY, viewName, {
         columnState: gridApi.getColumnState(),
+        columnGroupState: gridApi.getColumnGroupState(),
         filterModel: gridApi.getFilterModel(),
       });
       const savedViews = await listEnterpriseGridViews(enterprise.id, GRID_KEY);
@@ -305,8 +314,8 @@ export default function EnterpriseResourceRatesPage({ enterprisePublicId }: { en
       setViews(savedViews);
       setSelectedView("Default");
       gridApi?.resetColumnState();
+      gridApi?.resetColumnGroupState();
       gridApi?.setFilterModel(null);
-      setHasGroups(false);
       showNotice("View deleted.");
     } catch (requestError) {
       setError(enterpriseGridViewErrorMessage(requestError));
@@ -458,12 +467,11 @@ export default function EnterpriseResourceRatesPage({ enterprisePublicId }: { en
     <section className="enterprise-grid-card">
       <div className="enterprise-toolbar" style={{ flexWrap: "wrap" }}>
         <label className="enterprise-search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search resources…" aria-label="Search resource rates"/></label>
-        <label className="status-filter"><span>Category</span><select value={category} onChange={(event) => setCategory(event.target.value as CategoryFilter)}><option value="all">All</option>{RESOURCE_CATEGORIES.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
         <label className="status-filter"><span>Status</span><select value={status} onChange={(event) => setStatus(event.target.value as StatusFilter)}><option value="all">All</option><option value="active">Active</option><option value="inactive">Inactive</option></select></label>
         <button className="button secondary" disabled={!selectedIds.length || saving} onClick={openBulkEdit}>Bulk Edit{selectedIds.length ? ` (${selectedIds.length})` : ""}</button>
         <button className="button danger" disabled={!selectedIds.length || deleting} onClick={() => setDeleteIds(selectedIds)}>Delete{selectedIds.length ? ` (${selectedIds.length})` : ""}</button>
-        <button className="button secondary" disabled={!hasGroups} onClick={() => gridApi?.expandAll()}>Expand All</button>
-        <button className="button secondary" disabled={!hasGroups} onClick={() => gridApi?.collapseAll()}>Collapse All</button>
+        <button className="button secondary" disabled={!gridApi} onClick={() => setAllGroups(true)}>Expand All</button>
+        <button className="button secondary" disabled={!gridApi} onClick={() => setAllGroups(false)}>Collapse All</button>
         <button className="button secondary" onClick={exportResources}>⇩ Export</button>
         <button className="button secondary" onClick={() => fileInput.current?.click()}>⇧ Import</button>
         <input ref={fileInput} type="file" accept=".xlsx,.xls" hidden onChange={(event) => void chooseImportFile(event.target.files?.[0])}/>
@@ -490,7 +498,6 @@ export default function EnterpriseResourceRatesPage({ enterprisePublicId }: { en
             onGridReady={onGridReady}
             onSelectionChanged={(event: SelectionChangedEvent<ResourceRate>) => setSelectedIds(event.api.getSelectedRows().map((row) => row.id))}
             onCellValueChanged={(event) => void onCellChanged(event)}
-            onColumnRowGroupChanged={(event) => setHasGroups(event.api.getRowGroupColumns().length > 0)}
             singleClickEdit
             stopEditingWhenCellsLoseFocus
             undoRedoCellEditing
