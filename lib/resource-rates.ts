@@ -61,6 +61,29 @@ export function updateResourceRate(id: string, input: ResourceRateInput) {
   }).then((rows) => rows[0]);
 }
 
+export function updateResourceRateFields(
+  id: string,
+  changes: Partial<Omit<ResourceRateInput, "resource_id">>,
+) {
+  return supabaseRequest<ResourceRate[]>(`enterprise_resource_rates?id=eq.${encodeURIComponent(id)}&select=${selectColumns}`, {
+    method: "PATCH",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify({ ...changes, updated_at: new Date().toISOString() }),
+  }).then((rows) => rows[0]);
+}
+
+export function bulkUpdateResourceRates(
+  ids: string[],
+  changes: Partial<Omit<ResourceRateInput, "resource_id" | "resource_name">>,
+) {
+  if (!ids.length || !Object.keys(changes).length) return Promise.resolve([] as ResourceRate[]);
+  return supabaseRequest<ResourceRate[]>(`enterprise_resource_rates?id=in.(${ids.join(",")})&select=${selectColumns}`, {
+    method: "PATCH",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify({ ...changes, updated_at: new Date().toISOString() }),
+  });
+}
+
 export async function deactivateResourceRates(ids: string[]) {
   if (!ids.length) return;
   await supabaseRequest(`enterprise_resource_rates?id=in.(${ids.join(",")})`, {
