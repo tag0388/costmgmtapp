@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ExcelRow } from "@/lib/excel";
 
 export default function ExcelImportDialog({
@@ -32,10 +32,15 @@ export default function ExcelImportDialog({
   replaceLabel?: string;
   replaceDescription?: string;
 }) {
+  const [confirmReplace, setConfirmReplace] = useState(false);
   const previewRows = rows.slice(0, 100);
   const topScrollRef = useRef<HTMLDivElement>(null);
   const tableScrollRef = useRef<HTMLDivElement>(null);
   const previewWidth = useMemo(() => Math.max(900, columns.length * 150), [columns.length]);
+
+  useEffect(() => {
+    if (!replace) setConfirmReplace(false);
+  }, [replace]);
 
   useEffect(() => {
     const top = topScrollRef.current;
@@ -61,6 +66,20 @@ export default function ExcelImportDialog({
       table.removeEventListener("scroll", syncTable);
     };
   }, [previewWidth]);
+
+  if (confirmReplace) return <div className="confirm-layer">
+    <button className="confirm-scrim" onClick={() => !importing && setConfirmReplace(false)} aria-label="Close replacement confirmation" disabled={importing}/>
+    <div className="confirm-dialog" role="alertdialog" aria-modal="true">
+      <div className="confirm-icon">!</div>
+      <h2>Replace Existing Data?</h2>
+      <p>Are you sure? This will permanently delete the existing data for this screen and replace it with the rows from the Excel file.</p>
+      <p><strong>This action cannot be undone.</strong></p>
+      <div className="confirm-actions">
+        <button className="button secondary" onClick={() => setConfirmReplace(false)} disabled={importing}>Cancel</button>
+        <button className="button danger" onClick={onImport} disabled={importing}>{importing ? "Importing…" : "Yes, Delete and Replace"}</button>
+      </div>
+    </div>
+  </div>;
 
   return <div className="confirm-layer">
     <button className="confirm-scrim" onClick={onCancel} aria-label="Close Excel import" disabled={importing}/>
@@ -103,7 +122,7 @@ export default function ExcelImportDialog({
 
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 18 }}>
         <button className="button secondary" onClick={onCancel} disabled={importing}>Cancel</button>
-        <button className="button primary" onClick={onImport} disabled={importing || rows.length === 0 || errors.length > 0}>{importing ? "Importing…" : "Import"}</button>
+        <button className="button primary" onClick={() => replace && showReplace ? setConfirmReplace(true) : onImport()} disabled={importing || rows.length === 0 || errors.length > 0}>{importing ? "Importing…" : "Import"}</button>
       </div>
     </div>
   </div>;
