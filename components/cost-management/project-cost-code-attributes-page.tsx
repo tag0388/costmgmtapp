@@ -163,6 +163,6 @@ function CostCodeAttributeDrawer({ project, category, recordLabel, slot, definit
       </div>
       <footer><button className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={saving} onClick={() => void save()}>{saving ? "Saving…" : "Save Attribute"}</button></footer>
     </aside>
-    {importRows && <ExcelImportDialog title={`Import P${String(slot).padStart(2, "0")} Values`} rows={importRows} columns={VALUE_COLUMNS} errors={importErrors} replace={replace} setReplace={setReplace} importing={importing} progress={progress} onCancel={() => !importing && setImportRows(null)} onImport={() => void runImport()}/>} 
+    {importRows && <ExcelImportDialog title={`Import P${String(slot).padStart(2, "0")} Values`} rows={importRows} columns={VALUE_COLUMNS} errors={importErrors} replace={replace} setReplace={setReplace} importing={importing} progress={progress} replaceLabel="Replace Active Values" replaceDescription="Values not included in the Excel file will become inactive so historical records can still display their original ID and description." onCancel={() => !importing && setImportRows(null)} onImport={() => void runImport()}/>} 
   </>;
 }
