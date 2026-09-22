@@ -18,6 +18,7 @@ export type BaselineDetail = {
   qty: number | null;
   rate: number | null;
   total: number | null;
+  row_order: number | null;
   created_at: string;
 } & BaselineAttributeValues;
 
@@ -25,7 +26,7 @@ export type BaselineDetail = {
 export type BaselineDetailInput = Omit<BaselineDetail, "id" | "created_at" | "total">;
 
 const select = [
-  "id", "project_id", "cost_code_id", "item_no", "item_description", "unit", "qty", "rate", "total", "created_at",
+  "id", "project_id", "cost_code_id", "item_no", "item_description", "unit", "qty", "rate", "total", "row_order", "created_at",
   ...BASELINE_ENTERPRISE_ATTRIBUTE_FIELDS,
   ...BASELINE_PROJECT_ATTRIBUTE_FIELDS,
 ].join(",");
@@ -33,11 +34,30 @@ const select = [
 export function listBaselineDetails(projectId: string, costCodeId?: string) {
   const costCodeFilter = costCodeId ? `&cost_code_id=eq.${encodeURIComponent(costCodeId)}` : "";
   return supabaseRequest<BaselineDetail[]>(
-    `baseline_details?project_id=eq.${encodeURIComponent(projectId)}${costCodeFilter}&select=${encodeURIComponent(select)}&order=cost_code_id.asc,created_at.asc`,
+    `baseline_details?project_id=eq.${encodeURIComponent(projectId)}${costCodeFilter}&select=${encodeURIComponent(select)}&order=row_order.asc.nullslast,created_at.asc`,
   );
 }
 
 export type BaselineDetailPatch = Partial<Omit<BaselineDetailInput, "project_id">>;
+
+export async function createBaselineDetails(
+  projectId: string,
+  rows: Array<Omit<BaselineDetailInput, "project_id">>,
+) {
+  if (!rows.length) return [] as BaselineDetail[];
+  const body = rows.map((row) => ({
+    project_id: projectId,
+    ...row,
+    item_no: row.item_no?.trim() || null,
+    item_description: row.item_description?.trim() || null,
+    unit: row.unit?.trim() || null,
+  }));
+  return supabaseRequest<BaselineDetail[]>(`baseline_details?select=${encodeURIComponent(select)}`, {
+    method: "POST",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify(body),
+  });
+}
 
 export async function updateBaselineDetails(ids: string[], patch: BaselineDetailPatch) {
   if (!ids.length || !Object.keys(patch).length) return [] as BaselineDetail[];
@@ -90,7 +110,7 @@ export async function importBaselineDetails(projectId: string, rows: Omit<Baseli
 export function baselineBudgetErrorMessage(error: unknown) {
   if (error instanceof SupabaseRequestError) {
     if (error.code === "23503") return "One or more Cost Codes no longer exist in this project.";
-    if (error.code === "23514") return "Quantity and Rate must be zero or greater.";
+    if (error.code === "23514") return "Check the Baseline Budget row values.";
     if (error.code === "22001") return "One or more text values are longer than the database limit.";
     return [error.message, error.details, error.hint].filter(Boolean).join(" ");
   }
