@@ -2,7 +2,15 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgGridProvider, AgGridReact } from "ag-grid-react";
-import type { ColDef, ColumnState, GridApi, SelectionChangedEvent } from "ag-grid-community";
+import type {
+  CellValueChangedEvent,
+  ColDef,
+  ColGroupDef,
+  ColumnState,
+  GridApi,
+  GridReadyEvent,
+  SelectionChangedEvent,
+} from "ag-grid-community";
 import { themeQuartz } from "ag-grid-community";
 import { AllEnterpriseModule } from "ag-grid-enterprise";
 import ExcelImportDialog from "@/components/shared/excel-import-dialog";
@@ -14,16 +22,24 @@ import {
   BaselineAttributeField,
   BaselineDetail,
   baselineBudgetErrorMessage,
+  createBaselineDetails,
   deleteBaselineDetails,
   importBaselineDetails,
   listBaselineDetails,
   updateBaselineDetails,
 } from "@/lib/cost-baseline-budget";
 import { getProjectByPublicId, Project } from "@/lib/projects";
-import { deleteProjectGridView, gridViewErrorMessage, listProjectGridViews, type ProjectGridView, saveProjectGridView } from "@/lib/grid-views";
+import {
+  deleteProjectGridView,
+  gridViewErrorMessage,
+  listProjectGridViews,
+  type ProjectGridView,
+  saveProjectGridView,
+} from "@/lib/grid-views";
 
 const gridTheme = themeQuartz.withParams({ spacing: 4, rowHeight: 30, headerHeight: 34, fontSize: 12 });
 const GRID_KEY = "bulk-baseline-budget";
+const MAX_ADD_ROWS = 100;
 
 type GridRow = BaselineDetail & { cost_code_ref: string };
 type ActiveAttribute = {
@@ -39,13 +55,18 @@ function valueName(definition: EnterpriseAttributeDefinition | ProjectAttributeD
   if (!valueId) return "";
   return definition.attribute_values.find((value) => value.value_id.toLowerCase() === valueId.toLowerCase())?.value_name ?? valueId;
 }
+function displayAttribute(definition: EnterpriseAttributeDefinition | ProjectAttributeDefinition, valueId: string | null | undefined) {
+  if (!valueId) return "";
+  const value = definition.attribute_values.find((entry) => entry.value_id.toLowerCase() === valueId.toLowerCase());
+  return value ? `${value.value_id} - ${value.value_name}` : valueId;
+}
 function parseNumber(value: string) {
   if (!value.trim()) return null;
   const parsed = Number(value.replace(/,/g, ""));
   return Number.isFinite(parsed) ? parsed : Number.NaN;
 }
 function money(value: number | null | undefined) {
-  return value == null ? "" : new Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
+  return value == null ? "" : new Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(value));
 }
 function exactColumns(rows: ExcelRow[], columns: string[]) {
   if (!rows.length) return true;
@@ -96,8 +117,9 @@ export default function BaselineBudgetPage({ projectPublicId }: { projectPublicI
   const [showSaveView, setShowSaveView] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [bulkOpen, setBulkOpen] = useState(false);
-  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteIds, setDeleteIds] = useState<string[] | null>(null);
   const [working, setWorking] = useState(false);
+  const [addCount, setAddCount] = useState(1);
   const [bulkCostCode, setBulkCostCode] = useState("__NO_CHANGE__");
   const [bulkItemNo, setBulkItemNo] = useState("");
   const [bulkDescription, setBulkDescription] = useState("");
@@ -150,23 +172,173 @@ export default function BaselineBudgetPage({ projectPublicId }: { projectPublicI
     ...activeAttributes.map((attribute) => attribute.columnName),
   ], [activeAttributes]);
 
-  const columnDefs = useMemo<ColDef<GridRow>[]>(() => [
-    { field: "cost_code_ref", headerName: "Cost Code ID", pinned: "left", minWidth: 145, filter: true },
-    { field: "item_no", headerName: "Item No", minWidth: 120, filter: true },
-    { field: "item_description", headerName: "Item Description", minWidth: 260, filter: true },
-    { field: "qty", headerName: "Qty", minWidth: 110, type: "numericColumn", valueFormatter: (params) => params.value == null ? "" : String(params.value) },
-    { field: "unit", headerName: "Unit", minWidth: 100, filter: true },
-    { field: "rate", headerName: "Rate", minWidth: 120, type: "numericColumn", valueFormatter: (params) => money(params.value as number | null) },
-    { field: "total", headerName: "Total", minWidth: 135, type: "numericColumn", aggFunc: "sum", enableValue: true, valueFormatter: (params) => money(params.value as number | null) },
-    ...activeAttributes.map((attribute): ColDef<GridRow> => ({
+  function replaceDetail(updated: BaselineDetail) {
+    setDetails((current) => current.map((row) => row.id === updated.id ? { ...updated, qty: updated.qty == null ? null : Number(updated.qty), rate: updated.rate == null ? null : Number(updated.rate), total: updated.total == null ? null : Number(updated.total), row_order: updated.row_order == null ? null : Number(updated.row_order) } : row));
+  }
+
+  async function onCellChanged(event: CellValueChangedEvent<GridRow>) {
+    const row = event.data;
+    if (!row || event.oldValue === event.newValue) return;
+    const colId = event.column.getColId();
+    const patch: Record<string, unknown> = {};
+
+    if (colId === "cost_code_ref") {
+      const selected = costCodes.find((code) => code.cost_code_id === row.cost_code_ref);
+      if (!selected) return void refresh();
+      patch.cost_code_id = selected.id;
+    } else if (colId === "item_no") {
+      patch.item_no = row.item_no?.trim() || null;
+    } else if (colId === "item_description") {
+      patch.item_description = row.item_description?.trim() || null;
+    } else if (colId === "qty") {
+      const value = row.qty == null || String(row.qty).trim() === "" ? null : Number(row.qty);
+      if (value != null && !Number.isFinite(value)) return void refresh();
+      patch.qty = value;
+    } else if (colId === "unit") {
+      patch.unit = row.unit?.trim() || null;
+    } else if (colId === "rate") {
+      const value = row.rate == null || String(row.rate).trim() === "" ? null : Number(row.rate);
+      if (value != null && !Number.isFinite(value)) return void refresh();
+      patch.rate = value;
+    } else if (activeAttributes.some((attribute) => attribute.field === colId)) {
+      patch[colId] = row[colId as BaselineAttributeField] ?? null;
+    } else {
+      return;
+    }
+
+    setWorking(true); setError("");
+    try {
+      const updated = await updateBaselineDetails([row.id], patch);
+      if (updated[0]) replaceDetail(updated[0]);
+    } catch (requestError) {
+      setError(baselineBudgetErrorMessage(requestError));
+      await refresh();
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  const columnDefs = useMemo<Array<ColDef<GridRow> | ColGroupDef<GridRow>>>(() => {
+    const general: ColDef<GridRow>[] = [
+      {
+        field: "cost_code_ref",
+        headerName: "Cost Code ID",
+        pinned: "left",
+        minWidth: 145,
+        filter: true,
+        enableRowGroup: true,
+        editable: true,
+        cellEditor: "agSelectCellEditor",
+        cellEditorParams: { values: costCodes.map((code) => code.cost_code_id) },
+        valueFormatter: (params) => {
+          const code = costCodes.find((item) => item.cost_code_id === params.value);
+          return code ? `${code.cost_code_id} - ${code.name}` : String(params.value ?? "");
+        },
+      },
+      { field: "item_no", headerName: "Item No", minWidth: 120, filter: true, editable: true, columnGroupShow: "open" },
+      { field: "item_description", headerName: "Item Description", minWidth: 240, filter: true, editable: true, columnGroupShow: "open" },
+      {
+        field: "qty",
+        headerName: "Qty",
+        minWidth: 105,
+        type: "numericColumn",
+        editable: true,
+        valueParser: (params) => {
+          const text = String(params.newValue ?? "").trim();
+          if (!text) return null;
+          const parsed = Number(text.replace(/,/g, ""));
+          return Number.isFinite(parsed) ? parsed : params.oldValue;
+        },
+        valueFormatter: (params) => params.value == null ? "" : String(params.value),
+        columnGroupShow: "open",
+      },
+      { field: "unit", headerName: "Unit", minWidth: 95, filter: true, editable: true, columnGroupShow: "open" },
+      {
+        field: "rate",
+        headerName: "Rate",
+        minWidth: 115,
+        type: "numericColumn",
+        editable: true,
+        valueParser: (params) => {
+          const text = String(params.newValue ?? "").trim();
+          if (!text) return null;
+          const parsed = Number(text.replace(/,/g, ""));
+          return Number.isFinite(parsed) ? parsed : params.oldValue;
+        },
+        valueFormatter: (params) => money(params.value as number | null),
+        columnGroupShow: "open",
+      },
+      { field: "total", headerName: "Total", minWidth: 130, type: "numericColumn", aggFunc: "sum", enableValue: true, valueFormatter: (params) => money(params.value as number | null), columnGroupShow: "open" },
+    ];
+
+    const enterpriseCols = activeAttributes.filter((attribute) => attribute.prefix === "E").map((attribute, index): ColDef<GridRow> => ({
       colId: attribute.field,
       headerName: attribute.columnName,
       headerTooltip: `${attribute.prefix}${String(attribute.definition.attribute_number).padStart(2, "0")} · ${attribute.definition.name}`,
       minWidth: 150,
-      valueGetter: (params) => valueName(attribute.definition, params.data?.[attribute.field]),
+      enableRowGroup: true,
       filter: "agSetColumnFilter",
-    })),
-  ], [activeAttributes]);
+      editable: true,
+      valueGetter: (params) => displayAttribute(attribute.definition, params.data?.[attribute.field]),
+      valueSetter: (params) => {
+        if (!params.data) return false;
+        const raw = String(params.newValue ?? "").split(" - ")[0]?.trim() || null;
+        params.data[attribute.field] = raw;
+        return true;
+      },
+      cellEditor: "agSelectCellEditor",
+      cellEditorParams: {
+        values: ["", ...attribute.definition.attribute_values.filter((value) => value.is_active).map((value) => `${value.value_id} - ${value.value_name}`)],
+      },
+      columnGroupShow: index === 0 ? undefined : "open",
+    }));
+
+    const projectCols = activeAttributes.filter((attribute) => attribute.prefix === "P").map((attribute, index): ColDef<GridRow> => ({
+      colId: attribute.field,
+      headerName: attribute.columnName,
+      headerTooltip: `${attribute.prefix}${String(attribute.definition.attribute_number).padStart(2, "0")} · ${attribute.definition.name}`,
+      minWidth: 150,
+      enableRowGroup: true,
+      filter: "agSetColumnFilter",
+      editable: true,
+      valueGetter: (params) => displayAttribute(attribute.definition, params.data?.[attribute.field]),
+      valueSetter: (params) => {
+        if (!params.data) return false;
+        const raw = String(params.newValue ?? "").split(" - ")[0]?.trim() || null;
+        params.data[attribute.field] = raw;
+        return true;
+      },
+      cellEditor: "agSelectCellEditor",
+      cellEditorParams: {
+        values: ["", ...attribute.definition.attribute_values.filter((value) => value.is_active).map((value) => `${value.value_id} - ${value.value_name}`)],
+      },
+      columnGroupShow: index === 0 ? undefined : "open",
+    }));
+
+    return [
+      { groupId: "baseline-general", headerName: "General Info", marryChildren: true, openByDefault: true, children: general },
+      ...(enterpriseCols.length ? [{ groupId: "baseline-enterprise", headerName: "Enterprise Line-Item Attributes", marryChildren: true, openByDefault: true, children: enterpriseCols }] : []),
+      ...(projectCols.length ? [{ groupId: "baseline-project", headerName: "Project Line-Item Attributes", marryChildren: true, openByDefault: true, children: projectCols }] : []),
+      {
+        colId: "actions",
+        headerName: "Actions",
+        pinned: "right",
+        width: 48,
+        minWidth: 48,
+        maxWidth: 48,
+        sortable: false,
+        filter: false,
+        suppressHeaderMenuButton: true,
+        cellRenderer: (params: { data?: GridRow }) => params.data ? (
+          <div className="project-row-actions">
+            <button className="project-delete-icon" title="Delete baseline row" aria-label="Delete baseline row" onClick={() => setDeleteIds([params.data!.id])}>
+              <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 10v6M14 10v6"/></svg>
+            </button>
+          </div>
+        ) : null,
+      },
+    ];
+  }, [activeAttributes, costCodes]);
 
   const totalBaseline = useMemo(() => details.reduce((sum, row) => sum + Number(row.total ?? 0), 0), [details]);
 
@@ -175,11 +347,29 @@ export default function BaselineBudgetPage({ projectPublicId }: { projectPublicI
     window.setTimeout(() => setNotice(""), 3500);
   }
 
+  function onGridReady(event: GridReadyEvent<GridRow>) {
+    setGridApi(event.api);
+  }
+
+  function setAllGroups(open: boolean) {
+    if (!gridApi) return;
+    gridApi.setColumnGroupState([
+      { groupId: "baseline-general", open },
+      ...(activeAttributes.some((attribute) => attribute.prefix === "E") ? [{ groupId: "baseline-enterprise", open }] : []),
+      ...(activeAttributes.some((attribute) => attribute.prefix === "P") ? [{ groupId: "baseline-project", open }] : []),
+    ]);
+    if (gridApi.getRowGroupColumns().length) {
+      if (open) gridApi.expandAll();
+      else gridApi.collapseAll();
+    }
+  }
+
   async function saveView() {
     if (!project || !gridApi || !viewName.trim()) return;
     try {
       const saved = await saveProjectGridView(project.id, GRID_KEY, viewName, {
         columnState: gridApi.getColumnState(),
+        columnGroupState: gridApi.getColumnGroupState(),
         filterModel: gridApi.getFilterModel() as Record<string, unknown>,
       });
       setViews(await listProjectGridViews(project.id, GRID_KEY));
@@ -195,23 +385,35 @@ export default function BaselineBudgetPage({ projectPublicId }: { projectPublicI
     if (!gridApi) return;
     if (id === "Default") {
       gridApi.resetColumnState();
+      gridApi.resetColumnGroupState();
       gridApi.setFilterModel(null);
-      gridApi.onFilterChanged();
       return;
     }
     const view = views.find((entry) => entry.id === id);
     if (!view) return;
     gridApi.applyColumnState({ state: view.grid_state.columnState as ColumnState[], applyOrder: true });
+    if (view.grid_state.columnGroupState) gridApi.setColumnGroupState(view.grid_state.columnGroupState);
     gridApi.setFilterModel(view.grid_state.filterModel ?? null);
-    gridApi.onFilterChanged();
   }
+
+  useEffect(() => {
+    if (!gridApi || selectedView === "Default") return;
+    const view = views.find((entry) => entry.id === selectedView);
+    if (!view) return;
+    gridApi.applyColumnState({ state: view.grid_state.columnState as ColumnState[], applyOrder: true });
+    if (view.grid_state.columnGroupState) gridApi.setColumnGroupState(view.grid_state.columnGroupState);
+    gridApi.setFilterModel(view.grid_state.filterModel ?? null);
+  }, [gridApi, selectedView, views, columnDefs]);
 
   async function deleteView() {
     if (!project || selectedView === "Default") return;
     try {
       await deleteProjectGridView(selectedView);
       setViews(await listProjectGridViews(project.id, GRID_KEY));
-      applyView("Default");
+      setSelectedView("Default");
+      gridApi?.resetColumnState();
+      gridApi?.resetColumnGroupState();
+      gridApi?.setFilterModel(null);
       showNotice("View deleted.");
     } catch (requestError) { setError(gridViewErrorMessage(requestError)); }
   }
@@ -234,16 +436,17 @@ export default function BaselineBudgetPage({ projectPublicId }: { projectPublicI
     if (bulkDescription.trim()) patch.item_description = bulkDescription.trim();
     if (bulkQty.trim()) {
       const parsed = Number(bulkQty.replace(/,/g, ""));
-      if (!Number.isFinite(parsed) || parsed < 0) return setError("Bulk Qty must be zero or greater.");
+      if (!Number.isFinite(parsed)) return setError("Bulk Qty must be a valid number.");
       patch.qty = parsed;
     }
     if (bulkUnit.trim()) patch.unit = bulkUnit.trim();
     if (bulkRate.trim()) {
       const parsed = Number(bulkRate.replace(/,/g, ""));
-      if (!Number.isFinite(parsed) || parsed < 0) return setError("Bulk Rate must be zero or greater.");
+      if (!Number.isFinite(parsed)) return setError("Bulk Rate must be a valid number.");
       patch.rate = parsed;
     }
     if (!Object.keys(patch).length) return setError("Choose at least one field to update.");
+
     setWorking(true); setError("");
     try {
       await updateBaselineDetails(selectedIds, patch);
@@ -255,15 +458,49 @@ export default function BaselineBudgetPage({ projectPublicId }: { projectPublicI
     } finally { setWorking(false); }
   }
 
-  async function confirmBulkDelete() {
-    if (!selectedIds.length) return;
+  async function addRows() {
+    if (!project || !costCodes.length || !gridApi) return;
+    const count = Math.max(1, Math.min(MAX_ADD_ROWS, Math.floor(addCount || 1)));
+    const focused = gridApi.getFocusedCell();
+    const focusedRow = focused ? gridApi.getDisplayedRowAtIndex(focused.rowIndex)?.data ?? null : null;
+    const selectedRow = gridApi.getSelectedRows()[0] ?? null;
+    const anchor = focusedRow ?? selectedRow ?? null;
+
+    const ordered = [...details].sort((a, b) => Number(a.row_order ?? 0) - Number(b.row_order ?? 0) || a.created_at.localeCompare(b.created_at));
+    const anchorOrder = anchor?.row_order != null ? Number(anchor.row_order) : ordered.length ? Number(ordered[ordered.length - 1].row_order ?? ordered.length) : 0;
+    const nextOrder = ordered.find((row) => Number(row.row_order ?? Number.POSITIVE_INFINITY) > anchorOrder)?.row_order;
+    const gap = nextOrder == null ? 1 : (Number(nextOrder) - anchorOrder) / (count + 1);
+    const costCodeId = anchor?.cost_code_id ?? costCodes[0].id;
+
     setWorking(true); setError("");
     try {
-      const count = selectedIds.length;
-      await deleteBaselineDetails(selectedIds);
+      const created = await createBaselineDetails(project.id, Array.from({ length: count }, (_, index) => ({
+        cost_code_id: costCodeId,
+        item_no: null,
+        item_description: null,
+        qty: null,
+        unit: null,
+        rate: null,
+        row_order: anchorOrder + gap * (index + 1),
+      })));
+      showNotice(`${created.length} Baseline Budget row${created.length === 1 ? "" : "s"} added.`);
+      await refresh();
+    } catch (requestError) {
+      setError(baselineBudgetErrorMessage(requestError));
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function confirmDelete() {
+    if (!deleteIds?.length) return;
+    const count = deleteIds.length;
+    setWorking(true); setError("");
+    try {
+      await deleteBaselineDetails(deleteIds);
+      setDeleteIds(null);
       setSelectedIds([]);
       gridApi?.deselectAll();
-      setDeleteOpen(false);
       showNotice(`${count} Baseline Budget row${count === 1 ? "" : "s"} deleted.`);
       await refresh();
     } catch (requestError) {
@@ -305,8 +542,8 @@ export default function BaselineBudgetPage({ projectPublicId }: { projectPublicI
         if (itemNo.length > 50) errors.push(`Row ${line}: Item No is longer than 50 characters.`);
         if (description.length > 255) errors.push(`Row ${line}: Item Description is longer than 255 characters.`);
         if (unit.length > 30) errors.push(`Row ${line}: Unit is longer than 30 characters.`);
-        if (Number.isNaN(qty) || (qty != null && qty < 0)) errors.push(`Row ${line}: Qty must be zero or greater.`);
-        if (Number.isNaN(rate) || (rate != null && rate < 0)) errors.push(`Row ${line}: Rate must be zero or greater.`);
+        if (Number.isNaN(qty)) errors.push(`Row ${line}: Qty must be a valid number or blank.`);
+        if (Number.isNaN(rate)) errors.push(`Row ${line}: Rate must be a valid number or blank.`);
         activeAttributes.forEach((attribute) => {
           const valueId = (row[attribute.columnName] ?? "").trim();
           if (!valueId) return;
@@ -324,7 +561,8 @@ export default function BaselineBudgetPage({ projectPublicId }: { projectPublicI
     if (!project || !importRows || importErrors.length) return;
     setImporting(true); setProgress(0);
     try {
-      const mapped = importRows.map((row) => {
+      const maxOrder = details.reduce((max, row) => Math.max(max, Number(row.row_order ?? 0)), 0);
+      const mapped = importRows.map((row, index) => {
         const code = codeByRef.get(row["Cost Code ID"].trim().toLowerCase())!;
         const qty = parseNumber(row.Qty ?? "");
         const rate = parseNumber(row.Rate ?? "");
@@ -336,56 +574,76 @@ export default function BaselineBudgetPage({ projectPublicId }: { projectPublicI
           qty,
           unit: row.Unit?.trim() || null,
           rate,
+          row_order: maxOrder + index + 1,
           ...attributes,
         };
       });
       await importBaselineDetails(project.id, mapped, replace, setProgress);
-      setImportRows(null); showNotice("Baseline Budget details imported."); await refresh();
+      setImportRows(null);
+      showNotice("Baseline Budget details imported.");
+      await refresh();
     } catch (requestError) {
       setImportErrors([baselineBudgetErrorMessage(requestError)]);
     } finally { setImporting(false); }
   }
 
+  const deleteRows = deleteIds ? details.filter((row) => deleteIds.includes(row.id)) : [];
+
   return <div className="enterprise-admin-page">
     <div className="enterprise-page-title">
-      <div><h2>Bulk Baseline Budget</h2><p>Import and export detailed Baseline Budget line items. Total is calculated as Qty × Rate.</p></div>
+      <div><h2>Bulk Baseline Budget</h2><p>Maintain detailed Baseline Budget line items. Total is calculated automatically as Qty × Rate.</p></div>
     </div>
 
     <section className="enterprise-grid-card">
       <div className="enterprise-toolbar" style={{ flexWrap: "wrap" }}>
         <label className="enterprise-search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search baseline details…" /></label>
+        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <button className="button primary" disabled={!project || !costCodes.length || working} onClick={() => void addRows()}>+ Add Row(s)</button>
+          <input aria-label="Number of rows to add" type="number" min={1} max={MAX_ADD_ROWS} step={1} value={addCount} onChange={(event) => setAddCount(Math.max(1, Math.min(MAX_ADD_ROWS, Number(event.target.value) || 1)))} style={{ width: 58, height: 32, border: "1px solid #d8dee8", borderRadius: 6, padding: "0 6px" }}/>
+        </div>
         <button className="button secondary" disabled={!selectedIds.length || working} onClick={openBulkEdit}>Bulk Edit{selectedIds.length ? ` (${selectedIds.length})` : ""}</button>
-        <button className="button danger" disabled={!selectedIds.length || working} onClick={() => setDeleteOpen(true)}>Bulk Delete{selectedIds.length ? ` (${selectedIds.length})` : ""}</button>
+        <button className="button danger" disabled={!selectedIds.length || working} onClick={() => setDeleteIds(selectedIds)}>Bulk Delete{selectedIds.length ? ` (${selectedIds.length})` : ""}</button>
+        <button className="button secondary" disabled={!gridApi} onClick={() => setAllGroups(true)}>Expand All</button>
+        <button className="button secondary" disabled={!gridApi} onClick={() => setAllGroups(false)}>Collapse All</button>
         <button className="button secondary" onClick={exportRows}>⇩ Export</button>
         <button className="button secondary" onClick={() => fileRef.current?.click()}>⇧ Import</button>
         <input ref={fileRef} hidden type="file" accept=".xlsx,.xls" onChange={(event) => void chooseImport(event.target.files?.[0])}/>
         <label className="status-filter"><span>View</span><select value={selectedView} onChange={(event) => applyView(event.target.value)}><option value="Default">Default</option>{views.map((view) => <option key={view.id} value={view.id}>{view.view_name}</option>)}</select></label>
         <button className="button secondary" disabled={!gridApi} onClick={() => { setViewName(selectedView === "Default" ? "" : views.find((view) => view.id === selectedView)?.view_name ?? ""); setShowSaveView(true); }}>Save View</button>
         <button className="button secondary" disabled={selectedView === "Default"} onClick={() => void deleteView()}>Delete View</button>
-        <button className="button secondary" disabled={loading || importing} onClick={() => void refresh()}>↻ Refresh</button>
+        <button className="button secondary" disabled={loading || importing || working} onClick={() => void refresh()}>↻ Refresh</button>
       </div>
 
-            {error && <div className="data-message error"><strong>Unable to load Baseline Budget</strong><span>{error}</span></div>}
+      {error && <div className="data-message error"><strong>Unable to load Baseline Budget</strong><span>{error}</span></div>}
       {!error && loading && <div className="data-message"><span className="spinner"/>Loading Baseline Budget…</div>}
       {!error && !loading && <AgGridProvider modules={[AllEnterpriseModule]} licenseKey={process.env.NEXT_PUBLIC_AG_GRID_LICENSE_KEY ?? ""}>
-        <div style={{ height: 640, width: "100%" }}>
+        <div style={{ height: "calc(100vh - 190px)", minHeight: 520, width: "100%" }}>
           <AgGridReact<GridRow>
             theme={gridTheme}
             rowData={rows}
             columnDefs={columnDefs}
-            defaultColDef={{ sortable: true, resizable: true, filter: true, minWidth: 110 }}
+            defaultColDef={{ sortable: true, resizable: true, filter: true, minWidth: 100, enableRowGroup: true }}
             quickFilterText={search}
             getRowId={(params) => params.data.id}
             rowSelection={{ mode: "multiRow" }}
             selectionColumnDef={{ pinned: "left", width: 38, minWidth: 38, maxWidth: 38, suppressHeaderMenuButton: true, resizable: false }}
-            onGridReady={(event) => setGridApi(event.api)}
+            onGridReady={onGridReady}
             onSelectionChanged={(event: SelectionChangedEvent<GridRow>) => setSelectedIds(event.api.getSelectedRows().map((row) => row.id))}
+            onCellValueChanged={(event) => void onCellChanged(event)}
+            singleClickEdit
+            stopEditingWhenCellsLoseFocus
+            undoRedoCellEditing
+            undoRedoCellEditingLimit={20}
+            rowGroupPanelShow="always"
+            groupDisplayType="multipleColumns"
+            groupSuppressBlankHeader
             grandTotalRow="pinnedBottom"
+            sideBar={{ toolPanels: ["columns", "filters"], position: "right" }}
             animateRows
           />
         </div>
       </AgGridProvider>}
-      <div className="grid-footer"><span>{details.length} baseline detail rows · {selectedIds.length} selected · {costCodes.length} Cost Codes</span><span>Baseline Budget total: {money(totalBaseline)}</span></div>
+      <div className="grid-footer"><span>{details.length} baseline detail rows · {selectedIds.length} selected · {costCodes.length} Cost Codes{working ? " · Saving…" : ""}</span><span>Baseline Budget total: {money(totalBaseline)}</span></div>
     </section>
 
     {bulkOpen && <div className="confirm-layer">
@@ -404,12 +662,20 @@ export default function BaselineBudgetPage({ projectPublicId }: { projectPublicI
         <div className="confirm-actions"><button className="button secondary" disabled={working} onClick={() => setBulkOpen(false)}>Cancel</button><button className="button primary" disabled={working} onClick={() => void applyBulkEdit()}>{working ? "Updating…" : "Apply"}</button></div>
       </div>
     </div>}
-    {deleteOpen && <div className="confirm-layer">
-      <button className="confirm-scrim" onClick={() => !working && setDeleteOpen(false)} aria-label="Close delete confirmation"/>
-      <div className="confirm-dialog" role="alertdialog" aria-modal="true"><div className="confirm-icon">!</div><h2>Delete {selectedIds.length} Baseline Budget Row{selectedIds.length === 1 ? "" : "s"}?</h2><p>This will permanently delete the selected Baseline Budget details. This action cannot be undone.</p><div className="confirm-actions"><button className="button secondary" disabled={working} onClick={() => setDeleteOpen(false)}>Cancel</button><button className="button danger" disabled={working} onClick={() => void confirmBulkDelete()}>{working ? "Deleting…" : "Yes, Delete"}</button></div></div>
+
+    {deleteIds && <div className="confirm-layer">
+      <button className="confirm-scrim" onClick={() => !working && setDeleteIds(null)} aria-label="Close delete confirmation"/>
+      <div className="confirm-dialog" role="alertdialog" aria-modal="true">
+        <div className="confirm-icon">!</div>
+        <h2>Delete Baseline Budget Row{deleteIds.length === 1 ? "" : "s"}?</h2>
+        <p>{deleteIds.length === 1 ? <>Are you sure you want to permanently delete <strong>{deleteRows[0]?.item_no || deleteRows[0]?.item_description || "this row"}</strong>?</> : <>Are you sure you want to permanently delete the selected <strong>{deleteIds.length} rows</strong>?</>}</p>
+        <p>This action cannot be undone.</p>
+        <div className="confirm-actions"><button className="button secondary" disabled={working} onClick={() => setDeleteIds(null)}>Cancel</button><button className="button danger" disabled={working} onClick={() => void confirmDelete()}>{working ? "Deleting…" : "Yes, Delete"}</button></div>
+      </div>
     </div>}
-    {showSaveView && <div className="admin-modal-backdrop"><div className="admin-modal"><h3>Save View</h3><label className="form-field"><span>View Name</span><input autoFocus value={viewName} maxLength={80} onChange={(event) => setViewName(event.target.value)}/></label><div className="admin-modal-actions"><button className="button secondary" onClick={() => setShowSaveView(false)}>Cancel</button><button className="button primary" disabled={!viewName.trim()} onClick={() => void saveView()}>Save</button></div></div></div>}
-    {importRows && <ExcelImportDialog title="Import Baseline Budget" rows={importRows} columns={excelColumns} errors={importErrors} replace={replace} setReplace={setReplace} importing={importing} progress={progress} onCancel={() => !importing && setImportRows(null)} onImport={() => void runImport()}/>} 
+
+    {showSaveView && <div className="admin-modal-backdrop"><div className="admin-modal"><h3>Save View</h3><label className="form-field"><span>View Name</span><input autoFocus value={viewName} maxLength={80} onChange={(event) => setViewName(event.target.value)}/></label><div className="admin-modal-actions"><button className="button secondary" onClick={() => setShowSaveView(false)}>Cancel</button><button className="button primary" disabled={!viewName.trim()} onClick={() => void saveView()}>Save View</button></div></div></div>}
+    {importRows && <ExcelImportDialog title="Import Baseline Budget" rows={importRows} columns={excelColumns} errors={importErrors} replace={replace} setReplace={setReplace} importing={importing} progress={progress} onCancel={() => !importing && setImportRows(null)} onImport={() => void runImport()}/>}
     {notice && <div className="admin-toast">{notice}</div>}
   </div>;
 }
