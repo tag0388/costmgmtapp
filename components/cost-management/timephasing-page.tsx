@@ -230,8 +230,16 @@ export default function CostTimephasingPage({ projectPublicId }: { projectPublic
     setError("");
     try {
       const result = await recalculateProjectCostManagement(project.id);
-      showNotice(`Recalculated project summaries for ${result.cost_codes} Cost Codes, ${result.change_orders} Change Orders and ${result.subcontracts} Subcontracts.`);
-      await refresh();
+      const [codes, phasing, summaryChecks] = await Promise.all([
+        listTimephasingCostCodes(project.id),
+        listCostCodeTimephasing(project.id),
+        listCostCodeTimephasingChecks(project.id),
+      ]);
+      setCostCodes(codes);
+      setStored(phasing);
+      setChecks(summaryChecks);
+      window.requestAnimationFrame(() => gridApi?.refreshCells({ force: true }));
+      showNotice(`Recalculated ${result.timephasing?.rows_updated ?? phasing.length} Timephasing rows for ${result.cost_codes} Cost Codes.`);
     } catch (requestError) {
       setError(costCalculationErrorMessage(requestError));
     } finally {
