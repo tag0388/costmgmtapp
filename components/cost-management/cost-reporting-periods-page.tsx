@@ -17,7 +17,6 @@ import {
   regenerateCostReportingPeriods,
   getCostReportingSettings,
   listCostReportingPeriods,
-  setInitialCurrentCostPeriod,
   trimCostReportingPeriods,
   updateCostReportingSettings,
 } from "@/lib/cost-reporting";
@@ -41,8 +40,6 @@ export default function CostReportingPeriodsPage({ projectPublicId }: { projectP
   const [confirmClear, setConfirmClear] = useState(false);
   const [confirmAdvance, setConfirmAdvance] = useState(false);
   const [advanceTarget, setAdvanceTarget] = useState("");
-  const [confirmInitialCurrent, setConfirmInitialCurrent] = useState(false);
-  const [initialCurrentPeriodNumber, setInitialCurrentPeriodNumber] = useState(1);
 
   const hasClosedPeriod = periods.some((period) => period.status === "Closed");
   const currentPeriod = useMemo(() => periods.find((period) => period.status === "Current") ?? null, [periods]);
@@ -60,7 +57,6 @@ export default function CostReportingPeriodsPage({ projectPublicId }: { projectP
       ]);
       setSettings(currentSettings);
       setPeriods(currentPeriods);
-      setInitialCurrentPeriodNumber(currentPeriods.find((period) => period.status === "Current")?.period_number ?? 1);
       setForm(currentSettings ? {
         frequency: currentSettings.frequency,
         start_date: currentSettings.start_date,
@@ -192,23 +188,6 @@ export default function CostReportingPeriodsPage({ projectPublicId }: { projectP
     }
   }
 
-  async function setInitialCurrentPeriod() {
-    if (!project || !initialCurrentPeriodNumber) return;
-    setWorking(true); setProgress(0); setError(""); setNotice("");
-    try {
-      const result = await setInitialCurrentCostPeriod(project.id, initialCurrentPeriodNumber);
-      setConfirmInitialCurrent(false);
-      const refreshed = await listCostReportingPeriods(project.id);
-      setPeriods(refreshed);
-      setAdvanceTarget("");
-      setNotice(`Initial setup complete: P1–P${Math.max(result.current_period_number - 1, 0)} marked historical and P${result.current_period_number} set as Current. You can now bulk-import historical Actual Cost.`);
-    } catch (requestError) {
-      setError(costReportingErrorMessage(requestError));
-    } finally {
-      setWorking(false);
-    }
-  }
-
   async function advanceCurrentPeriod() {
     if (!project || !currentPeriod) return;
     const target = Number(advanceTarget);
@@ -275,9 +254,8 @@ export default function CostReportingPeriodsPage({ projectPublicId }: { projectP
       <div className="enterprise-settings-footer">
         <span>{currentPeriod ? `Current: P${currentPeriod.period_number} · ${currentPeriod.start_date} to ${currentPeriod.end_date}` : periods.length ? "No Current period" : "No periods created yet"}</span>
         <div style={{ display: "flex", gap: 8 }}>
-          {!hasClosedPeriod && periods.length > 0 && <button className="button secondary" disabled={working} onClick={() => { setInitialCurrentPeriodNumber(currentPeriod?.period_number ?? 1); setConfirmInitialCurrent(true); }}>Set Current Period</button>}
           {!hasClosedPeriod && periods.length > 0 && <button className="button danger" disabled={working} onClick={() => setConfirmClear(true)}>Clear All Periods</button>}
-          {hasClosedPeriod && currentPeriod && periods.some((period) => period.period_number > currentPeriod.period_number) && <span style={{ display: "inline-flex", alignItems: "stretch" }}>
+          {currentPeriod && periods.some((period) => period.period_number > currentPeriod.period_number) && <span style={{ display: "inline-flex", alignItems: "stretch" }}>
             <select
               aria-label="Advance Current Period target"
               value={advanceTarget}
@@ -349,32 +327,13 @@ export default function CostReportingPeriodsPage({ projectPublicId }: { projectP
       </div>
     </div>}
 
-    {confirmInitialCurrent && !hasClosedPeriod && periods.length > 0 && <div className="confirm-layer">
-      <button className="confirm-scrim" onClick={() => !working && setConfirmInitialCurrent(false)} aria-label="Close initial Current period setup"/>
-      <div className="confirm-dialog" role="alertdialog" aria-modal="true">
-        <div className="confirm-icon">!</div>
-        <h2>Set Initial Current Period</h2>
-        <p>Use this when onboarding an existing live project with historical reporting periods already completed.</p>
-        <label className="form-field" style={{ textAlign: "left", marginTop: 14 }}>
-          <span><strong>Current Period</strong></span>
-          <select value={initialCurrentPeriodNumber} onChange={(event) => setInitialCurrentPeriodNumber(Number(event.target.value))}>
-            {periods.map((period) => <option key={period.id} value={period.period_number}>P{period.period_number} · {period.start_date} to {period.end_date}</option>)}
-          </select>
-        </label>
-        <p style={{ marginTop: 14 }}>P1–P{Math.max(initialCurrentPeriodNumber - 1, 0)} will be marked as historical Closed periods, P{initialCurrentPeriodNumber} will become Current, and later periods will remain Future.</p>
-        <p>No month-end snapshots or accrual reversals are created for the historical periods. You can then bulk-import Actual Cost into P1–P{initialCurrentPeriodNumber}.</p>
-        <p><strong>This setup action is only available before Actual Cost or reporting snapshots exist.</strong></p>
-        <div className="confirm-actions"><button className="button secondary" disabled={working} onClick={() => setConfirmInitialCurrent(false)}>Cancel</button><button className="button primary" disabled={working} onClick={() => void setInitialCurrentPeriod()}>{working ? "Updating…" : "Set Current Period"}</button></div>
-      </div>
-    </div>}
-
     {confirmAdvance && currentPeriod && advanceTarget && <div className="confirm-layer">
       <button className="confirm-scrim" onClick={() => !working && setConfirmAdvance(false)} aria-label="Close advance confirmation"/>
       <div className="confirm-dialog" role="alertdialog" aria-modal="true">
         <div className="confirm-icon">!</div>
         <h2>Advance Current Period to P{advanceTarget}?</h2>
         <p>This will sequentially close P{currentPeriod.period_number} through P{Number(advanceTarget) - 1} and make <strong>P{advanceTarget}</strong> Current.</p>
-        <p>Each period will use the normal month-end close process, including period snapshots and accrual reversals. Use <strong>Set Current Period</strong> instead when initially onboarding historical project data.</p>
+        <p>Each period will use the normal close process, including period snapshots and accrual reversals. For historical setup, load the Actual Cost data into the required periods first, then advance the Current period.</p>
         <p><strong>This can close many periods and cannot be undone.</strong></p>
         {working && progress > 0 && <div style={{ marginTop: 12, textAlign: "left" }}><div style={{ height: 10, borderRadius: 6, background: "#e5e7eb", overflow: "hidden" }}><div style={{ height: "100%", width: `${Math.max(0, Math.min(100, progress))}%`, background: "#2563eb" }}/></div><small>Closing periods… {Math.round(progress)}%</small></div>}
         <div className="confirm-actions"><button className="button secondary" disabled={working} onClick={() => setConfirmAdvance(false)}>Cancel</button><button className="button danger" disabled={working} onClick={() => void advanceCurrentPeriod()}>{working ? "Advancing…" : `Yes, Advance to P${advanceTarget}`}</button></div>
