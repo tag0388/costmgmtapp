@@ -1,3 +1,4 @@
+import { refreshClosedCostPeriodSnapshots } from "@/lib/cost-reporting";
 import { SupabaseRequestError, supabaseRequest } from "@/lib/supabase/browser";
 
 export const ACTUAL_PROJECT_ATTRIBUTE_FIELDS = Array.from({ length: 20 }, (_, index) => `p_attribute_${String(index + 1).padStart(2, "0")}`) as ActualProjectAttributeField[];
@@ -165,8 +166,11 @@ export async function importActualCostTransactions(projectId: string, rows: Actu
 
   for (let index = 0; index < rows.length; index += 1) {
     await insertRow(projectId, rows[index]);
-    onProgress?.(((index + 1) / Math.max(rows.length, 1)) * 100);
+    onProgress?.(((index + 1) / Math.max(rows.length, 1)) * 95);
   }
+
+  await refreshClosedCostPeriodSnapshots(projectId);
+  onProgress?.(100);
 }
 
 export function actualCostErrorMessage(error: unknown) {
