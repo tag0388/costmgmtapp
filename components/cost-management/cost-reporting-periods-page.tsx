@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { getProjectByPublicId, Project } from "@/lib/projects";
 import {
+  advanceCurrentCostReportingPeriod,
   clearCostReportingPeriods,
   closeCostReportingPeriod,
   CostPeriodFrequency,
@@ -37,6 +38,8 @@ export default function CostReportingPeriodsPage({ projectPublicId }: { projectP
   const [confirmReduce, setConfirmReduce] = useState(false);
   const [confirmRebuild, setConfirmRebuild] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
+  const [confirmAdvance, setConfirmAdvance] = useState(false);
+  const [advanceTarget, setAdvanceTarget] = useState("");
 
   const hasClosedPeriod = periods.some((period) => period.status === "Closed");
   const currentPeriod = useMemo(() => periods.find((period) => period.status === "Current") ?? null, [periods]);
@@ -185,6 +188,26 @@ export default function CostReportingPeriodsPage({ projectPublicId }: { projectP
     }
   }
 
+  async function advanceCurrentPeriod() {
+    if (!project || !currentPeriod) return;
+    const target = Number(advanceTarget);
+    if (!Number.isInteger(target) || target <= currentPeriod.period_number) {
+      return setError(`Choose a target period after the current P${currentPeriod.period_number}.`);
+    }
+    setWorking(true); setProgress(0); setError(""); setNotice("");
+    try {
+      const result = await advanceCurrentCostReportingPeriod(project.id, target, setProgress);
+      setConfirmAdvance(false);
+      const refreshed = await listCostReportingPeriods(project.id);
+      setPeriods(refreshed);
+      setNotice(`${result.periods_closed} period${result.periods_closed === 1 ? "" : "s"} closed. P${result.current_period} is now Current.`);
+    } catch (requestError) {
+      setError(costReportingErrorMessage(requestError));
+    } finally {
+      setWorking(false);
+    }
+  }
+
   async function closePeriod() {
     if (!project || !currentPeriod) return;
     if (!nextPeriod) {
@@ -232,6 +255,19 @@ export default function CostReportingPeriodsPage({ projectPublicId }: { projectP
         <span>{currentPeriod ? `Current: P${currentPeriod.period_number} · ${currentPeriod.start_date} to ${currentPeriod.end_date}` : periods.length ? "No Current period" : "No periods created yet"}</span>
         <div style={{ display: "flex", gap: 8 }}>
           {!hasClosedPeriod && periods.length > 0 && <button className="button danger" disabled={working} onClick={() => setConfirmClear(true)}>Clear All Periods</button>}
+          {currentPeriod && periods.some((period) => period.period_number > currentPeriod.period_number) && <span style={{ display: "inline-flex", alignItems: "stretch" }}>
+            <select
+              aria-label="Advance Current Period target"
+              value={advanceTarget}
+              disabled={working}
+              onChange={(event) => setAdvanceTarget(event.target.value)}
+              style={{ minWidth: 92, border: "1px solid #cbd5e1", borderRight: 0, borderRadius: "6px 0 0 6px", padding: "0 8px", fontSize: 12 }}
+            >
+              <option value="">To period…</option>
+              {periods.filter((period) => period.period_number > currentPeriod.period_number).map((period) => <option key={period.id} value={period.period_number}>P{period.period_number}</option>)}
+            </select>
+            <button className="button secondary" style={{ borderTopLeftRadius: 0, borderBottomLeftRadius: 0 }} disabled={working || !advanceTarget} onClick={() => setConfirmAdvance(true)}>Advance Current</button>
+          </span>}
           <button className="button danger" disabled={working || !currentPeriod} onClick={() => setConfirmClose(true)}>Close Period</button>
           <button className="button primary" disabled={working || !project} onClick={() => void applyPeriodCount()}>
             {working && progress > 0
@@ -288,6 +324,19 @@ export default function CostReportingPeriodsPage({ projectPublicId }: { projectP
         <p>This will reduce the reporting calendar from <strong>{periods.length}</strong> periods to <strong>{form.number_of_periods}</strong>.</p>
         <p>Only Future periods after P{form.number_of_periods} will be removed. Any timephasing or future phasing allocations in those removed periods will also be deleted.</p>
         <div className="confirm-actions"><button className="button secondary" disabled={working} onClick={() => setConfirmReduce(false)}>Cancel</button><button className="button danger" disabled={working} onClick={() => void reducePeriods()}>{working ? "Removing…" : "Yes, Remove Periods"}</button></div>
+      </div>
+    </div>}
+
+    {confirmAdvance && currentPeriod && advanceTarget && <div className="confirm-layer">
+      <button className="confirm-scrim" onClick={() => !working && setConfirmAdvance(false)} aria-label="Close advance confirmation"/>
+      <div className="confirm-dialog" role="alertdialog" aria-modal="true">
+        <div className="confirm-icon">!</div>
+        <h2>Advance Current Period to P{advanceTarget}?</h2>
+        <p>This will sequentially close P{currentPeriod.period_number} through P{Number(advanceTarget) - 1} and make <strong>P{advanceTarget}</strong> Current.</p>
+        <p>Each period will use the normal close process, including period snapshots and accrual reversals. For historical setup, load the Actual Cost data into the required periods first, then advance the Current period.</p>
+        <p><strong>This can close many periods and cannot be undone.</strong></p>
+        {working && progress > 0 && <div style={{ marginTop: 12, textAlign: "left" }}><div style={{ height: 10, borderRadius: 6, background: "#e5e7eb", overflow: "hidden" }}><div style={{ height: "100%", width: `${Math.max(0, Math.min(100, progress))}%`, background: "#2563eb" }}/></div><small>Closing periods… {Math.round(progress)}%</small></div>}
+        <div className="confirm-actions"><button className="button secondary" disabled={working} onClick={() => setConfirmAdvance(false)}>Cancel</button><button className="button danger" disabled={working} onClick={() => void advanceCurrentPeriod()}>{working ? "Advancing…" : `Yes, Advance to P${advanceTarget}`}</button></div>
       </div>
     </div>}
 
