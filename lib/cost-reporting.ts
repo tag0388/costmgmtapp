@@ -132,10 +132,32 @@ export async function generateCostReportingPeriods(projectId: string, input: Cos
   await insertPeriods(buildReportingPeriods(projectId, input), onProgress);
 }
 
-export async function regenerateCostReportingPeriods(projectId: string, input: CostReportingSettingsInput, onProgress?: (progress: number) => void) {
+export async function clearCostReportingPeriods(projectId: string) {
   const existing = await listCostReportingPeriods(projectId);
-  if (existing.some((period) => period.status === "Closed")) throw new Error("Reporting periods cannot be regenerated after a period has been closed.");
-  await supabaseRequest<unknown[]>(`cost_reporting_periods?project_id=eq.${encodeURIComponent(projectId)}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
+  if (existing.some((period) => period.status === "Closed")) throw new Error("Reporting periods cannot be cleared after a period has been closed.");
+
+  const actuals = await supabaseRequest<Array<{ id: string }>>(
+    `actual_cost_transactions?project_id=eq.${encodeURIComponent(projectId)}&select=id&limit=1`,
+  );
+  if (actuals.length) {
+    throw new Error("Reporting periods cannot be cleared while Actual Cost transactions are assigned to them. Delete or re-import the Actual Cost data after rebuilding the reporting calendar.");
+  }
+
+  // Timephasing uses NO ACTION on the period foreign key, so remove period-derived rows first.
+  await supabaseRequest(`cost_code_timephasing?project_id=eq.${encodeURIComponent(projectId)}`, {
+    method: "DELETE",
+    headers: { Prefer: "return=minimal" },
+  });
+
+  // Other period children (CTC allocations and snapshots) cascade from the period rows.
+  await supabaseRequest(`cost_reporting_periods?project_id=eq.${encodeURIComponent(projectId)}`, {
+    method: "DELETE",
+    headers: { Prefer: "return=minimal" },
+  });
+}
+
+export async function regenerateCostReportingPeriods(projectId: string, input: CostReportingSettingsInput, onProgress?: (progress: number) => void) {
+  await clearCostReportingPeriods(projectId);
   await insertPeriods(buildReportingPeriods(projectId, input), onProgress);
 }
 
