@@ -231,20 +231,6 @@ export async function advanceCurrentCostReportingPeriod(projectId: string, targe
 }
 
 
-export type InitialCurrentPeriodResult = {
-  project_id: string;
-  current_period_number: number;
-  historical_periods: number;
-  future_periods: number;
-};
-
-export function setInitialCurrentCostPeriod(projectId: string, periodNumber: number) {
-  return supabaseRequest<InitialCurrentPeriodResult>("rpc/set_initial_current_cost_period", {
-    method: "POST",
-    body: JSON.stringify({ p_project_id: projectId, p_period_number: periodNumber }),
-  });
-}
-
 export async function closeCostReportingPeriod(projectId: string, periodId: string) {
   await supabaseRequest("rpc/close_cost_period", {
     method: "POST",
