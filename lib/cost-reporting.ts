@@ -133,10 +133,33 @@ export async function generateCostReportingPeriods(projectId: string, input: Cos
 }
 
 export async function regenerateCostReportingPeriods(projectId: string, input: CostReportingSettingsInput, onProgress?: (progress: number) => void) {
-  const existing = await listCostReportingPeriods(projectId);
-  if (existing.some((period) => period.status === "Closed")) throw new Error("Reporting periods cannot be regenerated after a period has been closed.");
-  await supabaseRequest<unknown[]>(`cost_reporting_periods?project_id=eq.${encodeURIComponent(projectId)}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
-  await insertPeriods(buildReportingPeriods(projectId, input), onProgress);
+  const normalized = normalizeSettingsInput(input);
+  onProgress?.(10);
+  const result = await supabaseRequest<{
+    project_id: string;
+    periods: number;
+    removed_periods: number;
+    actuals_reassigned: number;
+    start_date: string;
+    end_date: string;
+  }>("rpc/reset_cost_reporting_periods", {
+    method: "POST",
+    body: JSON.stringify({
+      p_project_id: projectId,
+      p_frequency: normalized.frequency,
+      p_start_date: normalized.start_date,
+      p_number_of_periods: normalized.number_of_periods,
+    }),
+  });
+  onProgress?.(100);
+  return result;
+}
+
+export async function clearCostReportingPeriods(projectId: string) {
+  return supabaseRequest<{ project_id: string; periods_removed: number }>("rpc/clear_cost_reporting_periods", {
+    method: "POST",
+    body: JSON.stringify({ p_project_id: projectId }),
+  });
 }
 
 export async function extendCostReportingPeriods(projectId: string, input: CostReportingSettingsInput, onProgress?: (progress: number) => void) {
