@@ -208,6 +208,28 @@ export async function trimCostReportingPeriods(projectId: string, targetCount: n
   });
 }
 
+export async function advanceCurrentCostReportingPeriod(projectId: string, targetPeriodNumber: number, onProgress?: (progress: number) => void) {
+  const periods = await listCostReportingPeriods(projectId);
+  const current = periods.find((period) => period.status === "Current") ?? null;
+  if (!current) throw new Error("There is no Current reporting period to advance.");
+  if (!Number.isInteger(targetPeriodNumber)) throw new Error("Target period must be a whole number.");
+  if (targetPeriodNumber <= current.period_number) throw new Error(`Target period must be after the current P${current.period_number}.`);
+
+  const target = periods.find((period) => period.period_number === targetPeriodNumber);
+  if (!target) throw new Error(`P${targetPeriodNumber} does not exist in this project.`);
+
+  const toClose = periods
+    .filter((period) => period.period_number >= current.period_number && period.period_number < targetPeriodNumber)
+    .sort((a, b) => a.period_number - b.period_number);
+
+  for (let index = 0; index < toClose.length; index += 1) {
+    await closeCostReportingPeriod(projectId, toClose[index].id);
+    onProgress?.(((index + 1) / toClose.length) * 100);
+  }
+
+  return { periods_closed: toClose.length, current_period: targetPeriodNumber };
+}
+
 export async function closeCostReportingPeriod(projectId: string, periodId: string) {
   await supabaseRequest("rpc/close_cost_period", {
     method: "POST",
