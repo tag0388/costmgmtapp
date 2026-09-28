@@ -132,10 +132,36 @@ export async function generateCostReportingPeriods(projectId: string, input: Cos
   await insertPeriods(buildReportingPeriods(projectId, input), onProgress);
 }
 
-export async function regenerateCostReportingPeriods(projectId: string, input: CostReportingSettingsInput, onProgress?: (progress: number) => void) {
+async function assertPeriodsCanBeReset(projectId: string) {
   const existing = await listCostReportingPeriods(projectId);
-  if (existing.some((period) => period.status === "Closed")) throw new Error("Reporting periods cannot be regenerated after a period has been closed.");
-  await supabaseRequest<unknown[]>(`cost_reporting_periods?project_id=eq.${encodeURIComponent(projectId)}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
+  if (existing.some((period) => period.status === "Closed")) {
+    throw new Error("Reporting periods cannot be reset after a period has been closed.");
+  }
+  const actualRows = await supabaseRequest<Array<{ id: string }>>(
+    `actual_cost_transactions?project_id=eq.${encodeURIComponent(projectId)}&select=id&limit=1`,
+  );
+  if (actualRows.length) {
+    throw new Error("Reporting periods cannot be reset while Actual Cost transactions are assigned to the current calendar. Remove or re-import the Actual Cost data after the reporting calendar is finalised.");
+  }
+  return existing;
+}
+
+export async function clearCostReportingPeriods(projectId: string) {
+  await assertPeriodsCanBeReset(projectId);
+
+  await supabaseRequest(`cost_code_timephasing?project_id=eq.${encodeURIComponent(projectId)}`, {
+    method: "DELETE",
+    headers: { Prefer: "return=minimal" },
+  });
+
+  await supabaseRequest(`cost_reporting_periods?project_id=eq.${encodeURIComponent(projectId)}`, {
+    method: "DELETE",
+    headers: { Prefer: "return=minimal" },
+  });
+}
+
+export async function regenerateCostReportingPeriods(projectId: string, input: CostReportingSettingsInput, onProgress?: (progress: number) => void) {
+  await clearCostReportingPeriods(projectId);
   await insertPeriods(buildReportingPeriods(projectId, input), onProgress);
 }
 
