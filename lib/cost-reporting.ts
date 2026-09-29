@@ -266,20 +266,6 @@ export async function initializeHistoricalReportingPeriods(projectId: string, cl
   });
 }
 
-export type InitializeCurrentPeriodResult = {
-  project_id: string;
-  current_period_number: number;
-  closed_periods: number;
-  periods: number;
-};
-
-export function initializeCostReportingCurrentPeriod(projectId: string, periodId: string) {
-  return supabaseRequest<InitializeCurrentPeriodResult>("rpc/initialize_cost_reporting_current_period", {
-    method: "POST",
-    body: JSON.stringify({ p_project_id: projectId, p_current_period_id: periodId }),
-  });
-}
-
 export async function closeCostReportingPeriod(projectId: string, periodId: string) {
   await supabaseRequest("rpc/close_cost_period", {
     method: "POST",
