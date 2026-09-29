@@ -41,7 +41,7 @@ export default function CostReportingPeriodsPage({ projectPublicId }: { projectP
   const [historicalPeriod, setHistoricalPeriod] = useState(1);
   const [confirmHistorical, setConfirmHistorical] = useState(false);
 
-  const hasClosedPeriod = periods.some((period) => period.status === "Closed");
+  const hasClosedPeriod = periods.some((period) => period.status === "Closed" && Boolean(period.closed_at));
   const currentPeriod = useMemo(() => periods.find((period) => period.status === "Current") ?? null, [periods]);
   const nextPeriod = useMemo(() => currentPeriod ? periods.find((period) => period.period_number === currentPeriod.period_number + 1) ?? null : null, [currentPeriod, periods]);
 
