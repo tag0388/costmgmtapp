@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { getProjectByPublicId, Project } from "@/lib/projects";
 import {
-  advanceCurrentCostReportingPeriod,
   clearCostReportingPeriods,
   closeCostReportingPeriod,
   CostPeriodFrequency,
@@ -17,7 +16,7 @@ import {
   regenerateCostReportingPeriods,
   getCostReportingSettings,
   listCostReportingPeriods,
-  setHistoricalCurrentCostPeriod,
+  initializeHistoricalReportingPeriods,
   trimCostReportingPeriods,
   updateCostReportingSettings,
 } from "@/lib/cost-reporting";
@@ -41,8 +40,6 @@ export default function CostReportingPeriodsPage({ projectPublicId }: { projectP
   const [confirmClear, setConfirmClear] = useState(false);
   const [historicalPeriod, setHistoricalPeriod] = useState(1);
   const [confirmHistorical, setConfirmHistorical] = useState(false);
-  const [confirmAdvance, setConfirmAdvance] = useState(false);
-  const [advanceTarget, setAdvanceTarget] = useState("");
 
   const hasClosedPeriod = periods.some((period) => period.status === "Closed");
   const currentPeriod = useMemo(() => periods.find((period) => period.status === "Current") ?? null, [periods]);
@@ -60,7 +57,7 @@ export default function CostReportingPeriodsPage({ projectPublicId }: { projectP
       ]);
       setSettings(currentSettings);
       setPeriods(currentPeriods);
-      setHistoricalPeriod(Math.max(1, currentPeriods.find((period) => period.status === "Current")?.period_number ?? 1));
+      setHistoricalPeriod(Math.max(1, (currentPeriods.find((period) => period.status === "Current")?.period_number ?? 1) - 1));
       setForm(currentSettings ? {
         frequency: currentSettings.frequency,
         start_date: currentSettings.start_date,
@@ -192,37 +189,17 @@ export default function CostReportingPeriodsPage({ projectPublicId }: { projectP
     }
   }
 
-  async function advanceCurrentPeriod() {
-    if (!project || !currentPeriod) return;
-    const target = Number(advanceTarget);
-    if (!Number.isInteger(target) || target <= currentPeriod.period_number) {
-      return setError(`Choose a target period after the current P${currentPeriod.period_number}.`);
-    }
-    setWorking(true); setProgress(0); setError(""); setNotice("");
-    try {
-      const result = await advanceCurrentCostReportingPeriod(project.id, target, setProgress);
-      setConfirmAdvance(false);
-      const refreshed = await listCostReportingPeriods(project.id);
-      setPeriods(refreshed);
-      setNotice(`${result.periods_closed} period${result.periods_closed === 1 ? "" : "s"} closed. P${result.current_period} is now Current.`);
-    } catch (requestError) {
-      setError(costReportingErrorMessage(requestError));
-    } finally {
-      setWorking(false);
-    }
-  }
-
   async function applyHistoricalCurrentPeriod() {
     if (!project) return;
-    if (!Number.isInteger(historicalPeriod) || historicalPeriod < 1 || historicalPeriod > periods.length) {
-      return setError(`Current Period must be between P1 and P${periods.length}.`);
+    if (!Number.isInteger(historicalPeriod) || historicalPeriod < 1 || historicalPeriod >= periods.length) {
+      return setError(`Close Through Period must be between P1 and P${Math.max(periods.length - 1, 1)}.`);
     }
     setWorking(true); setError(""); setNotice("");
     try {
-      const result = await setHistoricalCurrentCostPeriod(project.id, historicalPeriod);
+      const result = await initializeHistoricalReportingPeriods(project.id, historicalPeriod);
       setConfirmHistorical(false);
       setPeriods(await listCostReportingPeriods(project.id));
-      setNotice(`Historical setup complete: P1–P${Math.max(result.current_period_number - 1, 0)} Closed, P${result.current_period_number} Current.`);
+      setNotice(`Historical setup complete: P1–P${result.closed_through} Closed, P${result.current_period} Current. You can now bulk import Actual Cost into the closed periods.`);
     } catch (requestError) {
       setError(costReportingErrorMessage(requestError));
     } finally {
@@ -272,12 +249,12 @@ export default function CostReportingPeriodsPage({ projectPublicId }: { projectP
             : "No period has been closed yet. You can freely change Frequency, Start Date and Number of Periods, rebuild the calendar from P1, or clear all periods and start again."}</span>
         </div>
         {!hasClosedPeriod && periods.length > 1 && <div className="enterprise-settings-section" style={{ marginTop: 16, padding: 0 }}>
-          <div className="enterprise-settings-heading"><div><strong>Historical Project Setup</strong><span>Use this once when onboarding a live project with historical Actual Costs. Choose the period that should become Current; all earlier periods will be marked Closed without requiring individual month-end closes.</span></div></div>
+          <div className="enterprise-settings-heading"><div><strong>Historical Project Setup</strong><span>Use this once when onboarding a live project. Choose the last completed historical period; all periods through that point will be marked Closed and the following period will become Current without running dozens of month-end closes.</span></div></div>
           <div className="form-grid">
-            <label className="form-field"><span>Set Current Period</span><select value={historicalPeriod} disabled={working} onChange={(event) => setHistoricalPeriod(Number(event.target.value))}>{periods.map((period) => <option key={period.id} value={period.period_number}>P{period.period_number} · {period.start_date} to {period.end_date}</option>)}</select></label>
+            <label className="form-field"><span>Close Through Period</span><select value={historicalPeriod} disabled={working} onChange={(event) => setHistoricalPeriod(Number(event.target.value))}>{periods.slice(0, -1).map((period) => <option key={period.id} value={period.period_number}>P{period.period_number} · {period.start_date} to {period.end_date}</option>)}</select></label>
           </div>
           <div style={{ marginTop: 12 }}>
-            <button className="button secondary" disabled={working || historicalPeriod <= 1} onClick={() => setConfirmHistorical(true)}>Set Historical Current Period</button>
+            <button className="button secondary" disabled={working || historicalPeriod < 1} onClick={() => setConfirmHistorical(true)}>Close Through P{historicalPeriod}</button>
           </div>
         </div>}
       </div>
@@ -286,19 +263,6 @@ export default function CostReportingPeriodsPage({ projectPublicId }: { projectP
         <span>{currentPeriod ? `Current: P${currentPeriod.period_number} · ${currentPeriod.start_date} to ${currentPeriod.end_date}` : periods.length ? "No Current period" : "No periods created yet"}</span>
         <div style={{ display: "flex", gap: 8 }}>
           {!hasClosedPeriod && periods.length > 0 && <button className="button danger" disabled={working} onClick={() => setConfirmClear(true)}>Clear All Periods</button>}
-          {currentPeriod && periods.some((period) => period.period_number > currentPeriod.period_number) && <span style={{ display: "inline-flex", alignItems: "stretch" }}>
-            <select
-              aria-label="Advance Current Period target"
-              value={advanceTarget}
-              disabled={working}
-              onChange={(event) => setAdvanceTarget(event.target.value)}
-              style={{ minWidth: 92, border: "1px solid #cbd5e1", borderRight: 0, borderRadius: "6px 0 0 6px", padding: "0 8px", fontSize: 12 }}
-            >
-              <option value="">To period…</option>
-              {periods.filter((period) => period.period_number > currentPeriod.period_number).map((period) => <option key={period.id} value={period.period_number}>P{period.period_number}</option>)}
-            </select>
-            <button className="button secondary" style={{ borderTopLeftRadius: 0, borderBottomLeftRadius: 0 }} disabled={working || !advanceTarget} onClick={() => setConfirmAdvance(true)}>Advance Current</button>
-          </span>}
           <button className="button danger" disabled={working || !currentPeriod} onClick={() => setConfirmClose(true)}>Close Period</button>
           <button className="button primary" disabled={working || !project} onClick={() => void applyPeriodCount()}>
             {working && progress > 0
@@ -327,11 +291,12 @@ export default function CostReportingPeriodsPage({ projectPublicId }: { projectP
       <button className="confirm-scrim" onClick={() => !working && setConfirmHistorical(false)} aria-label="Close historical setup confirmation"/>
       <div className="confirm-dialog" role="alertdialog" aria-modal="true">
         <div className="confirm-icon">!</div>
-        <h2>Set P{historicalPeriod} as Current?</h2>
-        <p>This Historical Setup action will mark P1–P{Math.max(historicalPeriod - 1, 0)} as Closed, P{historicalPeriod} as Current, and all later periods as Future.</p>
-        <p>Use this for initial onboarding of a live project. It does not perform the normal month-end close process or create accrual reversals for each historical period.</p>
-        <p>After you bulk import Actual Costs, historical snapshots will be rebuilt automatically from the imported data.</p>
-        <div className="confirm-actions"><button className="button secondary" disabled={working} onClick={() => setConfirmHistorical(false)}>Cancel</button><button className="button primary" disabled={working} onClick={() => void applyHistoricalCurrentPeriod()}>{working ? "Updating…" : `Yes, Set P${historicalPeriod} Current`}</button></div>
+        <h2>Close Through P{historicalPeriod}?</h2>
+        <p>This Historical Setup action will mark P1–P{historicalPeriod} as Closed, make <strong>P{historicalPeriod + 1}</strong> Current, and leave all later periods as Future.</p>
+        <p>It does not run the normal month-end close process or create accrual reversals for each historical period. Use it before importing the historical Actual Cost data.</p>
+        <p>After the Actual Cost import completes, the app automatically rebuilds snapshots for the historical Closed periods from the imported data.</p>
+        <p><strong>Historical setup must be completed before Actual Cost is imported.</strong></p>
+        <div className="confirm-actions"><button className="button secondary" disabled={working} onClick={() => setConfirmHistorical(false)}>Cancel</button><button className="button primary" disabled={working} onClick={() => void applyHistoricalCurrentPeriod()}>{working ? "Updating…" : `Yes, Close Through P${historicalPeriod}`}</button></div>
       </div>
     </div>}
 
@@ -367,19 +332,6 @@ export default function CostReportingPeriodsPage({ projectPublicId }: { projectP
         <p>This will reduce the reporting calendar from <strong>{periods.length}</strong> periods to <strong>{form.number_of_periods}</strong>.</p>
         <p>Only Future periods after P{form.number_of_periods} will be removed. Any timephasing or future phasing allocations in those removed periods will also be deleted.</p>
         <div className="confirm-actions"><button className="button secondary" disabled={working} onClick={() => setConfirmReduce(false)}>Cancel</button><button className="button danger" disabled={working} onClick={() => void reducePeriods()}>{working ? "Removing…" : "Yes, Remove Periods"}</button></div>
-      </div>
-    </div>}
-
-    {confirmAdvance && currentPeriod && advanceTarget && <div className="confirm-layer">
-      <button className="confirm-scrim" onClick={() => !working && setConfirmAdvance(false)} aria-label="Close advance confirmation"/>
-      <div className="confirm-dialog" role="alertdialog" aria-modal="true">
-        <div className="confirm-icon">!</div>
-        <h2>Advance Current Period to P{advanceTarget}?</h2>
-        <p>This will sequentially close P{currentPeriod.period_number} through P{Number(advanceTarget) - 1} and make <strong>P{advanceTarget}</strong> Current.</p>
-        <p>Each period will use the normal close process, including period snapshots and accrual reversals. For historical setup, load the Actual Cost data into the required periods first, then advance the Current period.</p>
-        <p><strong>This can close many periods and cannot be undone.</strong></p>
-        {working && progress > 0 && <div style={{ marginTop: 12, textAlign: "left" }}><div style={{ height: 10, borderRadius: 6, background: "#e5e7eb", overflow: "hidden" }}><div style={{ height: "100%", width: `${Math.max(0, Math.min(100, progress))}%`, background: "#2563eb" }}/></div><small>Closing periods… {Math.round(progress)}%</small></div>}
-        <div className="confirm-actions"><button className="button secondary" disabled={working} onClick={() => setConfirmAdvance(false)}>Cancel</button><button className="button danger" disabled={working} onClick={() => void advanceCurrentPeriod()}>{working ? "Advancing…" : `Yes, Advance to P${advanceTarget}`}</button></div>
       </div>
     </div>}
 
