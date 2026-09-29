@@ -284,6 +284,57 @@ export function initializeCostReportingCurrentPeriod(projectId: string, currentP
   });
 }
 
+export async function setCurrentReportingPeriodForSetup(projectId: string, targetPeriodNumber: number) {
+  const periods = await listCostReportingPeriods(projectId);
+  const target = periods.find((period) => period.period_number === targetPeriodNumber);
+  if (!target) throw new Error(`P${targetPeriodNumber} does not exist in this reporting calendar.`);
+
+  const [actualRows, projectSnapshots, costCodeSnapshots] = await Promise.all([
+    supabaseRequest<Array<{ id: string }>>(
+      `actual_cost_transactions?project_id=eq.${encodeURIComponent(projectId)}&select=id&limit=1`,
+    ),
+    supabaseRequest<Array<{ id: string }>>(
+      `project_period_snapshots?project_id=eq.${encodeURIComponent(projectId)}&select=id&limit=1`,
+    ),
+    supabaseRequest<Array<{ id: string }>>(
+      `cost_code_period_snapshots?project_id=eq.${encodeURIComponent(projectId)}&select=id&limit=1`,
+    ),
+  ]);
+
+  if (actualRows.length) {
+    throw new Error("Current Period can only be force-set before Actual Cost has been loaded. Clear the Actual Cost data first or continue using the normal Close Period workflow.");
+  }
+  if (projectSnapshots.length || costCodeSnapshots.length) {
+    throw new Error("Current Period can only be force-set before normal period-close snapshots exist. Continue using the normal Close Period workflow.");
+  }
+
+  await supabaseRequest(`cost_reporting_periods?project_id=eq.${encodeURIComponent(projectId)}`, {
+    method: "PATCH",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify({ status: "Future", closed_at: null, closed_by: null }),
+  });
+
+  if (targetPeriodNumber > 1) {
+    await supabaseRequest(
+      `cost_reporting_periods?project_id=eq.${encodeURIComponent(projectId)}&period_number=lt.${targetPeriodNumber}`,
+      {
+        method: "PATCH",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify({ status: "Closed", closed_at: null, closed_by: null }),
+      },
+    );
+  }
+
+  await supabaseRequest(
+    `cost_reporting_periods?project_id=eq.${encodeURIComponent(projectId)}&period_number=eq.${targetPeriodNumber}`,
+    {
+      method: "PATCH",
+      headers: { Prefer: "return=minimal" },
+      body: JSON.stringify({ status: "Current", closed_at: null, closed_by: null }),
+    },
+  );
+}
+
 export async function closeCostReportingPeriod(projectId: string, periodId: string) {
   await supabaseRequest("rpc/close_cost_period", {
     method: "POST",
