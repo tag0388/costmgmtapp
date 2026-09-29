@@ -134,8 +134,8 @@ export async function generateCostReportingPeriods(projectId: string, input: Cos
 
 async function assertPeriodsCanBeReset(projectId: string) {
   const existing = await listCostReportingPeriods(projectId);
-  if (existing.some((period) => period.status === "Closed")) {
-    throw new Error("Reporting periods cannot be reset after a period has been closed.");
+  if (existing.some((period) => period.status === "Closed" && period.closed_at)) {
+    throw new Error("Reporting periods cannot be reset after a formal period close.");
   }
   const actualRows = await supabaseRequest<Array<{ id: string }>>(
     `actual_cost_transactions?project_id=eq.${encodeURIComponent(projectId)}&select=id&limit=1`,
