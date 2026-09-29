@@ -132,10 +132,36 @@ export async function generateCostReportingPeriods(projectId: string, input: Cos
   await insertPeriods(buildReportingPeriods(projectId, input), onProgress);
 }
 
-export async function regenerateCostReportingPeriods(projectId: string, input: CostReportingSettingsInput, onProgress?: (progress: number) => void) {
+async function assertPeriodsCanBeReset(projectId: string) {
   const existing = await listCostReportingPeriods(projectId);
-  if (existing.some((period) => period.status === "Closed")) throw new Error("Reporting periods cannot be regenerated after a period has been closed.");
-  await supabaseRequest<unknown[]>(`cost_reporting_periods?project_id=eq.${encodeURIComponent(projectId)}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
+  if (existing.some((period) => period.status === "Closed" && period.closed_at)) {
+    throw new Error("Reporting periods cannot be reset after a formal period close.");
+  }
+  const actualRows = await supabaseRequest<Array<{ id: string }>>(
+    `actual_cost_transactions?project_id=eq.${encodeURIComponent(projectId)}&select=id&limit=1`,
+  );
+  if (actualRows.length) {
+    throw new Error("Reporting periods cannot be reset while Actual Cost transactions are assigned to the current calendar. Remove or re-import the Actual Cost data after the reporting calendar is finalised.");
+  }
+  return existing;
+}
+
+export async function clearCostReportingPeriods(projectId: string) {
+  await assertPeriodsCanBeReset(projectId);
+
+  await supabaseRequest(`cost_code_timephasing?project_id=eq.${encodeURIComponent(projectId)}`, {
+    method: "DELETE",
+    headers: { Prefer: "return=minimal" },
+  });
+
+  await supabaseRequest(`cost_reporting_periods?project_id=eq.${encodeURIComponent(projectId)}`, {
+    method: "DELETE",
+    headers: { Prefer: "return=minimal" },
+  });
+}
+
+export async function regenerateCostReportingPeriods(projectId: string, input: CostReportingSettingsInput, onProgress?: (progress: number) => void) {
+  await clearCostReportingPeriods(projectId);
   await insertPeriods(buildReportingPeriods(projectId, input), onProgress);
 }
 
@@ -179,6 +205,82 @@ export async function trimCostReportingPeriods(projectId: string, targetCount: n
   await supabaseRequest(`cost_reporting_periods?project_id=eq.${encodeURIComponent(projectId)}&id=in.(${ids})`, {
     method: "DELETE",
     headers: { Prefer: "return=minimal" },
+  });
+}
+
+export async function advanceCurrentCostReportingPeriod(projectId: string, targetPeriodNumber: number, onProgress?: (progress: number) => void) {
+  const periods = await listCostReportingPeriods(projectId);
+  const current = periods.find((period) => period.status === "Current") ?? null;
+  if (!current) throw new Error("There is no Current reporting period to advance.");
+  if (!Number.isInteger(targetPeriodNumber)) throw new Error("Target period must be a whole number.");
+  if (targetPeriodNumber <= current.period_number) throw new Error(`Target period must be after the current P${current.period_number}.`);
+
+  const target = periods.find((period) => period.period_number === targetPeriodNumber);
+  if (!target) throw new Error(`P${targetPeriodNumber} does not exist in this project.`);
+
+  const toClose = periods
+    .filter((period) => period.period_number >= current.period_number && period.period_number < targetPeriodNumber)
+    .sort((a, b) => a.period_number - b.period_number);
+
+  for (let index = 0; index < toClose.length; index += 1) {
+    await closeCostReportingPeriod(projectId, toClose[index].id);
+    onProgress?.(((index + 1) / toClose.length) * 100);
+  }
+
+  return { periods_closed: toClose.length, current_period: targetPeriodNumber };
+}
+
+
+
+export type HistoricalCurrentPeriodResult = {
+  project_id: string;
+  current_period_number: number;
+  closed_periods: number;
+  current_period_id: string;
+};
+
+export function setHistoricalCurrentCostPeriod(projectId: string, currentPeriodNumber: number) {
+  return supabaseRequest<HistoricalCurrentPeriodResult>("rpc/set_historical_current_cost_period", {
+    method: "POST",
+    body: JSON.stringify({ p_project_id: projectId, p_current_period_number: currentPeriodNumber }),
+  });
+}
+
+export function refreshClosedCostPeriodSnapshots(projectId: string) {
+  return supabaseRequest<number>("rpc/refresh_closed_cost_period_snapshots", {
+    method: "POST",
+    body: JSON.stringify({ p_project_id: projectId }),
+  });
+}
+
+export async function initializeHistoricalReportingPeriods(projectId: string, closeThroughPeriodNumber: number) {
+  if (!Number.isInteger(closeThroughPeriodNumber) || closeThroughPeriodNumber < 1) {
+    throw new Error("Close Through Period must be a whole period number greater than zero.");
+  }
+  return supabaseRequest<{ closed_through: number; current_period: number | null }>("rpc/initialize_historical_cost_periods", {
+    method: "POST",
+    body: JSON.stringify({
+      p_project_id: projectId,
+      p_close_through_period_number: closeThroughPeriodNumber,
+    }),
+  });
+}
+
+export type InitializeCurrentPeriodResult = {
+  project_id: string;
+  current_period_number: number;
+  periods_marked_closed: number;
+  current_period_id: string;
+};
+
+export function initializeCostReportingCurrentPeriod(projectId: string, currentPeriodNumber: number) {
+  return supabaseRequest<InitializeCurrentPeriodResult>("rpc/initialize_cost_reporting_current_period", {
+    method: "POST",
+    body: JSON.stringify({
+      p_project_id: projectId,
+      p_current_period_number: currentPeriodNumber,
+      p_closed_by: null,
+    }),
   });
 }
 

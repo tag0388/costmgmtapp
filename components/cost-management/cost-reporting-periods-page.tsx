@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { getProjectByPublicId, Project } from "@/lib/projects";
 import {
+  clearCostReportingPeriods,
   closeCostReportingPeriod,
   CostPeriodFrequency,
   CostReportingPeriod,
@@ -12,8 +13,11 @@ import {
   createCostReportingSettings,
   extendCostReportingPeriods,
   generateCostReportingPeriods,
+  regenerateCostReportingPeriods,
   getCostReportingSettings,
+  initializeCostReportingCurrentPeriod,
   listCostReportingPeriods,
+  initializeHistoricalReportingPeriods,
   trimCostReportingPeriods,
   updateCostReportingSettings,
 } from "@/lib/cost-reporting";
@@ -33,8 +37,14 @@ export default function CostReportingPeriodsPage({ projectPublicId }: { projectP
   const [notice, setNotice] = useState("");
   const [confirmClose, setConfirmClose] = useState(false);
   const [confirmReduce, setConfirmReduce] = useState(false);
+  const [confirmRebuild, setConfirmRebuild] = useState(false);
+  const [confirmClear, setConfirmClear] = useState(false);
+  const [confirmInitialize, setConfirmInitialize] = useState(false);
+  const [initializePeriodNumber, setInitializePeriodNumber] = useState(1);
+  const [historicalPeriod, setHistoricalPeriod] = useState(1);
+  const [confirmHistorical, setConfirmHistorical] = useState(false);
 
-  const hasClosedPeriod = periods.some((period) => period.status === "Closed");
+  const hasClosedPeriod = periods.some((period) => period.status === "Closed" && Boolean(period.closed_at));
   const currentPeriod = useMemo(() => periods.find((period) => period.status === "Current") ?? null, [periods]);
   const nextPeriod = useMemo(() => currentPeriod ? periods.find((period) => period.period_number === currentPeriod.period_number + 1) ?? null : null, [currentPeriod, periods]);
 
@@ -50,6 +60,7 @@ export default function CostReportingPeriodsPage({ projectPublicId }: { projectP
       ]);
       setSettings(currentSettings);
       setPeriods(currentPeriods);
+      setHistoricalPeriod(Math.max(1, (currentPeriods.find((period) => period.status === "Current")?.period_number ?? 1) - 1));
       setForm(currentSettings ? {
         frequency: currentSettings.frequency,
         start_date: currentSettings.start_date,
@@ -68,7 +79,7 @@ export default function CostReportingPeriodsPage({ projectPublicId }: { projectP
     if (!form.start_date) return "Start Date is required.";
     if (!Number.isInteger(form.number_of_periods) || form.number_of_periods <= 0) return "Number of Periods must be a whole number greater than zero.";
     const minimum = currentPeriod ? currentPeriod.period_number + 1 : 1;
-    if (periods.length > 0 && form.number_of_periods < minimum) {
+    if (hasClosedPeriod && periods.length > 0 && form.number_of_periods < minimum) {
       return `Number of Periods cannot be less than ${minimum} while P${currentPeriod?.period_number ?? 0} is Current.`;
     }
     if (hasClosedPeriod && settings && (form.frequency !== settings.frequency || form.start_date !== settings.start_date)) {
@@ -81,8 +92,22 @@ export default function CostReportingPeriodsPage({ projectPublicId }: { projectP
     if (!project) return;
     const validation = validatePeriodCount();
     if (validation) return setError(validation);
-    if (periods.length > 0 && form.number_of_periods === periods.length) return setError("Number of Periods has not changed.");
-    if (periods.length > 0 && form.number_of_periods < periods.length) {
+
+    if (!hasClosedPeriod && periods.length > 0) {
+      const unchanged = settings
+        && form.frequency === settings.frequency
+        && form.start_date === settings.start_date
+        && form.number_of_periods === periods.length;
+      if (unchanged) return setError("Reporting Period settings have not changed.");
+      setError("");
+      setConfirmRebuild(true);
+      return;
+    }
+
+    if (hasClosedPeriod && periods.length > 0 && form.number_of_periods === periods.length) {
+      return setError("Number of Periods has not changed.");
+    }
+    if (hasClosedPeriod && periods.length > 0 && form.number_of_periods < periods.length) {
       setError("");
       setConfirmReduce(true);
       return;
@@ -97,13 +122,49 @@ export default function CostReportingPeriodsPage({ projectPublicId }: { projectP
 
       if (periods.length === 0) {
         await generateCostReportingPeriods(project.id, form, setProgress);
-        setNotice(`${form.number_of_periods} reporting periods created.`);
+        setNotice(`${form.number_of_periods} reporting periods created from ${form.start_date}.`);
       } else {
         const added = form.number_of_periods - periods.length;
         await extendCostReportingPeriods(project.id, form, setProgress);
         setNotice(`${added} reporting period${added === 1 ? "" : "s"} added.`);
       }
       setPeriods(await listCostReportingPeriods(project.id));
+    } catch (requestError) {
+      setError(costReportingErrorMessage(requestError));
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function rebuildPeriods() {
+    if (!project) return;
+    const validation = validatePeriodCount();
+    if (validation) return setError(validation);
+    setWorking(true); setProgress(0); setError(""); setNotice("");
+    try {
+      await regenerateCostReportingPeriods(project.id, form, setProgress);
+      const saved = settings
+        ? await updateCostReportingSettings(settings.id, form)
+        : await createCostReportingSettings(project.id, form);
+      setSettings(saved);
+      setConfirmRebuild(false);
+      setPeriods(await listCostReportingPeriods(project.id));
+      setNotice(`Reporting calendar rebuilt from P1 using ${form.start_date} and ${form.number_of_periods} periods.`);
+    } catch (requestError) {
+      setError(costReportingErrorMessage(requestError));
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function clearPeriods() {
+    if (!project) return;
+    setWorking(true); setProgress(0); setError(""); setNotice("");
+    try {
+      await clearCostReportingPeriods(project.id);
+      setConfirmClear(false);
+      setPeriods([]);
+      setNotice("All reporting periods cleared. Update the settings and create a new calendar when ready.");
     } catch (requestError) {
       setError(costReportingErrorMessage(requestError));
     } finally {
@@ -124,6 +185,43 @@ export default function CostReportingPeriodsPage({ projectPublicId }: { projectP
       setConfirmReduce(false);
       setPeriods(await listCostReportingPeriods(project.id));
       setNotice(`${removed} future reporting period${removed === 1 ? "" : "s"} removed.`);
+    } catch (requestError) {
+      setError(costReportingErrorMessage(requestError));
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function applyHistoricalCurrentPeriod() {
+    if (!project) return;
+    if (!Number.isInteger(historicalPeriod) || historicalPeriod < 1 || historicalPeriod >= periods.length) {
+      return setError(`Close Through Period must be between P1 and P${Math.max(periods.length - 1, 1)}.`);
+    }
+    setWorking(true); setError(""); setNotice("");
+    try {
+      const result = await initializeHistoricalReportingPeriods(project.id, historicalPeriod);
+      setConfirmHistorical(false);
+      setPeriods(await listCostReportingPeriods(project.id));
+      setNotice(`Historical setup complete: P1–P${result.closed_through} Closed, P${result.current_period} Current. You can now bulk import Actual Cost into the closed periods.`);
+    } catch (requestError) {
+      setError(costReportingErrorMessage(requestError));
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function initializeCurrentPeriod() {
+    if (!project) return;
+    if (!Number.isInteger(initializePeriodNumber) || initializePeriodNumber < 1 || initializePeriodNumber > periods.length) {
+      return setError(`Select a Current Period between P1 and P${periods.length}.`);
+    }
+    setWorking(true); setError(""); setNotice("");
+    try {
+      const result = await initializeCostReportingCurrentPeriod(project.id, initializePeriodNumber);
+      setConfirmInitialize(false);
+      const refreshed = await listCostReportingPeriods(project.id);
+      setPeriods(refreshed);
+      setNotice(`Historical periods initialised: P1–P${Math.max(result.current_period_number - 1, 0)} Closed and P${result.current_period_number} Current.`);
     } catch (requestError) {
       setError(costReportingErrorMessage(requestError));
     } finally {
@@ -160,7 +258,7 @@ export default function CostReportingPeriodsPage({ projectPublicId }: { projectP
 
     <section className="enterprise-grid-card enterprise-settings-card">
       <div className="enterprise-settings-section">
-        <div className="enterprise-settings-heading"><div><strong>Reporting Period Settings</strong><span>Increase Number of Periods and select Add Periods to extend the calendar. Existing reporting periods are never replaced.</span></div></div>
+        <div className="enterprise-settings-heading"><div><strong>Reporting Period Settings</strong><span>{hasClosedPeriod ? "The reporting calendar is locked to its original start once the first period is closed. You can only add or remove future periods." : "Until the first period is closed, changing Frequency, Start Date or Number of Periods will rebuild the calendar from P1."}</span></div></div>
         <div className="form-grid">
           <label className="form-field"><span>Frequency <b>*</b></span><select disabled={hasClosedPeriod || working} value={form.frequency} onChange={(event) => setForm({ ...form, frequency: event.target.value as CostPeriodFrequency })}><option>Weekly</option><option>Monthly</option></select></label>
           <label className="form-field"><span>Start Date <b>*</b></span><input disabled={hasClosedPeriod || working} type="date" value={form.start_date} onChange={(event) => setForm({ ...form, start_date: event.target.value })}/></label>
@@ -170,15 +268,36 @@ export default function CostReportingPeriodsPage({ projectPublicId }: { projectP
         <div className="data-message" style={{ minHeight: 64, marginTop: 14 }}>
           <span>{hasClosedPeriod
             ? `A period has been closed, so Frequency and Start Date are now locked. Number of Periods can be increased or reduced, but never below P${currentPeriod ? currentPeriod.period_number + 1 : 1}.`
-            : `Frequency and Start Date remain editable until the first period is closed. Number of Periods can be increased or reduced, but never below P${currentPeriod ? currentPeriod.period_number + 1 : 1}.`}</span>
+            : "No period has been closed yet. You can freely change Frequency, Start Date and Number of Periods, rebuild the calendar from P1, or clear all periods and start again."}</span>
         </div>
+        {!hasClosedPeriod && periods.length > 1 && <div className="enterprise-settings-section" style={{ marginTop: 16, padding: 0 }}>
+          <div className="enterprise-settings-heading"><div><strong>Historical Project Setup</strong><span>Use this once when onboarding a live project. Choose the last completed historical period; all periods through that point will be marked Closed and the following period will become Current without running dozens of month-end closes.</span></div></div>
+          <div className="form-grid">
+            <label className="form-field"><span>Close Through Period</span><select value={historicalPeriod} disabled={working} onChange={(event) => setHistoricalPeriod(Number(event.target.value))}>{periods.slice(0, -1).map((period) => <option key={period.id} value={period.period_number}>P{period.period_number} · {period.start_date} to {period.end_date}</option>)}</select></label>
+          </div>
+          <div style={{ marginTop: 12 }}>
+            <button className="button secondary" disabled={working || historicalPeriod < 1} onClick={() => setConfirmHistorical(true)}>Close Through P{historicalPeriod}</button>
+          </div>
+        </div>}
       </div>
 
       <div className="enterprise-settings-footer">
         <span>{currentPeriod ? `Current: P${currentPeriod.period_number} · ${currentPeriod.start_date} to ${currentPeriod.end_date}` : periods.length ? "No Current period" : "No periods created yet"}</span>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+          {!hasClosedPeriod && periods.length > 1 && <button className="button secondary" disabled={working} onClick={() => { setInitializePeriodNumber(Math.min(Math.max(currentPeriod?.period_number ?? 1, 1), periods.length)); setConfirmInitialize(true); }}>Set Current Period</button>}
+          {!hasClosedPeriod && periods.length > 0 && <button className="button danger" disabled={working} onClick={() => setConfirmClear(true)}>Clear All Periods</button>}
           <button className="button danger" disabled={working || !currentPeriod} onClick={() => setConfirmClose(true)}>Close Period</button>
-          <button className="button primary" disabled={working || !project} onClick={() => void applyPeriodCount()}>{working && progress > 0 ? `Updating… ${Math.round(progress)}%` : periods.length && form.number_of_periods < periods.length ? "Remove Periods" : "Add Periods"}</button>
+          <button className="button primary" disabled={working || !project} onClick={() => void applyPeriodCount()}>
+            {working && progress > 0
+              ? `Updating… ${Math.round(progress)}%`
+              : !periods.length
+                ? "Create Periods"
+                : !hasClosedPeriod
+                  ? "Rebuild Periods"
+                  : form.number_of_periods < periods.length
+                    ? "Remove Periods"
+                    : "Add Periods"}
+          </button>
         </div>
       </div>
     </section>
@@ -190,6 +309,65 @@ export default function CostReportingPeriodsPage({ projectPublicId }: { projectP
         : <div className="enterprise-table-wrap"><table className="enterprise-table" style={{ minWidth: 820 }}><thead><tr><th>Period</th><th>Start Date</th><th>End Date</th><th>Status</th><th>Closed At</th></tr></thead><tbody>{periods.map((period) => <tr key={period.id}><td className="enterprise-code">P{period.period_number}</td><td>{period.start_date}</td><td>{period.end_date}</td><td><span className={`enterprise-status ${period.status === "Closed" ? "inactive" : "active"}`}><i/>{period.status}</span></td><td>{period.closed_at ? new Date(period.closed_at).toLocaleString() : "—"}</td></tr>)}</tbody></table></div>}
       <div className="grid-footer"><span>{periods.length} reporting periods</span><span>{project?.project_code ?? ""}</span></div>
     </section>
+
+    {confirmHistorical && !hasClosedPeriod && <div className="confirm-layer">
+      <button className="confirm-scrim" onClick={() => !working && setConfirmHistorical(false)} aria-label="Close historical setup confirmation"/>
+      <div className="confirm-dialog" role="alertdialog" aria-modal="true">
+        <div className="confirm-icon">!</div>
+        <h2>Close Through P{historicalPeriod}?</h2>
+        <p>This Historical Setup action will mark P1–P{historicalPeriod} as Closed, make <strong>P{historicalPeriod + 1}</strong> Current, and leave all later periods as Future.</p>
+        <p>It does not run the normal month-end close process or create accrual reversals for each historical period. Use it before importing the historical Actual Cost data.</p>
+        <p>After the Actual Cost import completes, the app automatically rebuilds snapshots for the historical Closed periods from the imported data.</p>
+        <p><strong>Historical setup must be completed before Actual Cost is imported.</strong></p>
+        <div className="confirm-actions"><button className="button secondary" disabled={working} onClick={() => setConfirmHistorical(false)}>Cancel</button><button className="button primary" disabled={working} onClick={() => void applyHistoricalCurrentPeriod()}>{working ? "Updating…" : `Yes, Close Through P${historicalPeriod}`}</button></div>
+      </div>
+    </div>}
+
+    {confirmInitialize && !hasClosedPeriod && <div className="confirm-layer">
+      <button className="confirm-scrim" onClick={() => !working && setConfirmInitialize(false)} aria-label="Close current period initialization"/>
+      <div className="confirm-dialog" role="alertdialog" aria-modal="true">
+        <div className="confirm-icon">!</div>
+        <h2>Set Current Reporting Period</h2>
+        <p>This setup action is intended for onboarding an existing live project with historical periods.</p>
+        <label className="form-field" style={{ textAlign: "left", marginTop: 12 }}>
+          <span><strong>Current Period</strong></span>
+          <select value={initializePeriodNumber} onChange={(event) => setInitializePeriodNumber(Number(event.target.value))}>
+            {periods.map((period) => <option key={period.id} value={period.period_number}>P{period.period_number} · {period.start_date} to {period.end_date}</option>)}
+          </select>
+        </label>
+        <p style={{ marginTop: 14 }}>All periods before the selected period will be marked <strong>Closed</strong>. The selected period will become <strong>Current</strong>. Later periods remain <strong>Future</strong>.</p>
+        <p>This does <strong>not</strong> run normal month-end snapshots or accrual reversals for the historical periods. Use it only to initialise an existing project before importing historical Actual Cost.</p>
+        <p><strong>This setup action is only available before any period has been normally closed and before Actual Cost transactions are imported.</strong></p>
+        <div className="confirm-actions">
+          <button className="button secondary" disabled={working} onClick={() => setConfirmInitialize(false)}>Cancel</button>
+          <button className="button danger" disabled={working} onClick={() => void initializeCurrentPeriod()}>{working ? "Updating…" : `Set P${initializePeriodNumber} as Current`}</button>
+        </div>
+      </div>
+    </div>}
+
+    {confirmRebuild && !hasClosedPeriod && <div className="confirm-layer">
+      <button className="confirm-scrim" onClick={() => !working && setConfirmRebuild(false)} aria-label="Close rebuild confirmation"/>
+      <div className="confirm-dialog" role="alertdialog" aria-modal="true">
+        <div className="confirm-icon">!</div>
+        <h2>Rebuild Reporting Periods?</h2>
+        <p>This will replace all existing reporting periods and rebuild P1 onward from <strong>{form.start_date}</strong> using <strong>{form.number_of_periods}</strong> {form.frequency.toLowerCase()} periods.</p>
+        <p>Existing Timephasing and Cost to Complete period allocations tied to the current calendar will be cleared and must be recalculated or re-entered. Actual Cost transactions will never be deleted automatically; if any exist, the rebuild will be blocked.</p>
+        <p><strong>This action cannot be undone.</strong></p>
+        <div className="confirm-actions"><button className="button secondary" disabled={working} onClick={() => setConfirmRebuild(false)}>Cancel</button><button className="button danger" disabled={working} onClick={() => void rebuildPeriods()}>{working ? "Rebuilding…" : "Yes, Rebuild Periods"}</button></div>
+      </div>
+    </div>}
+
+    {confirmClear && !hasClosedPeriod && <div className="confirm-layer">
+      <button className="confirm-scrim" onClick={() => !working && setConfirmClear(false)} aria-label="Close clear confirmation"/>
+      <div className="confirm-dialog" role="alertdialog" aria-modal="true">
+        <div className="confirm-icon">!</div>
+        <h2>Clear All Reporting Periods?</h2>
+        <p>This will remove every reporting period for this project so you can start the calendar again from P1.</p>
+        <p>Existing Timephasing and Cost to Complete period allocations tied to these periods will also be cleared. Actual Cost transactions will never be deleted automatically; if any exist, the clear will be blocked.</p>
+        <p><strong>This action cannot be undone.</strong></p>
+        <div className="confirm-actions"><button className="button secondary" disabled={working} onClick={() => setConfirmClear(false)}>Cancel</button><button className="button danger" disabled={working} onClick={() => void clearPeriods()}>{working ? "Clearing…" : "Yes, Clear All Periods"}</button></div>
+      </div>
+    </div>}
 
     {confirmReduce && currentPeriod && <div className="confirm-layer">
       <button className="confirm-scrim" onClick={() => !working && setConfirmReduce(false)} aria-label="Close reduction confirmation"/>

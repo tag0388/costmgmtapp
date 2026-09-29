@@ -148,7 +148,11 @@ export default function ActualCostPage({ projectPublicId }: { projectPublicId: s
   const codeById = useMemo(() => new Map(costCodes.map((code) => [code.id, code])), [costCodes]);
   const codeByRef = useMemo(() => new Map(costCodes.map((code) => [code.cost_code_id.toLowerCase(), code])), [costCodes]);
   const periodById = useMemo(() => new Map(periods.map((period) => [period.id, period])), [periods]);
-  const actualAllowedPeriods = useMemo(() => periods.filter((period) => period.status !== "Future"), [periods]);
+  const initialPeriodSetup = useMemo(() => periods.length > 0 && !periods.some((period) => period.status === "Closed"), [periods]);
+  const actualAllowedPeriods = useMemo(
+    () => initialPeriodSetup ? periods : periods.filter((period) => period.status !== "Future"),
+    [initialPeriodSetup, periods],
+  );
 
   const rows = useMemo<GridRow[]>(() => transactions.map((transaction) => ({
     ...transaction,
@@ -284,7 +288,7 @@ export default function ActualCostPage({ projectPublicId }: { projectPublicId: s
     }
     if (bulkPeriod !== "__NO_CHANGE__") {
       const period = actualAllowedPeriods.find((item) => item.id === bulkPeriod);
-      if (!period) return setError("Choose a valid Current or Closed Cost Reporting Period.");
+      if (!period) return setError(initialPeriodSetup ? "Choose a valid Cost Reporting Period." : "Choose a valid Current or Closed Cost Reporting Period.");
       patch.cost_period_id = period.id;
       patch.transaction_date = period.end_date;
     }
@@ -354,7 +358,7 @@ export default function ActualCostPage({ projectPublicId }: { projectPublicId: s
         if (!TYPES.includes(type)) errors.push(`Row ${line}: Transaction Type must be FIN, MAN, ACC or REV.`);
         if (Number.isNaN(amount)) errors.push(`Row ${line}: Amount must be a valid number.`);
         if (!period) errors.push(`Row ${line}: Cost Reporting Period must match an existing project period such as P1.`);
-        else if (period.status === "Future") errors.push(`Row ${line}: Cost Reporting Period P${period.period_number} is Future. Actual Cost can only be imported to Current or Closed periods.`);
+        else if (period.status === "Future" && !initialPeriodSetup) errors.push(`Row ${line}: Cost Reporting Period P${period.period_number} is Future. Actual Cost can only be imported to Current or Closed periods after period closing has started.`);
         activeAttributes.forEach((attribute) => {
           const valueId = (row[attribute.columnName] ?? "").trim();
           if (!valueId) return;

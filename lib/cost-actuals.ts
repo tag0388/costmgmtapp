@@ -1,3 +1,4 @@
+import { refreshClosedCostPeriodSnapshots } from "@/lib/cost-reporting";
 import { SupabaseRequestError, supabaseRequest } from "@/lib/supabase/browser";
 
 export const ACTUAL_PROJECT_ATTRIBUTE_FIELDS = Array.from({ length: 20 }, (_, index) => `p_attribute_${String(index + 1).padStart(2, "0")}`) as ActualProjectAttributeField[];
@@ -163,10 +164,34 @@ export async function importActualCostTransactions(projectId: string, rows: Actu
     });
   }
 
-  for (let index = 0; index < rows.length; index += 1) {
-    await insertRow(projectId, rows[index]);
-    onProgress?.(((index + 1) / Math.max(rows.length, 1)) * 100);
+  const batchSize = 500;
+  for (let index = 0; index < rows.length; index += batchSize) {
+    const batch = rows.slice(index, index + batchSize).map((row) => ({
+      project_id: projectId,
+      cost_period_id: row.cost_period_id,
+      cost_code_id: row.cost_code_id,
+      transaction_date: row.transaction_date,
+      transaction_id: row.transaction_id?.trim() || null,
+      description: row.description.trim(),
+      amount: row.amount,
+      transaction_type: row.transaction_type,
+      reversal_of_transaction_id: null,
+      row_order: row.row_order ?? null,
+      ...Object.fromEntries(ATTRIBUTE_FIELDS.map((field) => [field, row[field] ?? null])),
+      ...Object.fromEntries(USER_FIELDS.map((field) => [field, row[field] ?? null])),
+    }));
+
+    await supabaseRequest("actual_cost_transactions", {
+      method: "POST",
+      headers: { Prefer: "return=minimal" },
+      body: JSON.stringify(batch),
+    });
+
+    onProgress?.((Math.min(index + batch.length, rows.length) / Math.max(rows.length, 1)) * 95);
   }
+
+  await refreshClosedCostPeriodSnapshots(projectId);
+  onProgress?.(100);
 }
 
 export function actualCostErrorMessage(error: unknown) {
