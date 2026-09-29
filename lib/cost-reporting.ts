@@ -253,6 +253,19 @@ export function refreshClosedCostPeriodSnapshots(projectId: string) {
   });
 }
 
+export async function initializeHistoricalReportingPeriods(projectId: string, closeThroughPeriodNumber: number) {
+  if (!Number.isInteger(closeThroughPeriodNumber) || closeThroughPeriodNumber < 1) {
+    throw new Error("Close Through Period must be a whole period number greater than zero.");
+  }
+  return supabaseRequest<{ closed_through: number; current_period: number | null }>("rpc/initialize_historical_cost_periods", {
+    method: "POST",
+    body: JSON.stringify({
+      p_project_id: projectId,
+      p_close_through_period_number: closeThroughPeriodNumber,
+    }),
+  });
+}
+
 export async function closeCostReportingPeriod(projectId: string, periodId: string) {
   await supabaseRequest("rpc/close_cost_period", {
     method: "POST",
