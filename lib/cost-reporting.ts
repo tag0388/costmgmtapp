@@ -266,6 +266,24 @@ export async function initializeHistoricalReportingPeriods(projectId: string, cl
   });
 }
 
+export type InitializeCurrentPeriodResult = {
+  project_id: string;
+  current_period_number: number;
+  periods_marked_closed: number;
+  current_period_id: string;
+};
+
+export function initializeCostReportingCurrentPeriod(projectId: string, currentPeriodNumber: number) {
+  return supabaseRequest<InitializeCurrentPeriodResult>("rpc/initialize_cost_reporting_current_period", {
+    method: "POST",
+    body: JSON.stringify({
+      p_project_id: projectId,
+      p_current_period_number: currentPeriodNumber,
+      p_closed_by: null,
+    }),
+  });
+}
+
 export async function closeCostReportingPeriod(projectId: string, periodId: string) {
   await supabaseRequest("rpc/close_cost_period", {
     method: "POST",
