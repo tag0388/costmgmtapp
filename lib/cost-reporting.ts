@@ -266,6 +266,15 @@ export async function initializeHistoricalReportingPeriods(projectId: string, cl
   });
 }
 
+export async function initialiseCostReportingCurrentPeriod(projectId: string, periodNumber: number) {
+  if (!Number.isInteger(periodNumber) || periodNumber < 1) throw new Error("Current Period must be P1 or later.");
+  return supabaseRequest("rpc/initialise_cost_reporting_current_period", {
+    method: "POST",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify({ p_project_id: projectId, p_current_period_number: periodNumber }),
+  });
+}
+
 export async function closeCostReportingPeriod(projectId: string, periodId: string) {
   await supabaseRequest("rpc/close_cost_period", {
     method: "POST",
