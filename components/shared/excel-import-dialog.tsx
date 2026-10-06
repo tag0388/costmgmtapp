@@ -12,6 +12,8 @@ export default function ExcelImportDialog({
   setReplace,
   importing,
   progress,
+  rowCount,
+  runtimeError,
   onCancel,
   onImport,
   showReplace = true,
@@ -26,6 +28,8 @@ export default function ExcelImportDialog({
   setReplace: (value: boolean) => void;
   importing: boolean;
   progress: number;
+  rowCount?: number;
+  runtimeError?: string;
   onCancel: () => void;
   onImport: () => void;
   showReplace?: boolean;
@@ -85,12 +89,18 @@ export default function ExcelImportDialog({
     <button className="confirm-scrim" onClick={onCancel} aria-label="Close Excel import" disabled={importing}/>
     <div className="confirm-dialog" role="dialog" aria-modal="true" style={{ width: "min(1100px, 92vw)", maxWidth: 1100 }}>
       <h2>{title}</h2>
-      <p>{rows.length} row{rows.length === 1 ? "" : "s"} found. Review the data and validation results before importing.</p>
+      <p>{(rowCount ?? rows.length).toLocaleString()} row{(rowCount ?? rows.length) === 1 ? "" : "s"} found. Review the data and validation results before importing.</p>
 
       {errors.length > 0 && <div className="form-error" style={{ textAlign: "left", maxHeight: 150, overflow: "auto" }}>
         <strong>Import cannot proceed. Fix these issues in Excel first:</strong>
         <ul>{errors.slice(0, 50).map((error, index) => <li key={`${error}-${index}`}>{error}</li>)}</ul>
         {errors.length > 50 && <div>+ {errors.length - 50} more errors</div>}
+      </div>}
+
+      {runtimeError && <div className="form-error" style={{ textAlign: "left", maxHeight: 150, overflow: "auto" }}>
+        <strong>The import stopped before completion.</strong>
+        <div>{runtimeError}</div>
+        <div style={{ marginTop: 6 }}>You can retry to continue from the last completed batch while this file remains open.</div>
       </div>}
 
       {showReplace && <label style={{ display: "flex", alignItems: "flex-start", gap: 10, textAlign: "left", margin: "14px 0" }}>
