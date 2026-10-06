@@ -18,7 +18,8 @@ import {
   ACTUAL_USER_TEXT_FIELDS,
   actualCostErrorMessage,
   deleteActualCostTransactions,
-  importActualCostTransactions,
+  importActualCostBatch,
+  prepareActualCostImport,
   listActualCostTransactions,
   TransactionType,
   updateActualCostTransaction,
@@ -375,24 +376,35 @@ export default function ActualCostPage({ projectPublicId }: { projectPublicId: s
     if (!project || !importRows || importErrors.length) return;
     setImporting(true); setProgress(0);
     try {
-      const mapped = importRows.map((row) => {
-        const code = codeByRef.get(row["Cost Code ID"].trim().toLowerCase())!;
-        const period = parsePeriod(row["Cost Reporting Period"], actualAllowedPeriods)!;
-        return {
-          cost_code_id: code.id,
-          cost_period_id: period.id,
-          transaction_date: period.end_date,
-          transaction_id: row.Item?.trim() || null,
-          description: row.Description?.trim() || "",
-          transaction_type: row["Transaction Type"].trim().toUpperCase() as TransactionType,
-          amount: parseNumber(row.Amount),
-          ...Object.fromEntries(activeAttributes.map((attribute) => [attribute.field, row[attribute.columnName]?.trim() || null])),
-          ...Object.fromEntries(ACTUAL_USER_NUMBER_COLUMNS.map(({ field, label }) => { const raw = (row[label] ?? "").trim(); return [field, raw ? parseNumber(raw) : null]; })),
-          ...Object.fromEntries(ACTUAL_USER_TEXT_COLUMNS.map(({ field, label }) => [field, (row[label] ?? "").trim() || null])),
-        };
-      });
-      await importActualCostTransactions(project.id, mapped, replace, setProgress);
-      setImportRows(null); showNotice("Actual Cost transactions imported."); await refresh();
+      await prepareActualCostImport(project.id, replace);
+
+      // Map and upload a small slice at a time. Keeping a second 500k-row mapped
+      // array in browser memory can crash the tab before the database work starts.
+      const batchSize = 1000;
+      for (let start = 0; start < importRows.length; start += batchSize) {
+        const sourceBatch = importRows.slice(start, start + batchSize);
+        const mappedBatch = sourceBatch.map((row, offset) => {
+          const code = codeByRef.get(row["Cost Code ID"].trim().toLowerCase())!;
+          const period = parsePeriod(row["Cost Reporting Period"], actualAllowedPeriods)!;
+          return {
+            cost_code_id: code.id,
+            cost_period_id: period.id,
+            transaction_date: period.end_date,
+            transaction_id: row.Item?.trim() || null,
+            description: row.Description?.trim() || "",
+            transaction_type: row["Transaction Type"].trim().toUpperCase() as TransactionType,
+            amount: parseNumber(row.Amount),
+            row_order: start + offset + 1,
+            ...Object.fromEntries(activeAttributes.map((attribute) => [attribute.field, row[attribute.columnName]?.trim() || null])),
+            ...Object.fromEntries(ACTUAL_USER_NUMBER_COLUMNS.map(({ field, label }) => { const raw = (row[label] ?? "").trim(); return [field, raw ? parseNumber(raw) : null]; })),
+            ...Object.fromEntries(ACTUAL_USER_TEXT_COLUMNS.map(({ field, label }) => [field, (row[label] ?? "").trim() || null])),
+          };
+        });
+        await importActualCostBatch(project.id, mappedBatch);
+        setProgress((Math.min(start + sourceBatch.length, importRows.length) / Math.max(importRows.length, 1)) * 100);
+      }
+
+      setImportRows(null); showNotice(`${importRows.length.toLocaleString()} Actual Cost transactions imported.`); await refresh();
     } catch (requestError) { setImportErrors([actualCostErrorMessage(requestError)]); }
     finally { setImporting(false); }
   }
