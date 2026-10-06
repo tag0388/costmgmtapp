@@ -4,6 +4,13 @@ import * as XLSX from "xlsx";
 
 export type ExcelRow = Record<string, string>;
 
+export type ExcelSheetReader = {
+  columns: string[];
+  rowCount: number;
+  preview: ExcelRow[];
+  readRows: (start: number, count: number) => ExcelRow[];
+};
+
 export function exportExcel(filename: string, sheetName: string, rows: ExcelRow[]) {
   const worksheet = XLSX.utils.json_to_sheet(rows);
   const workbook = XLSX.utils.book_new();
@@ -55,17 +62,59 @@ function normalizeExcelDate(value: unknown) {
   return text;
 }
 
-export async function readExcel(file: File): Promise<ExcelRow[]> {
-  const buffer = await file.arrayBuffer();
-  const workbook = XLSX.read(buffer, { type: "array", cellDates: true });
-  const sheetName = workbook.SheetNames[0];
-  if (!sheetName) return [];
-  const sheet = workbook.Sheets[sheetName];
-  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "", raw: true });
-  return rows.map((row) => Object.fromEntries(Object.entries(row).map(([key, value]) => {
+function normalizeExcelRow(row: Record<string, unknown>): ExcelRow {
+  return Object.fromEntries(Object.entries(row).map(([key, value]) => {
     const normalizedKey = key.trim();
     const isDateColumn = /(^|\s)date$/i.test(normalizedKey);
     const normalizedValue = isDateColumn ? normalizeExcelDate(value) : String(value ?? "").trim();
     return [normalizedKey, normalizedValue ?? String(value ?? "").trim()];
-  })));
+  }));
+}
+
+export async function openExcel(file: File, previewSize = 100): Promise<ExcelSheetReader> {
+  const buffer = await file.arrayBuffer();
+  // Dense worksheets use substantially less overhead for large, mostly-filled ledgers.
+  // We still keep only one workbook plus the current converted chunk in memory.
+  const workbook = XLSX.read(buffer, { type: "array", cellDates: true, dense: true });
+  const sheetName = workbook.SheetNames[0];
+  if (!sheetName) return { columns: [], rowCount: 0, preview: [], readRows: () => [] };
+  const sheet = workbook.Sheets[sheetName];
+  const reference = sheet["!ref"];
+  if (!reference) return { columns: [], rowCount: 0, preview: [], readRows: () => [] };
+
+  const range = XLSX.utils.decode_range(reference);
+  const headerRows = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
+    header: 1,
+    defval: "",
+    raw: true,
+    range: { s: { r: range.s.r, c: range.s.c }, e: { r: range.s.r, c: range.e.c } },
+  });
+  const columns = (headerRows[0] ?? []).map((value) => String(value ?? "").trim());
+  const firstDataRow = range.s.r + 1;
+  const rowCount = Math.max(0, range.e.r - firstDataRow + 1);
+
+  const readRows = (start: number, count: number) => {
+    if (count <= 0 || start < 0 || start >= rowCount) return [];
+    const startRow = firstDataRow + start;
+    const endRow = Math.min(range.e.r, startRow + count - 1);
+    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
+      header: columns,
+      defval: "",
+      raw: true,
+      range: { s: { r: startRow, c: range.s.c }, e: { r: endRow, c: range.e.c } },
+    });
+    return rows.map(normalizeExcelRow);
+  };
+
+  return {
+    columns,
+    rowCount,
+    preview: readRows(0, previewSize),
+    readRows,
+  };
+}
+
+export async function readExcel(file: File): Promise<ExcelRow[]> {
+  const reader = await openExcel(file, 0);
+  return reader.readRows(0, reader.rowCount);
 }
