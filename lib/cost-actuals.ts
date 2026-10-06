@@ -68,8 +68,10 @@ export function listActualCostTransactionsForCostCode(projectId: string, costCod
   );
 }
 
-async function insertRow(projectId: string, row: ActualCostImportRow) {
-  const body = {
+const ACTUAL_COST_IMPORT_BATCH_SIZE = 1000;
+
+function actualCostBody(projectId: string, row: ActualCostImportRow) {
+  return {
     project_id: projectId,
     cost_period_id: row.cost_period_id,
     cost_code_id: row.cost_code_id,
@@ -83,9 +85,41 @@ async function insertRow(projectId: string, row: ActualCostImportRow) {
     ...Object.fromEntries(ATTRIBUTE_FIELDS.map((field) => [field, row[field] ?? null])),
     ...Object.fromEntries(USER_FIELDS.map((field) => [field, row[field] ?? null])),
   };
-  await supabaseRequest("actual_cost_transactions", {
-    method: "POST", headers: { Prefer: "return=minimal" }, body: JSON.stringify(body),
+}
+
+function shouldSplitImportBatch(error: unknown) {
+  if (!(error instanceof SupabaseRequestError)) return false;
+  return error.status === 413 || error.status === 429 || error.status === 504 || error.code === "57014";
+}
+
+async function insertImportBatch(projectId: string, rows: ActualCostImportRow[]): Promise<void> {
+  if (!rows.length) return;
+  try {
+    await supabaseRequest("actual_cost_transactions", {
+      method: "POST",
+      headers: { Prefer: "return=minimal" },
+      body: JSON.stringify(rows.map((row) => actualCostBody(projectId, row))),
+    });
+  } catch (error) {
+    // A timed-out/oversized Postgres statement is rolled back, so split only errors
+    // where retrying cannot duplicate a successfully committed batch.
+    if (!shouldSplitImportBatch(error) || rows.length <= 1) throw error;
+    const middle = Math.ceil(rows.length / 2);
+    await insertImportBatch(projectId, rows.slice(0, middle));
+    await insertImportBatch(projectId, rows.slice(middle));
+  }
+}
+
+export async function prepareActualCostImport(projectId: string, replace: boolean) {
+  if (!replace) return;
+  await supabaseRequest(`actual_cost_transactions?project_id=eq.${encodeURIComponent(projectId)}`, {
+    method: "DELETE",
+    headers: { Prefer: "return=minimal" },
   });
+}
+
+export async function importActualCostBatch(projectId: string, rows: ActualCostImportRow[]) {
+  await insertImportBatch(projectId, rows);
 }
 
 export async function createActualCostTransaction(projectId: string, row: ActualCostImportRow) {
@@ -157,15 +191,12 @@ export async function deleteActualCostTransactions(ids: string[]) {
 }
 
 export async function importActualCostTransactions(projectId: string, rows: ActualCostImportRow[], replace: boolean, onProgress?: (progress: number) => void) {
-  if (replace) {
-    await supabaseRequest(`actual_cost_transactions?project_id=eq.${encodeURIComponent(projectId)}`, {
-      method: "DELETE", headers: { Prefer: "return=minimal" },
-    });
-  }
+  await prepareActualCostImport(projectId, replace);
 
-  for (let index = 0; index < rows.length; index += 1) {
-    await insertRow(projectId, rows[index]);
-    onProgress?.(((index + 1) / Math.max(rows.length, 1)) * 100);
+  for (let start = 0; start < rows.length; start += ACTUAL_COST_IMPORT_BATCH_SIZE) {
+    const batch = rows.slice(start, start + ACTUAL_COST_IMPORT_BATCH_SIZE);
+    await importActualCostBatch(projectId, batch);
+    onProgress?.((Math.min(start + batch.length, rows.length) / Math.max(rows.length, 1)) * 100);
   }
 }
 
