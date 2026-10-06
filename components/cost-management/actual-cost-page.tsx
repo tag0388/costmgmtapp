@@ -6,7 +6,7 @@ import type { ColDef, ColGroupDef, ColumnState, GridApi, SelectionChangedEvent }
 import { themeQuartz } from "ag-grid-community";
 import { AllEnterpriseModule } from "ag-grid-enterprise";
 import ExcelImportDialog from "@/components/shared/excel-import-dialog";
-import { ExcelRow, exportExcel, readExcel } from "@/lib/excel";
+import { ExcelRow, ExcelSheetReader, exportExcel, openExcel } from "@/lib/excel";
 import { listEnterpriseAttributes, EnterpriseAttributeDefinition } from "@/lib/enterprise-attributes";
 import { listProjectAttributes, ProjectAttributeDefinition } from "@/lib/project-scope-attributes";
 import { CostCode, listCostCodes } from "@/lib/cost-codes";
@@ -18,13 +18,18 @@ import {
   ACTUAL_USER_TEXT_FIELDS,
   actualCostErrorMessage,
   deleteActualCostTransactions,
-  importActualCostBatch,
+  applyActualCostImportChunk,
+  beginActualCostImport,
+  cancelActualCostImport,
+  isActualCostImportRetryableError,
   prepareActualCostImport,
+  stageActualCostImportBatch,
   listActualCostTransactions,
   TransactionType,
   updateActualCostTransaction,
 } from "@/lib/cost-actuals";
 import { getProjectByPublicId, Project } from "@/lib/projects";
+import { recalculateProjectCostManagement } from "@/lib/cost-calculation";
 import { deleteProjectGridView, gridViewErrorMessage, listProjectGridViews, type ProjectGridView, saveProjectGridView } from "@/lib/grid-views";
 
 const gridTheme = themeQuartz.withParams({ spacing: 4, rowHeight: 30, headerHeight: 34, fontSize: 12 });
@@ -98,7 +103,12 @@ export default function ActualCostPage({ projectPublicId }: { projectPublicId: s
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [importRows, setImportRows] = useState<ExcelRow[] | null>(null);
+  const [importReader, setImportReader] = useState<ExcelSheetReader | null>(null);
   const [importErrors, setImportErrors] = useState<string[]>([]);
+  const [importRuntimeError, setImportRuntimeError] = useState("");
+  const importSessionRef = useRef<string | null>(null);
+  const importStagedRowsRef = useRef(0);
+  const importPreparedRef = useRef(false);
   const [replace, setReplace] = useState(false);
   const [importing, setImporting] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -333,80 +343,185 @@ export default function ActualCostPage({ projectPublicId }: { projectPublicId: s
     exportExcel(`${project.project_code}-actual-cost`, "Actual Cost", data.length ? data : [Object.fromEntries(excelColumns.map((column) => [column, ""]))]);
   }
 
+  function validateImportBatch(batch: ExcelRow[], startIndex: number, addError: (message: string) => void) {
+    batch.forEach((row, index) => {
+      const line = startIndex + index + 2;
+      const codeRef = (row["Cost Code ID"] ?? "").trim();
+      const item = (row.Item ?? "").trim();
+      const description = (row.Description ?? "").trim();
+      const type = (row["Transaction Type"] ?? "").trim().toUpperCase() as TransactionType;
+      const amount = parseNumber(row.Amount ?? "");
+      const period = parsePeriod(row["Cost Reporting Period"] ?? "", periods);
+      const code = codeByRef.get(codeRef.toLowerCase());
+      if (!codeRef || !code) addError(`Row ${line}: Cost Code ID “${codeRef || "(blank)"}” is not valid for this project.`);
+      if (item.length > 100) addError(`Row ${line}: Item is longer than 100 characters.`);
+      if (description.length > 255) addError(`Row ${line}: Description is longer than 255 characters.`);
+      if (!TYPES.includes(type)) addError(`Row ${line}: Transaction Type must be FIN, MAN, ACC or REV.`);
+      if (Number.isNaN(amount)) addError(`Row ${line}: Amount must be a valid number.`);
+      if (!period) addError(`Row ${line}: Cost Reporting Period must match an existing project period such as P1.`);
+      else if (period.status === "Future") addError(`Row ${line}: Cost Reporting Period P${period.period_number} is Future. Actual Cost can only be imported to Current or Closed periods.`);
+      activeAttributes.forEach((attribute) => {
+        const valueId = (row[attribute.columnName] ?? "").trim();
+        if (!valueId) return;
+        if (valueId.length > 50) addError(`Row ${line}: ${attribute.columnName} is longer than 50 characters.`);
+        if (!attribute.definition.attribute_values.some((value) => value.is_active && value.value_id.toLowerCase() === valueId.toLowerCase())) {
+          addError(`Row ${line}: ${attribute.columnName} must contain an active Value ID.`);
+        }
+      });
+      ACTUAL_USER_NUMBER_COLUMNS.forEach(({ label }) => {
+        const raw = (row[label] ?? "").trim();
+        if (raw && Number.isNaN(parseNumber(raw))) addError(`Row ${line}: ${label} must be a valid number or blank.`);
+      });
+    });
+  }
+
+  function mapImportBatch(sourceBatch: ExcelRow[], start: number) {
+    return sourceBatch.map((row, offset) => {
+      const code = codeByRef.get(row["Cost Code ID"].trim().toLowerCase())!;
+      const period = parsePeriod(row["Cost Reporting Period"], actualAllowedPeriods)!;
+      return {
+        cost_code_id: code.id,
+        cost_period_id: period.id,
+        transaction_date: period.end_date,
+        transaction_id: row.Item?.trim() || null,
+        description: row.Description?.trim() || "",
+        transaction_type: row["Transaction Type"].trim().toUpperCase() as TransactionType,
+        amount: parseNumber(row.Amount),
+        row_order: start + offset + 1,
+        ...Object.fromEntries(activeAttributes.map((attribute) => [attribute.field, row[attribute.columnName]?.trim() || null])),
+        ...Object.fromEntries(ACTUAL_USER_NUMBER_COLUMNS.map(({ field, label }) => {
+          const raw = (row[label] ?? "").trim();
+          return [field, raw ? parseNumber(raw) : null];
+        })),
+        ...Object.fromEntries(ACTUAL_USER_TEXT_COLUMNS.map(({ field, label }) => [field, (row[label] ?? "").trim() || null])),
+      };
+    });
+  }
+
+  function resetImportState() {
+    setImportRows(null);
+    setImportReader(null);
+    setImportErrors([]);
+    setImportRuntimeError("");
+    setReplace(false);
+    setProgress(0);
+    importSessionRef.current = null;
+    importStagedRowsRef.current = 0;
+    importPreparedRef.current = false;
+  }
+
   async function chooseImport(file: File | undefined) {
     if (!file) return;
+    setError("");
+    setImportRuntimeError("");
     try {
-      const incoming = await readExcel(file);
+      const reader = await openExcel(file, 100);
       const errors: string[] = [];
-      if (!incoming.length) errors.push("The file does not contain any Actual Cost rows.");
-      if (incoming.length && !exactColumns(incoming, excelColumns)) errors.push(`Columns must be exactly: ${excelColumns.join(", ")}.`);
-      incoming.forEach((row, index) => {
-        const line = index + 2;
-        const codeRef = (row["Cost Code ID"] ?? "").trim();
-        const item = (row.Item ?? "").trim();
-        const description = (row.Description ?? "").trim();
-        const type = (row["Transaction Type"] ?? "").trim().toUpperCase() as TransactionType;
-        const amount = parseNumber(row.Amount ?? "");
-        const period = parsePeriod(row["Cost Reporting Period"] ?? "", periods);
-        const code = codeByRef.get(codeRef.toLowerCase());
-        if (!codeRef || !code) errors.push(`Row ${line}: Cost Code ID “${codeRef || "(blank)"}” is not valid for this project.`);
-        if (item.length > 100) errors.push(`Row ${line}: Item is longer than 100 characters.`);
-        if (description.length > 255) errors.push(`Row ${line}: Description is longer than 255 characters.`);
-        if (!TYPES.includes(type)) errors.push(`Row ${line}: Transaction Type must be FIN, MAN, ACC or REV.`);
-        if (Number.isNaN(amount)) errors.push(`Row ${line}: Amount must be a valid number.`);
-        if (!period) errors.push(`Row ${line}: Cost Reporting Period must match an existing project period such as P1.`);
-        else if (period.status === "Future") errors.push(`Row ${line}: Cost Reporting Period P${period.period_number} is Future. Actual Cost can only be imported to Current or Closed periods.`);
-        activeAttributes.forEach((attribute) => {
-          const valueId = (row[attribute.columnName] ?? "").trim();
-          if (!valueId) return;
-          if (valueId.length > 50) errors.push(`Row ${line}: ${attribute.columnName} is longer than 50 characters.`);
-          if (!attribute.definition.attribute_values.some((value) => value.is_active && value.value_id.toLowerCase() === valueId.toLowerCase())) errors.push(`Row ${line}: ${attribute.columnName} must contain an active Value ID.`);
-        });
-        ACTUAL_USER_NUMBER_COLUMNS.forEach(({ label }) => {
-          const raw = (row[label] ?? "").trim();
-          if (raw && Number.isNaN(parseNumber(raw))) errors.push(`Row ${line}: ${label} must be a valid number or blank.`);
-        });
-      });
-      setImportRows(incoming); setImportErrors(errors); setReplace(false); setProgress(0);
-    } catch (requestError) { setError(requestError instanceof Error ? requestError.message : "Unable to read the file."); }
-    finally { if (fileRef.current) fileRef.current.value = ""; }
+      let totalErrors = 0;
+      const addError = (message: string) => {
+        totalErrors += 1;
+        if (errors.length < 200) errors.push(message);
+      };
+
+      if (!reader.rowCount) addError("The file does not contain any Actual Cost rows.");
+      if (reader.columns.length && (reader.columns.length !== excelColumns.length || !excelColumns.every((column, index) => reader.columns[index] === column))) {
+        addError(`Columns must be exactly: ${excelColumns.join(", ")}.`);
+      }
+
+      if (!errors.length) {
+        const validationBatchSize = 5000;
+        for (let start = 0; start < reader.rowCount; start += validationBatchSize) {
+          validateImportBatch(reader.readRows(start, validationBatchSize), start, addError);
+          if (errors.length >= 200) break;
+          // Yield periodically so very large workbooks do not freeze the browser UI.
+          if (start > 0 && start % 25000 === 0) await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+        }
+      }
+
+      if (totalErrors > errors.length) errors.push(`+ ${(totalErrors - errors.length).toLocaleString()} additional validation errors. Fix the first errors shown and re-import the workbook.`);
+      setImportReader(reader);
+      setImportRows(reader.preview);
+      setImportErrors(errors);
+      setReplace(false);
+      setProgress(0);
+      importSessionRef.current = null;
+      importStagedRowsRef.current = 0;
+      importPreparedRef.current = false;
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unable to read the file.");
+    } finally {
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  }
+
+  async function closeImport() {
+    if (importing) return;
+    const sessionId = importSessionRef.current;
+    if (sessionId && importPreparedRef.current) {
+      setImportRuntimeError("This import has started applying to Actual Cost and cannot be cancelled safely. Retry the import to continue from the last completed batch.");
+      return;
+    }
+    if (sessionId) {
+      try { await cancelActualCostImport(sessionId); } catch { /* Staging cleanup is best-effort. */ }
+    }
+    resetImportState();
   }
 
   async function runImport() {
-    if (!project || !importRows || importErrors.length) return;
-    setImporting(true); setProgress(0);
+    if (!project || !importReader || importErrors.length) return;
+    setImporting(true);
+    setImportRuntimeError("");
     try {
-      await prepareActualCostImport(project.id, replace);
-
-      // Map and upload a small slice at a time. Keeping a second 500k-row mapped
-      // array in browser memory can crash the tab before the database work starts.
-      const batchSize = 1000;
-      for (let start = 0; start < importRows.length; start += batchSize) {
-        const sourceBatch = importRows.slice(start, start + batchSize);
-        const mappedBatch = sourceBatch.map((row, offset) => {
-          const code = codeByRef.get(row["Cost Code ID"].trim().toLowerCase())!;
-          const period = parsePeriod(row["Cost Reporting Period"], actualAllowedPeriods)!;
-          return {
-            cost_code_id: code.id,
-            cost_period_id: period.id,
-            transaction_date: period.end_date,
-            transaction_id: row.Item?.trim() || null,
-            description: row.Description?.trim() || "",
-            transaction_type: row["Transaction Type"].trim().toUpperCase() as TransactionType,
-            amount: parseNumber(row.Amount),
-            row_order: start + offset + 1,
-            ...Object.fromEntries(activeAttributes.map((attribute) => [attribute.field, row[attribute.columnName]?.trim() || null])),
-            ...Object.fromEntries(ACTUAL_USER_NUMBER_COLUMNS.map(({ field, label }) => { const raw = (row[label] ?? "").trim(); return [field, raw ? parseNumber(raw) : null]; })),
-            ...Object.fromEntries(ACTUAL_USER_TEXT_COLUMNS.map(({ field, label }) => [field, (row[label] ?? "").trim() || null])),
-          };
-        });
-        await importActualCostBatch(project.id, mappedBatch);
-        setProgress((Math.min(start + sourceBatch.length, importRows.length) / Math.max(importRows.length, 1)) * 100);
+      let sessionId = importSessionRef.current;
+      if (!sessionId) {
+        sessionId = await beginActualCostImport(project.id, replace ? "replace" : "append", importReader.rowCount);
+        importSessionRef.current = sessionId;
       }
 
-      setImportRows(null); showNotice(`${importRows.length.toLocaleString()} Actual Cost transactions imported.`); await refresh();
-    } catch (requestError) { setImportErrors([actualCostErrorMessage(requestError)]); }
-    finally { setImporting(false); }
+      const uploadBatchSize = 1000;
+      for (let start = importStagedRowsRef.current; start < importReader.rowCount; start += uploadBatchSize) {
+        const sourceBatch = importReader.readRows(start, uploadBatchSize);
+        const mappedBatch = mapImportBatch(sourceBatch, start);
+        await stageActualCostImportBatch(sessionId, project.id, mappedBatch, start + 1);
+        importStagedRowsRef.current = start + sourceBatch.length;
+        setProgress((importStagedRowsRef.current / importReader.rowCount) * 70);
+      }
+
+      if (!importPreparedRef.current) {
+        await prepareActualCostImport(sessionId);
+        importPreparedRef.current = true;
+      }
+
+      let chunkSize = 5000;
+      let completed = false;
+      while (!completed) {
+        try {
+          const status = await applyActualCostImportChunk(sessionId, chunkSize);
+          completed = status.status === "completed";
+          if (status.status === "applying_delete") {
+            setProgress(72);
+          } else {
+            setProgress(70 + (status.applied_rows / Math.max(status.expected_rows, 1)) * 27);
+          }
+        } catch (requestError) {
+          if (!isActualCostImportRetryableError(requestError) || chunkSize <= 250) throw requestError;
+          chunkSize = Math.max(250, Math.floor(chunkSize / 2));
+        }
+      }
+
+      // Recalculate once, after every imported transaction is safely committed.
+      setProgress(98);
+      await recalculateProjectCostManagement(project.id);
+      setProgress(100);
+      const importedCount = importReader.rowCount;
+      resetImportState();
+      showNotice(`${importedCount.toLocaleString()} Actual Cost transactions imported successfully.`);
+      await refresh();
+    } catch (requestError) {
+      setImportRuntimeError(actualCostErrorMessage(requestError));
+    } finally {
+      setImporting(false);
+    }
   }
 
   return <div className="enterprise-admin-page">
@@ -462,7 +577,7 @@ export default function ActualCostPage({ projectPublicId }: { projectPublicId: s
       <div className="confirm-dialog" role="alertdialog" aria-modal="true"><div className="confirm-icon">!</div><h2>Delete {selectedIds.length} Actual Cost Row{selectedIds.length === 1 ? "" : "s"}?</h2><p>This will permanently delete the selected Actual Cost transactions. This action cannot be undone.</p><div className="confirm-actions"><button className="button secondary" disabled={working} onClick={() => setDeleteOpen(false)}>Cancel</button><button className="button danger" disabled={working} onClick={() => void confirmBulkDelete()}>{working ? "Deleting…" : "Yes, Delete"}</button></div></div>
     </div>}
     {showSaveView && <div className="admin-modal-backdrop"><div className="admin-modal"><h3>Save View</h3><label className="form-field"><span>View Name</span><input autoFocus value={viewName} maxLength={80} onChange={(event) => setViewName(event.target.value)}/></label><div className="admin-modal-actions"><button className="button secondary" onClick={() => setShowSaveView(false)}>Cancel</button><button className="button primary" disabled={!viewName.trim()} onClick={() => void saveView()}>Save</button></div></div></div>}
-    {importRows && <ExcelImportDialog title="Import Actual Cost" rows={importRows} columns={excelColumns} errors={importErrors} replace={replace} setReplace={setReplace} importing={importing} progress={progress} onCancel={() => !importing && setImportRows(null)} onImport={() => void runImport()}/>} 
+    {importRows && <ExcelImportDialog title="Import Actual Cost" rows={importRows} rowCount={importReader?.rowCount} columns={excelColumns} errors={importErrors} runtimeError={importRuntimeError} replace={replace} setReplace={setReplace} importing={importing} progress={progress} onCancel={() => void closeImport()} onImport={() => void runImport()}/>} 
     {notice && <div className="admin-toast">{notice}</div>}
   </div>;
 }
